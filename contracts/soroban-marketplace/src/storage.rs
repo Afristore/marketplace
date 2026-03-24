@@ -25,6 +25,7 @@ mod tests {
             &price,
             &symbol_short!("XLM"),
             &contract_id,
+            &0u32,
         );
 
         assert_eq!(listing_id, 1u64);

@@ -13,7 +13,7 @@ fn test_set_treasury_and_protocol_fee() {
     // Create listing and buy artwork
     let cid = bytes!(&env, 0x516d74657374);
     let price = 10_000_000_i128;
-    let id = client.create_listing(&artist, &cid, &price, &symbol_short!("XLM"), &contract_id);
+    let id = client.create_listing(&artist, &cid, &price, &symbol_short!("XLM"), &contract_id, &0u32);
     let result = client.buy_artwork(&buyer, &id);
     assert!(result);
     let listing = client.get_listing(&id);
@@ -32,7 +32,7 @@ fn test_buy_artwork_no_treasury_fee_set() {
     client.set_protocol_fee(&artist, &300u32); // 3%
     let cid = bytes!(&env, 0x516d74657374);
     let price = 1_000_000_i128;
-    let id = client.create_listing(&artist, &cid, &price, &symbol_short!("XLM"), &contract_id);
+    let id = client.create_listing(&artist, &cid, &price, &symbol_short!("XLM"), &contract_id, &0u32);
     let result = client.buy_artwork(&buyer, &id);
     assert!(result);
     let listing = client.get_listing(&id);
@@ -102,7 +102,7 @@ fn setup() -> (Env, MarketplaceContractClient<'static>, Address, Address, Addres
 #[test]
 fn test_create_listing_success() {
     let (env, client, artist, _, contract_id) = setup();
-    let cid = bytes!(&env, 0x516d546573744349444f6e495046533132333435);
+    let cid = bytes!(&env, 0x516d546573744349444f6f6e495046533132333435);
     let price: i128 = 10_000_000; // 1 XLM
     // Set admin and whitelist the token
     client.set_admin(&artist);
@@ -113,6 +113,7 @@ fn test_create_listing_success() {
         &price,
         &symbol_short!("XLM"),
         &contract_id,
+        &0u32, // royalty_bps
     );
     assert_eq!(listing_id, 1u64);
     let listing = client.get_listing(&listing_id);
@@ -128,7 +129,7 @@ fn test_create_listing_zero_price() {
     client.set_admin(&artist);
     client.add_token_to_whitelist(&contract_id);
     let cid = bytes!(&env, 0x516d74657374);
-    client.create_listing(&artist, &cid, &0_i128, &symbol_short!("XLM"), &contract_id);
+    client.create_listing(&artist, &cid, &0_i128, &symbol_short!("XLM"), &contract_id, &0u32);
 }
 
 #[test]
@@ -143,6 +144,7 @@ fn test_create_listing_empty_cid() {
         &10_000_000_i128,
         &symbol_short!("XLM"),
         &contract_id,
+        &0u32, // royalty_bps
     );
 }
 
@@ -154,7 +156,7 @@ fn test_cancel_listing_success() {
     client.set_admin(&artist);
     client.add_token_to_whitelist(&contract_id);
     let cid = bytes!(&env, 0x516d74657374);
-    let id = client.create_listing(&artist, &cid, &5_000_000_i128, &symbol_short!("XLM"), &contract_id);
+    let id = client.create_listing(&artist, &cid, &5_000_000_i128, &symbol_short!("XLM"), &contract_id, &0u32);
     let result = client.cancel_listing(&artist, &id);
     assert!(result);
     let listing = client.get_listing(&id);
@@ -168,7 +170,7 @@ fn test_cancel_listing_wrong_artist() {
     client.set_admin(&artist);
     client.add_token_to_whitelist(&contract_id);
     let cid = bytes!(&env, 0x516d74657374);
-    let id = client.create_listing(&artist, &cid, &5_000_000_i128, &symbol_short!("XLM"), &contract_id);
+    let id = client.create_listing(&artist, &cid, &5_000_000_i128, &symbol_short!("XLM"), &contract_id, &0u32);
     client.cancel_listing(&buyer, &id);
 }
 
@@ -180,9 +182,9 @@ fn test_get_artist_listings() {
     client.set_admin(&artist);
     client.add_token_to_whitelist(&contract_id);
     let cid = bytes!(&env, 0x516d74657374);
-    client.create_listing(&artist, &cid, &1_000_000_i128, &symbol_short!("XLM"), &contract_id);
-    client.create_listing(&artist, &cid, &2_000_000_i128, &symbol_short!("XLM"), &contract_id);
-    client.create_listing(&artist, &cid, &3_000_000_i128, &symbol_short!("XLM"), &contract_id);
+    client.create_listing(&artist, &cid, &1_000_000_i128, &symbol_short!("XLM"), &contract_id, &0u32);
+    client.create_listing(&artist, &cid, &2_000_000_i128, &symbol_short!("XLM"), &contract_id, &0u32);
+    client.create_listing(&artist, &cid, &3_000_000_i128, &symbol_short!("XLM"), &contract_id, &0u32);
     let ids = client.get_artist_listings(&artist);
     assert_eq!(ids.len(), 3);
     assert_eq!(ids.get(0).unwrap(), 1_u64);
@@ -197,7 +199,7 @@ fn test_buy_artwork_success() {
     client.add_token_to_whitelist(&contract_id);
     let cid = bytes!(&env, 0x516d74657374);
     let price = 10_000_000_i128;
-    let id = client.create_listing(&artist, &cid, &price, &symbol_short!("XLM"), &contract_id);
+    let id = client.create_listing(&artist, &cid, &price, &symbol_short!("XLM"), &contract_id, &0u32);
     let result = client.buy_artwork(&buyer, &id);
     assert!(result);
     let listing = client.get_listing(&id);
@@ -240,7 +242,7 @@ fn test_add_and_remove_token_whitelist() {
     client.remove_token_from_whitelist(&contract_id);
     // Now creating a listing with this token should SUCCEED (whitelist is empty)
     let cid = bytes!(&env, 0x516d74657374);
-    let listing_id = client.create_listing(&artist, &cid, &1_000_000_i128, &symbol_short!("XLM"), &contract_id);
+    let listing_id = client.create_listing(&artist, &cid, &1_000_000_i128, &symbol_short!("XLM"), &contract_id, &0u32);
     assert_eq!(listing_id, 1u64);
 }
 
@@ -257,7 +259,7 @@ fn test_create_listing_with_non_whitelisted_token_panics() {
     client.add_token_to_whitelist(&other_token);
     // Now creating a listing with contract_id (not whitelisted) should panic
     let cid = bytes!(&env, 0x516d74657374);
-    client.create_listing(&artist, &cid, &1_000_000_i128, &symbol_short!("XLM"), &contract_id);
+    client.create_listing(&artist, &cid, &1_000_000_i128, &symbol_short!("XLM"), &contract_id, &0u32);
 }
 
 #[test]
@@ -266,7 +268,7 @@ fn test_create_listing_with_whitelisted_token_succeeds() {
     client.set_admin(&artist);
     client.add_token_to_whitelist(&contract_id);
     let cid = bytes!(&env, 0x516d74657374);
-    let listing_id = client.create_listing(&artist, &cid, &1_000_000_i128, &symbol_short!("XLM"), &contract_id);
+    let listing_id = client.create_listing(&artist, &cid, &1_000_000_i128, &symbol_short!("XLM"), &contract_id, &0u32);
     assert_eq!(listing_id, 1u64);
 }
 
@@ -281,7 +283,7 @@ fn test_buy_artwork_fee_greater_than_price() {
     client.set_protocol_fee(&artist, &1000u32); // 10% for demonstration
     let cid = bytes!(&env, 0x516d74657374);
     let price = 5_i128; // Very small price
-    let id = client.create_listing(&artist, &cid, &price, &symbol_short!("XLM"), &contract_id);
+    let id = client.create_listing(&artist, &cid, &price, &symbol_short!("XLM"), &contract_id, &0u32);
     let result = client.buy_artwork(&buyer, &id);
     assert!(result);
     let listing = client.get_listing(&id);
@@ -301,11 +303,94 @@ fn test_buy_artwork_fee_rounding_precision() {
     client.set_protocol_fee(&artist, &333u32);
     let cid = bytes!(&env, 0x516d74657374);
     let price = 100_i128;
-    let id = client.create_listing(&artist, &cid, &price, &symbol_short!("XLM"), &contract_id);
+    let id = client.create_listing(&artist, &cid, &price, &symbol_short!("XLM"), &contract_id, &0u32);
     let result = client.buy_artwork(&buyer, &id);
     assert!(result);
     let listing = client.get_listing(&id);
     assert_eq!(listing.status, ListingStatus::Sold);
     assert_eq!(listing.owner, Some(buyer.clone()));
     // Fee: 100 * 333 / 10_000 = 3 (integer division), seller gets 97
+}
+
+#[test]
+fn test_royalty_zero_percent() {
+    let (env, client, artist, buyer, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+    let cid = bytes!(&env, 0x516d74657374);
+    let price = 10_000_000_i128;
+    // 0% royalty
+    let id = client.create_listing(&artist, &cid, &price, &symbol_short!("XLM"), &contract_id, &0u32);
+    let result = client.buy_artwork(&buyer, &id);
+    assert!(result);
+    let listing = client.get_listing(&id);
+    assert_eq!(listing.status, ListingStatus::Sold);
+    assert_eq!(listing.owner, Some(buyer.clone()));
+    // All funds to seller, none to original creator
+}
+
+#[test]
+fn test_royalty_hundred_percent() {
+    let (env, client, artist, buyer, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+    let cid = bytes!(&env, 0x516d74657374);
+    let price = 10_000_000_i128;
+    // 100% royalty (10000 bps)
+    let id = client.create_listing(&artist, &cid, &price, &symbol_short!("XLM"), &contract_id, &10000u32);
+    let result = client.buy_artwork(&buyer, &id);
+    assert!(result);
+    let listing = client.get_listing(&id);
+    assert_eq!(listing.status, ListingStatus::Sold);
+    assert_eq!(listing.owner, Some(buyer.clone()));
+    // All funds to original creator, seller gets 0
+}
+
+#[test]
+fn test_royalty_rounding_precision() {
+    let (env, client, artist, buyer, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+    let cid = bytes!(&env, 0x516d74657374);
+    let price = 7_i128;
+    // 33% royalty (3300 bps)
+    let id = client.create_listing(&artist, &cid, &price, &symbol_short!("XLM"), &contract_id, &3300u32);
+    let result = client.buy_artwork(&buyer, &id);
+    assert!(result);
+    let listing = client.get_listing(&id);
+    assert_eq!(listing.status, ListingStatus::Sold);
+    assert_eq!(listing.owner, Some(buyer.clone()));
+    // Royalty: 7 * 3300 / 10000 = 2 (integer division), seller gets 5
+}
+
+#[test]
+fn test_royalty_secondary_sale() {
+    let (env, client, artist, buyer, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+    let cid = bytes!(&env, 0x516d74657374);
+    let price = 10_000_000_i128;
+    // 10% royalty
+    let id = client.create_listing(&artist, &cid, &price, &symbol_short!("XLM"), &contract_id, &1000u32);
+    // First sale: artist sells to buyer
+    let result = client.buy_artwork(&buyer, &id);
+    assert!(result);
+    let mut listing = client.get_listing(&id);
+    assert_eq!(listing.status, ListingStatus::Sold);
+    assert_eq!(listing.owner, Some(buyer.clone()));
+    // Simulate secondary sale: buyer relists and sells to a new buyer
+    let new_buyer = Address::generate(&env);
+    listing.artist = buyer.clone();
+    listing.status = ListingStatus::Active;
+    listing.owner = None;
+    // Save the relisted artwork using contract context
+    env.as_contract(&contract_id, || {
+        crate::storage::save_listing(&env, &listing);
+    });
+    let result2 = client.buy_artwork(&new_buyer, &id);
+    assert!(result2);
+    let listing2 = client.get_listing(&id);
+    assert_eq!(listing2.status, ListingStatus::Sold);
+    assert_eq!(listing2.owner, Some(new_buyer.clone()));
+    // 10% of price should go to original creator (artist), 90% to seller (buyer)
 }

@@ -184,6 +184,7 @@ impl MarketplaceContract {
         price: i128,
         currency: Symbol,
         token: Address,
+        royalty_bps: u32,
     ) -> u64 {
         artist.require_auth();
         if metadata_cid.is_empty() {
@@ -191,6 +192,9 @@ impl MarketplaceContract {
         }
         if price <= 0 {
             panic_with_error!(&env, MarketplaceError::InvalidPrice);
+        }
+        if royalty_bps > 10000 {
+            panic_with_error!(&env, MarketplaceError::InvalidPrice); // Reuse error for now
         }
         // Whitelist check
         if !Self::is_token_whitelisted(&env, &token) {
@@ -210,6 +214,8 @@ impl MarketplaceContract {
             status: ListingStatus::Active,
             owner: None,
             created_at: env.ledger().sequence(),
+            original_creator: artist.clone(),
+            royalty_bps,
         };
         save_listing(&env, &listing);
         add_artist_listing_id(&env, &artist, listing_id);
@@ -245,31 +251,41 @@ impl MarketplaceContract {
             panic_with_error!(&env, MarketplaceError::CannotBuyOwnListing);
         }
 
-        // Transfer payment: buyer → this contract → artist/treasury.
+        // Transfer payment: buyer → this contract → royalty/original_creator, protocol fee/treasury, seller.
         #[cfg(not(test))]
         {
             let token = TokenClient::new(&env, &listing.token);
             // Buyer pays contract
             token.transfer(&buyer, &env.current_contract_address(), &listing.price);
 
+            let mut payout = listing.price;
+
+            // 1. Royalty to original creator (if not the seller and royalty > 0)
+            let mut royalty_paid = false;
+            if listing.royalty_bps > 0 && listing.original_creator != listing.artist {
+                let royalty = listing.price * listing.royalty_bps as i128 / 10_000;
+                if royalty > 0 {
+                    token.transfer(&env.current_contract_address(), &listing.original_creator, &royalty);
+                    payout -= royalty;
+                    royalty_paid = true;
+                }
+            }
+
+            // 2. Protocol fee to treasury (if set)
             let protocol_fee_bps = get_protocol_fee_bps(&env).unwrap_or(0);
             let treasury = get_treasury(&env);
             if protocol_fee_bps > 0 {
-                let fee = listing.price * protocol_fee_bps as i128 / 10_000;
-                let seller_amount = listing.price - fee;
+                let fee = payout * protocol_fee_bps as i128 / 10_000;
                 if let Some(treasury_addr) = treasury {
-                    // Send fee to treasury
-                    token.transfer(&env.current_contract_address(), &treasury_addr, &fee);
-                    // Send remainder to seller
-                    token.transfer(&env.current_contract_address(), &listing.artist, &seller_amount);
-                } else {
-                    // If no treasury set, send all to seller
-                    token.transfer(&env.current_contract_address(), &listing.artist, &listing.price);
+                    if fee > 0 {
+                        token.transfer(&env.current_contract_address(), &treasury_addr, &fee);
+                        payout -= fee;
+                    }
                 }
-            } else {
-                // No protocol fee, send all to seller
-                token.transfer(&env.current_contract_address(), &listing.artist, &listing.price);
             }
+
+            // 3. Remainder to seller (artist)
+            token.transfer(&env.current_contract_address(), &listing.artist, &payout);
         }
 
         // Update listing state.
