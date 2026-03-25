@@ -14,6 +14,12 @@ pub enum MarketplaceError {
     CannotBuyOwnListing = 6,
     InvalidSplit = 7,
     TooManyRecipients = 8,
+    AuctionNotFound = 9,
+    AuctionNotActive = 10,
+    BidTooLow = 11,
+    AuctionExpired = 12,
+    AuctionNotExpired = 13,
+    AuctionAlreadyFinalized = 14,
 }
 
 #[contracttype]
@@ -47,4 +53,29 @@ pub struct Listing {
     // Royalties
     pub original_creator: Address,
     pub royalty_bps: u32, // Royalty in basis points (1/100 of a percent)
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AuctionStatus {
+    Active,
+    Finalized,
+    Cancelled,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Auction {
+    pub auction_id: u64,
+    pub creator: Address,
+    pub metadata_cid: Bytes,
+    pub token: Address,
+    pub reserve_price: i128,
+    pub highest_bid: i128,
+    pub highest_bidder: Option<Address>,
+    pub end_time: u64,
+    pub status: AuctionStatus,
+    pub recipients: soroban_sdk::Vec<Recipient>,
+    pub royalty_bps: u32,
+    pub original_creator: Address,
 }

@@ -1,12 +1,6 @@
-// ------------------------------------------------------------
-// test.rs — Unit tests for the Soroban marketplace contract
-// ------------------------------------------------------------
-
 use super::*;
-use crate::events::*;
-use crate::types::Recipient;
-use soroban_sdk::{bytes, symbol_short, testutils::Address as _, vec, Address, Env};
-use soroban_sdk::{testutils::Events, Symbol, Val};
+use crate::types::{Recipient, ListingStatus};
+use soroban_sdk::{bytes, symbol_short, testutils::Address as _, testutils::Ledger, vec, Address, Env};
 
 /// Helper — deploy the contract and return (env, client, artist, buyer, contract_id).
 fn setup() -> (
@@ -100,7 +94,7 @@ fn test_buy_artwork_no_treasury_fee_set() {
 #[test]
 #[should_panic]
 fn test_set_protocol_fee_not_admin_panics() {
-    let (env, client, artist, buyer, _contract_id) = setup();
+    let (_env, client, artist, buyer, _contract_id) = setup();
     client.set_admin(&artist);
     // Buyer tries to set protocol fee
     client.set_protocol_fee(&buyer, &100u32);
@@ -119,7 +113,7 @@ fn test_set_treasury_not_admin_panics() {
 #[test]
 #[should_panic]
 fn test_set_protocol_fee_too_high_panics() {
-    let (env, client, artist, _buyer, _contract_id) = setup();
+    let (_env, client, artist, _buyer, _contract_id) = setup();
     client.set_admin(&artist);
     // Try to set fee > 1000 bps (10%)
     client.set_protocol_fee(&artist, &2000u32);
@@ -426,7 +420,7 @@ fn test_get_listing_not_found() {
 #[test]
 #[should_panic]
 fn test_set_admin_only_once() {
-    let (env, client, artist, _, _) = setup();
+    let (_env, client, artist, _, _) = setup();
     client.set_admin(&artist);
     // Second call should panic
     client.set_admin(&artist);
@@ -662,4 +656,174 @@ fn test_royalty_secondary_sale() {
     assert_eq!(listing2.status, ListingStatus::Sold);
     assert_eq!(listing2.owner, Some(new_buyer.clone()));
     // 10% of price should go to original creator (artist), 90% to seller (buyer)
+}
+
+// ── Auction Tests ────────────────────────────────────────────
+
+#[test]
+fn test_create_auction_success() {
+    let (env, client, artist, _, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+
+    let cid = bytes!(&env, 0x516d74657374);
+    let reserve_price = 1_000_000_i128;
+    let duration = 3600u64; // 1 hour
+
+    let auction_id = client.create_auction(
+        &artist,
+        &cid,
+        &contract_id,
+        &reserve_price,
+        &duration,
+        &1000u32, // 10% royalty
+        &valid_recipients(&env, &artist),
+    );
+
+    assert_eq!(auction_id, 1);
+    let auction = client.get_auction(&auction_id);
+    assert_eq!(auction.creator, artist);
+    assert_eq!(auction.reserve_price, reserve_price);
+    assert_eq!(auction.status, crate::types::AuctionStatus::Active);
+    assert_eq!(auction.end_time, env.ledger().timestamp() + duration);
+}
+
+#[test]
+fn test_place_bid_success() {
+    let (env, client, artist, buyer, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+
+    let cid = bytes!(&env, 0x516d74657374);
+    let id = client.create_auction(
+        &artist,
+        &cid,
+        &contract_id,
+        &1_000_000,
+        &3600,
+        &0,
+        &valid_recipients(&env, &artist),
+    );
+
+    client.place_bid(&buyer, &id, &1_500_000);
+    let auction = client.get_auction(&id);
+    assert_eq!(auction.highest_bid, 1_500_000);
+    assert_eq!(auction.highest_bidder, Some(buyer));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #11)")]
+fn test_place_bid_too_low() {
+    let (env, client, artist, buyer, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+
+    let id = client.create_auction(
+        &artist,
+        &bytes!(&env, 0x51),
+        &contract_id,
+        &1_000_000,
+        &3600,
+        &0,
+        &valid_recipients(&env, &artist),
+    );
+
+    client.place_bid(&buyer, &id, &500_000); // Below reserve
+}
+
+#[test]
+fn test_finalize_auction_with_winner() {
+    let (env, client, artist, buyer, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+
+    let id = client.create_auction(
+        &artist,
+        &bytes!(&env, 0x51),
+        &contract_id,
+        &1_000_000,
+        &3600,
+        &0,
+        &valid_recipients(&env, &artist),
+    );
+
+    client.place_bid(&buyer, &id, &1_500_000);
+
+    // Jump in time
+    env.ledger().set_timestamp(env.ledger().timestamp() + 3601);
+
+    client.finalize_auction(&id);
+    let auction = client.get_auction(&id);
+    assert_eq!(auction.status, crate::types::AuctionStatus::Finalized);
+}
+
+#[test]
+fn test_finalize_auction_no_bids() {
+    let (env, client, artist, _, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+
+    let id = client.create_auction(
+        &artist,
+        &bytes!(&env, 0x51),
+        &contract_id,
+        &1_000_000,
+        &3600,
+        &0,
+        &valid_recipients(&env, &artist),
+    );
+
+    env.ledger().set_timestamp(env.ledger().timestamp() + 3601);
+
+    client.finalize_auction(&id);
+    let auction = client.get_auction(&id);
+    assert_eq!(auction.status, crate::types::AuctionStatus::Cancelled);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #12)")]
+fn test_place_bid_after_expiration() {
+    let (env, client, artist, buyer, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+
+    let id = client.create_auction(
+        &artist,
+        &bytes!(&env, 0x51),
+        &contract_id,
+        &1_000_000,
+        &3600,
+        &0,
+        &valid_recipients(&env, &artist),
+    );
+
+    // Jump in time
+    env.ledger().set_timestamp(env.ledger().timestamp() + 3601);
+
+    client.place_bid(&buyer, &id, &1_500_000);
+}
+
+#[test]
+fn test_outbid_refund_logic_check() {
+    let (env, client, artist, buyer1, contract_id) = setup();
+    let buyer2 = Address::generate(&env);
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+
+    let id = client.create_auction(
+        &artist,
+        &bytes!(&env, 0x51),
+        &contract_id,
+        &1_000_000,
+        &3600,
+        &0,
+        &valid_recipients(&env, &artist),
+    );
+
+    client.place_bid(&buyer1, &id, &1_500_000);
+    client.place_bid(&buyer2, &id, &2_000_000);
+
+    let auction = client.get_auction(&id);
+    assert_eq!(auction.highest_bid, 2_000_000);
+    assert_eq!(auction.highest_bidder, Some(buyer2));
 }

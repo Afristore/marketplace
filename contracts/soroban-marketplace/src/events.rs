@@ -1,6 +1,6 @@
 // events.rs — Defines all contract event schemas for Afristore Marketplace
 
-use soroban_sdk::{contractevent, contracttype, symbol_short, Address, Bytes, Symbol};
+use soroban_sdk::{contracttype, symbol_short, Address, Bytes, Env, Symbol};
 
 // Versioned event topics as Symbol constants
 pub const LISTING_CREATED: Symbol = symbol_short!("lst_crtd");
@@ -18,7 +18,8 @@ pub const ARTIST_REVOKED: Symbol = symbol_short!("art_rvkd");
 pub const ARTIST_REINSTATED: Symbol = symbol_short!("art_rnst");
 
 // Event data structs
-#[contractevent]
+// Event data structs
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListingCreatedEvent {
     pub listing_id: u64,
@@ -29,7 +30,7 @@ pub struct ListingCreatedEvent {
     pub ledger_sequence: u32,
 }
 
-#[contractevent]
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArtworkSoldEvent {
     pub listing_id: u64,
@@ -40,7 +41,7 @@ pub struct ArtworkSoldEvent {
     pub ledger_sequence: u32,
 }
 
-#[contractevent]
+#[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListingCancelledEvent {
     pub listing_id: u64,
@@ -49,3 +50,66 @@ pub struct ListingCancelledEvent {
 }
 
 // Add more event structs as needed for other actions
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuctionCreatedEvent {
+    pub auction_id: u64,
+    pub creator: Address,
+    pub reserve_price: i128,
+    pub token: Address,
+    pub end_time: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BidPlacedEvent {
+    pub auction_id: u64,
+    pub bidder: Address,
+    pub bid_amount: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuctionFinalizedEvent {
+    pub auction_id: u64,
+    pub winner: Option<Address>,
+    pub amount: i128,
+}
+
+impl ListingCreatedEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((LISTING_CREATED,), self);
+    }
+}
+
+impl ArtworkSoldEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((ARTWORK_SOLD,), self);
+    }
+}
+
+impl ListingCancelledEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((LISTING_CANCELLED,), self);
+    }
+}
+
+impl AuctionCreatedEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((symbol_short!("auc_crtd"),), self);
+    }
+}
+
+impl BidPlacedEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((BID_PLACED,), self);
+    }
+}
+
+impl AuctionFinalizedEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((AUCTION_RESOLVED,), self);
+    }
+}
+
+// End of events

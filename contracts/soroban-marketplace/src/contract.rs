@@ -1,62 +1,3 @@
-// Helper to get admin address from storage
-fn get_admin(e: &Env) -> Option<Address> {
-    use crate::storage::DataKey;
-    e.storage().persistent().get::<_, Address>(&DataKey::Admin)
-}
-
-// Admin-only: Set the treasury address
-fn set_treasury_internal(e: &Env, admin: &Address, treasury: &Address) {
-    admin.require_auth();
-    let stored_admin = get_admin(e).expect("admin not set");
-    if admin != &stored_admin {
-        panic!("Only admin can set treasury");
-    }
-    crate::storage::set_treasury_storage(e, treasury);
-}
-
-// Anyone can view the treasury address
-fn get_treasury_internal(e: &Env) -> Option<Address> {
-    crate::storage::get_treasury_storage(e)
-}
-
-// Admin-only: Set the protocol fee (in basis points)
-fn set_protocol_fee_internal(e: &Env, admin: &Address, bps: u32) {
-    admin.require_auth();
-    let stored_admin = get_admin(e).expect("admin not set");
-    if admin != &stored_admin {
-        panic!("Only admin can set protocol fee");
-    }
-    if bps > 1000 {
-        panic!("Fee too high");
-    }
-    crate::storage::set_protocol_fee_bps_storage(e, bps);
-}
-
-// Anyone can view the protocol fee (in basis points)
-fn get_protocol_fee_internal(e: &Env) -> Option<u32> {
-    crate::storage::get_protocol_fee_bps_storage(e)
-}
-// Expose as contract methods
-#[no_mangle]
-pub fn set_treasury(e: Env, admin: Address, treasury: Address) {
-    set_treasury_internal(&e, &admin, &treasury);
-}
-
-#[no_mangle]
-pub fn get_treasury(e: Env) -> Option<Address> {
-    get_treasury_internal(&e)
-}
-
-#[no_mangle]
-pub fn set_protocol_fee(e: Env, admin: Address, bps: u32) {
-    set_protocol_fee_internal(&e, &admin, bps);
-}
-
-#[no_mangle]
-pub fn get_protocol_fee(e: Env) -> Option<u32> {
-    get_protocol_fee_internal(&e)
-}
-use soroban_sdk::Map;
 // ------------------------------------------------------------
 // contract.rs — Afristore Marketplace contract implementation
 // ------------------------------------------------------------
@@ -71,10 +12,11 @@ use crate::events::*;
 
 use crate::{
     storage::{
-        add_artist_listing_id, get_artist_listing_ids, get_listing_count, increment_listing_count,
-        load_listing, save_listing,
+        add_artist_auction_id, add_artist_listing_id, get_artist_auction_ids,
+        get_artist_listing_ids, get_listing_count, increment_auction_count,
+        increment_listing_count, load_auction, load_listing, save_auction, save_listing,
     },
-    types::{Listing, ListingStatus, MarketplaceError, Recipient},
+    types::{Auction, AuctionStatus, Listing, ListingStatus, MarketplaceError, Recipient},
 };
 
 // ────────────────────────────────────────────────────────────
@@ -87,7 +29,7 @@ impl MarketplaceContract {
     /// Admin-only: Set the treasury address
     pub fn set_treasury(env: Env, admin: Address, treasury: Address) {
         admin.require_auth();
-        let stored_admin = get_admin(&env).expect("admin not set");
+        let stored_admin = Self::get_admin(&env).expect("admin not set");
         if admin != stored_admin {
             panic_with_error!(&env, MarketplaceError::Unauthorized);
         }
@@ -102,7 +44,7 @@ impl MarketplaceContract {
     /// Admin-only: Set the protocol fee (in basis points)
     pub fn set_protocol_fee(env: Env, admin: Address, bps: u32) {
         admin.require_auth();
-        let stored_admin = get_admin(&env).expect("admin not set");
+        let stored_admin = Self::get_admin(&env).expect("admin not set");
         if admin != stored_admin {
             panic_with_error!(&env, MarketplaceError::Unauthorized);
         }
@@ -147,7 +89,7 @@ impl MarketplaceContract {
     pub fn remove_token_from_whitelist(env: Env, token: Address) {
         Self::require_admin(&env);
         let key = crate::storage::DataKey::TokenWhitelist;
-        let mut whitelist = env
+        let whitelist = env
             .storage()
             .persistent()
             .get::<_, Vec<Address>>(&key)
@@ -170,6 +112,12 @@ impl MarketplaceContract {
             .get::<_, Address>(&key)
             .expect("admin not set");
         admin.require_auth();
+    }
+
+    /// Internal: get admin address
+    fn get_admin(env: &Env) -> Option<Address> {
+        let key = crate::storage::DataKey::Admin;
+        env.storage().persistent().get::<_, Address>(&key)
     }
 
     /// Check if a token is whitelisted (returns true if whitelist is empty)
@@ -233,9 +181,7 @@ impl MarketplaceContract {
             panic_with_error!(&env, MarketplaceError::Unauthorized);
         }
         let listing_id = increment_listing_count(&env);
-        let currency_cloned = currency.clone();
-        let metadata_cid_cloned = metadata_cid.clone();
-        let token_cloned = token.clone();
+
         let listing = Listing {
             listing_id,
             artist: artist.clone(),
@@ -263,8 +209,8 @@ impl MarketplaceContract {
             listing_id,
             artist: artist.clone(),
             price,
-            currency: currency_cloned,
-            metadata_cid: metadata_cid_cloned,
+            currency: listing.currency.clone(),
+            metadata_cid: listing.metadata_cid.clone(),
             ledger_sequence: env.ledger().sequence(),
         }
         .publish(&env);
@@ -295,60 +241,17 @@ impl MarketplaceContract {
         // Transfer payment: buyer → this contract → royalty/original_creator, protocol fee/treasury, seller.
         #[cfg(not(test))]
         {
-            let token = TokenClient::new(&env, &listing.token);
-            // Buyer pays contract
-            token.transfer(&buyer, &env.current_contract_address(), &listing.price);
-
-            let mut payout = listing.price;
-
-            // 1. Royalty to original creator (if not the seller and royalty > 0)
-            let mut royalty_paid = false;
-            if listing.royalty_bps > 0 && listing.original_creator != listing.artist {
-                let royalty = listing.price * listing.royalty_bps as i128 / 10_000;
-                if royalty > 0 {
-                    token.transfer(
-                        &env.current_contract_address(),
-                        &listing.original_creator,
-                        &royalty,
-                    );
-                    payout -= royalty;
-                    royalty_paid = true;
-                }
-            }
-
-            // 2. Protocol fee to treasury (if set)
-            // Fix upstream compilation
-            let protocol_fee_bps = crate::storage::get_protocol_fee_bps_storage(&env).unwrap_or(0);
-            let treasury = crate::storage::get_treasury_storage(&env);
-            if protocol_fee_bps > 0 {
-                let fee = payout * protocol_fee_bps as i128 / 10_000;
-                if let Some(treasury_addr) = treasury {
-                    if fee > 0 {
-                        token.transfer(&env.current_contract_address(), &treasury_addr, &fee);
-                        payout -= fee;
-                    }
-                }
-            }
-
-            // 3. Remainder to recipients array
-            let recipients_len = listing.recipients.len();
-            let mut distributed_so_far: i128 = 0;
-
-            for i in 0..recipients_len {
-                let recipient = listing.recipients.get(i).unwrap();
-                let amount_to_transfer = if i == recipients_len - 1 {
-                    payout - distributed_so_far
-                } else {
-                    (payout * recipient.percentage as i128) / 100
-                };
-
-                token.transfer(
-                    &env.current_contract_address(),
-                    &recipient.address,
-                    &amount_to_transfer,
-                );
-                distributed_so_far += amount_to_transfer;
-            }
+            Self::distribute_payout(
+                &env,
+                &listing.token,
+                listing.price,
+                &listing.original_creator,
+                listing.royalty_bps,
+                &listing.artist,
+                &listing.recipients,
+                &buyer,
+                true, // transfer from buyer
+            );
         }
 
         // Update listing state.
@@ -395,6 +298,258 @@ impl MarketplaceContract {
         .publish(&env);
         true
     }
+
+    // ── Auction methods ──────────────────────────────────────
+
+    /// Artist creates a new auction for an artwork.
+    ///
+    /// * `metadata_cid` — raw bytes of the IPFS CID string
+    /// * `reserve_price` — minimum bid required
+    /// * `duration` — auction duration in seconds
+    pub fn create_auction(
+        env: Env,
+        creator: Address,
+        metadata_cid: Bytes,
+        token: Address,
+        reserve_price: i128,
+        duration: u64,
+        royalty_bps: u32,
+        recipients: Vec<Recipient>,
+    ) -> u64 {
+        creator.require_auth();
+        if metadata_cid.is_empty() {
+            panic_with_error!(&env, MarketplaceError::InvalidCid);
+        }
+        if reserve_price < 0 {
+            panic_with_error!(&env, MarketplaceError::InvalidPrice);
+        }
+        if !Self::is_token_whitelisted(&env, &token) {
+            panic_with_error!(&env, MarketplaceError::Unauthorized);
+        }
+
+        let recipients_len = recipients.len();
+        if recipients_len == 0 || recipients_len > 4 {
+            panic_with_error!(&env, MarketplaceError::TooManyRecipients);
+        }
+
+        let mut total_percentage = 0;
+        for i in 0..recipients_len {
+            let recipient = recipients.get(i).unwrap();
+            total_percentage += recipient.percentage;
+        }
+
+        if total_percentage != 100 {
+            panic_with_error!(&env, MarketplaceError::InvalidSplit);
+        }
+
+        let auction_id = increment_auction_count(&env);
+        let end_time = env.ledger().timestamp() + duration;
+
+        let auction = Auction {
+            auction_id,
+            creator: creator.clone(),
+            metadata_cid,
+            token: token.clone(),
+            reserve_price,
+            highest_bid: 0,
+            highest_bidder: None,
+            end_time,
+            status: AuctionStatus::Active,
+            recipients,
+            royalty_bps,
+            original_creator: creator.clone(),
+        };
+
+        save_auction(&env, &auction);
+        add_artist_auction_id(&env, &creator, auction_id);
+
+        AuctionCreatedEvent {
+            auction_id,
+            creator,
+            reserve_price,
+            token: auction.token.clone(),
+            end_time,
+        }
+        .publish(&env);
+
+        auction_id
+    }
+
+    /// Place a bid on an active auction.
+    ///
+    /// * `bidder` — address of the person placing the bid
+    /// * `amount` — bid amount in stroops (must be higher than current highest bid)
+    pub fn place_bid(env: Env, bidder: Address, auction_id: u64, amount: i128) {
+        bidder.require_auth();
+
+        let mut auction = load_auction(&env, auction_id)
+            .unwrap_or_else(|| panic_with_error!(&env, MarketplaceError::AuctionNotFound));
+
+        if auction.status != AuctionStatus::Active {
+            panic_with_error!(&env, MarketplaceError::AuctionNotActive);
+        }
+
+        if env.ledger().timestamp() >= auction.end_time {
+            panic_with_error!(&env, MarketplaceError::AuctionExpired);
+        }
+
+        if amount <= auction.highest_bid || amount < auction.reserve_price {
+            panic_with_error!(&env, MarketplaceError::BidTooLow);
+        }
+
+        #[cfg(not(test))]
+        {
+            let token_client = TokenClient::new(&env, &auction.token);
+
+            // Refund previous highest bidder
+            if let Some(prev_bidder) = auction.highest_bidder.clone() {
+                token_client.transfer(
+                    &env.current_contract_address(),
+                    &prev_bidder,
+                    &auction.highest_bid,
+                );
+            }
+
+            // Lock new bid funds
+            token_client.transfer(&bidder, &env.current_contract_address(), &amount);
+        }
+
+        auction.highest_bid = amount;
+        auction.highest_bidder = Some(bidder.clone());
+        save_auction(&env, &auction);
+
+        BidPlacedEvent {
+            auction_id,
+            bidder,
+            bid_amount: amount,
+        }
+        .publish(&env);
+    }
+
+    /// Finalize or cancel an auction.
+    ///
+    /// If there are bids, the highest bidder wins and funds are distributed.
+    /// If no bids, the auction is cancelled.
+    pub fn finalize_auction(env: Env, auction_id: u64) {
+        let mut auction = load_auction(&env, auction_id)
+            .unwrap_or_else(|| panic_with_error!(&env, MarketplaceError::AuctionNotFound));
+
+        if auction.status != AuctionStatus::Active {
+            panic_with_error!(&env, MarketplaceError::AuctionAlreadyFinalized);
+        }
+
+        let is_expired = env.ledger().timestamp() >= auction.end_time;
+
+        if !is_expired {
+            auction.creator.require_auth();
+        }
+
+        if let Some(winner) = auction.highest_bidder.clone() {
+            #[allow(unused_variables)]
+            let winner_ref = &winner;
+            #[cfg(not(test))]
+            {
+                Self::distribute_payout(
+                    &env,
+                    &auction.token,
+                    auction.highest_bid,
+                    &auction.original_creator,
+                    auction.royalty_bps,
+                    &auction.creator,
+                    &auction.recipients,
+                    &winner,
+                    false, // funds already locked in contract
+                );
+            }
+            auction.status = AuctionStatus::Finalized;
+        } else {
+            auction.status = AuctionStatus::Cancelled;
+        }
+
+        save_auction(&env, &auction);
+
+        AuctionFinalizedEvent {
+            auction_id,
+            winner: auction.highest_bidder,
+            amount: auction.highest_bid,
+        }
+        .publish(&env);
+    }
+
+    pub fn get_auction(env: Env, auction_id: u64) -> Auction {
+        load_auction(&env, auction_id)
+            .unwrap_or_else(|| panic_with_error!(&env, MarketplaceError::AuctionNotFound))
+    }
+
+    pub fn get_artist_auctions(env: Env, artist: Address) -> Vec<u64> {
+        get_artist_auction_ids(&env, &artist)
+    }
+
+    // ── Internal Payout Logic ────────────────────────────────
+
+    #[allow(clippy::too_many_arguments, dead_code)]
+    fn distribute_payout(
+        env: &Env,
+        token_addr: &Address,
+        amount: i128,
+        original_creator: &Address,
+        royalty_bps: u32,
+        seller: &Address,
+        recipients: &Vec<Recipient>,
+        buyer: &Address,
+        transfer_from_buyer: bool,
+    ) {
+        let token = TokenClient::new(env, token_addr);
+
+        if transfer_from_buyer {
+            token.transfer(buyer, &env.current_contract_address(), &amount);
+        }
+
+        let mut payout = amount;
+
+        // 1. Royalty
+        if royalty_bps > 0 && original_creator != seller {
+            let royalty = amount * royalty_bps as i128 / 10_000;
+            if royalty > 0 {
+                token.transfer(&env.current_contract_address(), original_creator, &royalty);
+                payout -= royalty;
+            }
+        }
+
+        // 2. Protocol fee
+        let protocol_fee_bps = crate::storage::get_protocol_fee_bps_storage(env).unwrap_or(0);
+        let treasury = crate::storage::get_treasury_storage(env);
+        if protocol_fee_bps > 0 {
+            let fee = payout * protocol_fee_bps as i128 / 10_000;
+            if let Some(treasury_addr) = treasury {
+                if fee > 0 {
+                    token.transfer(&env.current_contract_address(), &treasury_addr, &fee);
+                    payout -= fee;
+                }
+            }
+        }
+
+        // 3. Recipients
+        let recipients_len = recipients.len();
+        let mut distributed_so_far: i128 = 0;
+
+        for i in 0..recipients_len {
+            let recipient = recipients.get(i).unwrap();
+            let amount_to_transfer = if i == recipients_len - 1 {
+                payout - distributed_so_far
+            } else {
+                (payout * recipient.percentage as i128) / 100
+            };
+
+            token.transfer(
+                &env.current_contract_address(),
+                &recipient.address,
+                &amount_to_transfer,
+            );
+            distributed_so_far += amount_to_transfer;
+        }
+    }
+
 
     // ── get_listing ──────────────────────────────────────────
     /// Returns the full Listing struct for a given ID.

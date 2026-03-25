@@ -63,9 +63,6 @@ use soroban_sdk::{contracttype, Address, Env, Vec};
 
 use crate::types::Listing;
 
-/// Storage key for the admin address
-pub const ADMIN_KEY: &str = "admin";
-
 /// Storage key variants for the marketplace contract.
 #[contracttype]
 #[derive(Clone)]
@@ -84,6 +81,12 @@ pub enum DataKey {
     Treasury,
     /// Stores the protocol fee in basis points
     ProtocolFeeBps, // fee in basis points (1/100 of a percent)
+    /// Stores the global auction counter (u64).
+    AuctionCount,
+    /// Stores a single `Auction` by its ID.
+    Auction(u64),
+    /// Stores a `Vec<u64>` of auction IDs owned by an artist.
+    ArtistAuctions(Address),
 }
 
 // ── Bump amounts (ledger sequences) ─────────────────────────
@@ -144,6 +147,70 @@ pub fn get_artist_listing_ids(env: &Env, artist: &Address) -> Vec<u64> {
         .get::<DataKey, Vec<u64>>(&key)
         .unwrap_or_else(|| Vec::new(env))
 }
+
+// ── Auction counter helpers ───────────────────────────────────────
+
+pub fn get_auction_count(env: &Env) -> u64 {
+    env.storage()
+        .persistent()
+        .get::<DataKey, u64>(&DataKey::AuctionCount)
+        .unwrap_or(0)
+}
+
+pub fn increment_auction_count(env: &Env) -> u64 {
+    let count = get_auction_count(env) + 1;
+    env.storage()
+        .persistent()
+        .set(&DataKey::AuctionCount, &count);
+    env.storage().persistent().extend_ttl(
+        &DataKey::AuctionCount,
+        LEDGER_TTL_THRESHOLD,
+        LEDGER_TTL_BUMP,
+    );
+    count
+}
+
+// ── Auction CRUD ─────────────────────────────────────────────
+
+pub fn save_auction(env: &Env, auction: &crate::types::Auction) {
+    let key = DataKey::Auction(auction.auction_id);
+    env.storage().persistent().set(&key, auction);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
+}
+
+pub fn load_auction(env: &Env, auction_id: u64) -> Option<crate::types::Auction> {
+    let key = DataKey::Auction(auction_id);
+    let result = env.storage().persistent().get::<DataKey, crate::types::Auction>(&key);
+    if result.is_some() {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
+    }
+    result
+}
+
+// ── Artist auction index ─────────────────────────────────────
+
+pub fn get_artist_auction_ids(env: &Env, artist: &Address) -> Vec<u64> {
+    let key = DataKey::ArtistAuctions(artist.clone());
+    env.storage()
+        .persistent()
+        .get::<DataKey, Vec<u64>>(&key)
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+pub fn add_artist_auction_id(env: &Env, artist: &Address, auction_id: u64) {
+    let key = DataKey::ArtistAuctions(artist.clone());
+    let mut ids = get_artist_auction_ids(env, artist);
+    ids.push_back(auction_id);
+    env.storage().persistent().set(&key, &ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
+}
+
 
 pub fn add_artist_listing_id(env: &Env, artist: &Address, listing_id: u64) {
     let key = DataKey::ArtistListings(artist.clone());

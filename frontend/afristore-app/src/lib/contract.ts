@@ -285,3 +285,165 @@ export function stroopsToXlm(stroops: bigint): string {
   const xlm = Number(stroops) / 10_000_000;
   return xlm.toFixed(7).replace(/\.?0+$/, "");
 }
+
+// ── Offer types mirrored from the Rust contract ──────────────
+
+export type OfferStatus = "Pending" | "Accepted" | "Rejected" | "Withdrawn";
+
+export interface Offer {
+  offer_id: number;
+  listing_id: number;
+  offerer: string;
+  amount: bigint;
+  token: string;
+  status: OfferStatus;
+  created_at: number;
+}
+
+// ── Offer ScVal parsing ──────────────────────────────────────
+
+function parseOfferFromScVal(raw: unknown): Offer {
+  const obj = scValToNative(raw as xdr.ScVal) as Record<string, unknown>;
+
+  return {
+    offer_id: Number(obj["offer_id"]),
+    listing_id: Number(obj["listing_id"]),
+    offerer: (obj["offerer"] as Address).toString(),
+    amount: BigInt(obj["amount"] as bigint),
+    token: String(obj["token"]),
+    status: String(obj["status"]) as OfferStatus,
+    created_at: Number(obj["created_at"]),
+  };
+}
+
+// ── Offer contract methods ───────────────────────────────────
+
+/**
+ * make_offer — Places an offer on a listing.
+ *
+ * @param offererPublicKey  Stellar public key of the offerer (must match Freighter)
+ * @param listingId         The listing to place an offer on
+ * @param amountXlm         Offer amount in XLM (will be converted to stroops)
+ * @returns                 The new offer_id (number)
+ */
+export async function makeOffer(
+  offererPublicKey: string,
+  listingId: number,
+  amountXlm: number
+): Promise<number> {
+  const amountStroops = BigInt(Math.round(amountXlm * 10_000_000));
+
+  const args: xdr.ScVal[] = [
+    new Address(offererPublicKey).toScVal(),
+    nativeToScVal(BigInt(listingId), { type: "u64" }),
+    nativeToScVal(amountStroops, { type: "i128" }),
+    nativeToScVal("XLM", { type: "symbol" }),
+  ];
+
+  const retVal = await invokeContract(offererPublicKey, "make_offer", args);
+  return Number(scValToNative(retVal));
+}
+
+/**
+ * withdraw_offer — Offerer withdraws their pending offer.
+ */
+export async function withdrawOffer(
+  offererPublicKey: string,
+  offerId: number
+): Promise<boolean> {
+  const args: xdr.ScVal[] = [
+    new Address(offererPublicKey).toScVal(),
+    nativeToScVal(BigInt(offerId), { type: "u64" }),
+  ];
+
+  await invokeContract(offererPublicKey, "withdraw_offer", args);
+  return true;
+}
+
+/**
+ * accept_offer — Listing owner accepts an offer.
+ */
+export async function acceptOffer(
+  ownerPublicKey: string,
+  offerId: number
+): Promise<boolean> {
+  const args: xdr.ScVal[] = [
+    new Address(ownerPublicKey).toScVal(),
+    nativeToScVal(BigInt(offerId), { type: "u64" }),
+  ];
+
+  await invokeContract(ownerPublicKey, "accept_offer", args);
+  return true;
+}
+
+/**
+ * reject_offer — Listing owner rejects an offer.
+ */
+export async function rejectOffer(
+  ownerPublicKey: string,
+  offerId: number
+): Promise<boolean> {
+  const args: xdr.ScVal[] = [
+    new Address(ownerPublicKey).toScVal(),
+    nativeToScVal(BigInt(offerId), { type: "u64" }),
+  ];
+
+  await invokeContract(ownerPublicKey, "reject_offer", args);
+  return true;
+}
+
+/**
+ * get_offer — Fetch a single offer by ID (read-only, no Freighter needed).
+ */
+export async function getOffer(offerId: number): Promise<Offer> {
+  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+
+  const args: xdr.ScVal[] = [
+    nativeToScVal(BigInt(offerId), { type: "u64" }),
+  ];
+
+  const retVal = await invokeContract(DUMMY_KEY, "get_offer", args, true);
+  return parseOfferFromScVal(retVal);
+}
+
+/**
+ * get_listing_offers — Fetch all offer IDs for a listing (read-only).
+ */
+export async function getListingOffers(listingId: number): Promise<number[]> {
+  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+
+  const args: xdr.ScVal[] = [
+    nativeToScVal(BigInt(listingId), { type: "u64" }),
+  ];
+
+  const retVal = await invokeContract(
+    DUMMY_KEY,
+    "get_listing_offers",
+    args,
+    true
+  );
+
+  const ids = scValToNative(retVal) as bigint[];
+  return ids.map(Number);
+}
+
+/**
+ * get_offerer_offers — Fetch all offer IDs placed by an offerer (read-only).
+ */
+export async function getOffererOffers(
+  offererPublicKey: string
+): Promise<number[]> {
+  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+
+  const args: xdr.ScVal[] = [new Address(offererPublicKey).toScVal()];
+
+  const retVal = await invokeContract(
+    DUMMY_KEY,
+    "get_offerer_offers",
+    args,
+    true
+  );
+
+  const ids = scValToNative(retVal) as bigint[];
+  return ids.map(Number);
+}
