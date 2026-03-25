@@ -48,7 +48,7 @@ export function WalletGuard({
 
     // Define default fallback if none provided
     const defaultFallback = (
-        <div className="rounded-2xl border-2 border-dashed border-brand-200 bg-brand-50/20 p-8 text-center transition-all hover:bg-brand-50/40">
+        <div className=" mt-24 border-none bg-brand-50/20 p-8 text-center transition-all hover:bg-brand-50/40">
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-100 text-brand-600 scale-110">
                 <Wallet size={32} />
             </div>
