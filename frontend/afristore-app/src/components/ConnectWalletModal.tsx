@@ -109,7 +109,7 @@ export function ConnectWalletModal({ isOpen, onClose }: ConnectWalletModalProps)
                                 </div>
                                 <h3 className="font-display font-bold text-midnight-900">Freighter Not Found</h3>
                                 <p className="mt-2 text-xs text-brand-700 leading-relaxed">
-                                    We couldn't detect the Freighter wallet. Please install it to continue.
+                                    We couldn&apos;t detect the Freighter wallet. Please install it to continue.
                                 </p>
                                 <a
                                     href="https://www.freighter.app/"
