@@ -298,6 +298,154 @@ fn test_cancel_listing_wrong_artist() {
     client.cancel_listing(&buyer, &id);
 }
 
+// ── update_listing ───────────────────────────────────────────
+
+#[test]
+fn test_update_listing_success() {
+    let (env, client, artist, _, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+    let cid = bytes!(&env, 0x516d74657374);
+    let id = client.create_listing(
+        &artist,
+        &cid,
+        &5_000_000_i128,
+        &symbol_short!("XLM"),
+        &contract_id,
+        &0u32,
+        &valid_recipients(&env, &artist),
+    );
+
+    let new_cid = bytes!(&env, 0x516e6577434944);
+    let new_price = 10_000_000_i128;
+    let new_rec = valid_recipients(&env, &artist);
+    let result = client.update_listing(&artist, &id, &new_cid, &new_price, &contract_id, &new_rec);
+    assert!(result);
+
+    let listing = client.get_listing(&id);
+    assert_eq!(listing.metadata_cid, new_cid);
+    assert_eq!(listing.price, new_price);
+    assert_eq!(listing.token, contract_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_update_listing_wrong_artist() {
+    let (env, client, artist, buyer, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+    let cid = bytes!(&env, 0x516d74657374);
+    let id = client.create_listing(
+        &artist,
+        &cid,
+        &5_000_000_i128,
+        &symbol_short!("XLM"),
+        &contract_id,
+        &0u32,
+        &valid_recipients(&env, &artist),
+    );
+
+    let new_cid = bytes!(&env, 0x51);
+    let new_rec = valid_recipients(&env, &artist);
+    client.update_listing(&buyer, &id, &new_cid, &10_000_000_i128, &contract_id, &new_rec);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_update_listing_not_active() {
+    let (env, client, artist, _, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+    let cid = bytes!(&env, 0x516d74657374);
+    let id = client.create_listing(
+        &artist,
+        &cid,
+        &5_000_000_i128,
+        &symbol_short!("XLM"),
+        &contract_id,
+        &0u32,
+        &valid_recipients(&env, &artist),
+    );
+
+    client.cancel_listing(&artist, &id);
+
+    let new_cid = bytes!(&env, 0x51);
+    let new_rec = valid_recipients(&env, &artist);
+    let new_rec = valid_recipients(&env, &artist);
+    client.update_listing(&artist, &id, &new_cid, &10_000_000_i128, &contract_id, &new_rec);
+}
+
+#[test]
+fn test_artist_revocation_and_reinstatement() {
+    let (env, client, artist, _, contract_id) = setup();
+    client.set_admin(&artist); // artist is admin for this test
+    client.add_token_to_whitelist(&contract_id);
+
+    let artist_to_revoke = Address::generate(&env);
+    client.revoke_artist(&artist_to_revoke);
+
+    // Verify revoked artist cannot create listing
+    let cid = bytes!(&env, 0x516d74657374);
+    let _res = env.as_contract(&client.address, || {
+        let r = client.try_create_listing(
+            &artist_to_revoke,
+            &cid,
+            &5_000_000_i128,
+            &symbol_short!("XLM"),
+            &contract_id,
+            &0u32,
+            &valid_recipients(&env, &artist_to_revoke),
+        );
+        assert!(r.is_err());
+    });
+
+    // Verify revoked artist cannot create auction
+    env.as_contract(&client.address, || {
+        let r = client.try_create_auction(
+            &artist_to_revoke,
+            &cid,
+            &contract_id,
+            &1_000_000_i128,
+            &3600u64,
+            &0u32,
+            &valid_recipients(&env, &artist_to_revoke),
+        );
+        assert!(r.is_err());
+    });
+
+    // Reinstate
+    client.reinstate_artist(&artist_to_revoke);
+
+    // Now it should work
+    let id = client.create_listing(
+        &artist_to_revoke,
+        &cid,
+        &5_000_000_i128,
+        &symbol_short!("XLM"),
+        &contract_id,
+        &0u32,
+        &valid_recipients(&env, &artist_to_revoke),
+    );
+    assert_eq!(id, 1u64);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_update_listing_fails_with_pending_offers() {
+    let (env, client, artist, buyer, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+
+    let listing_id = create_test_listing(&env, &client, &artist, &contract_id);
+    let offer_token = Address::generate(&env);
+    client.make_offer(&buyer, &listing_id, &5_000_000_i128, &offer_token);
+
+    // Try to update while offer is pending
+    let new_cid = bytes!(&env, 0x51);
+    let new_rec = valid_recipients(&env, &artist);
+    client.update_listing(&artist, &listing_id, &new_cid, &10_000_000_i128, &contract_id, &new_rec);
+}
+
 // ── get_artist_listings ──────────────────────────────────────
 
 #[test]
@@ -998,4 +1146,116 @@ fn test_accept_offer_rejects_others() {
     let listing = client.get_listing(&listing_id);
     assert_eq!(listing.status, ListingStatus::Sold);
     assert_eq!(listing.owner, Some(buyer2.clone()));
+}
+// ── Admin and Revocation Tests ──────────────────────────────
+
+#[test]
+fn test_artist_revocation_flow() {
+    let (env, client, artist, _, contract_id) = setup();
+    let cid = bytes!(&env, 0x51);
+    let price = 1_000_000_i128;
+
+    client.set_admin(&artist); // Artist is admin for this test
+    client.add_token_to_whitelist(&contract_id);
+
+    // 1. Artist is NOT revoked initially
+    client.create_listing(
+        &artist,
+        &cid,
+        &price,
+        &symbol_short!("XLM"),
+        &contract_id,
+        &0u32,
+        &valid_recipients(&env, &artist),
+    );
+
+    // 2. Admin revokes artist
+    client.revoke_artist(&artist);
+
+    // 3. Artist tries to create listing - Should Panic (Unauthorized #5)
+    let result = env.as_contract(&contract_id, || {
+        client.try_create_listing(
+            &artist,
+            &cid,
+            &price,
+            &symbol_short!("XLM"),
+            &contract_id,
+            &0u32,
+            &valid_recipients(&env, &artist),
+        )
+    });
+    assert!(result.is_err()); // MarketplaceError::Unauthorized is 5
+
+    // 4. Admin reinstates artist
+    client.reinstate_artist(&artist);
+
+    // 5. Artist creates listing again - Should Success
+    client.create_listing(
+        &artist,
+        &cid,
+        &price,
+        &symbol_short!("XLM"),
+        &contract_id,
+        &0u32,
+        &valid_recipients(&env, &artist),
+    );
+}
+
+#[test]
+fn test_update_listing_with_pending_offer_fails() {
+    let (env, client, artist, buyer, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+
+    let id = create_test_listing(&env, &client, &artist, &contract_id);
+
+    // Add a pending offer
+    client.make_offer(&buyer, &id, &5_000_000, &contract_id);
+
+    // Try to update listing - Should Panic (Unauthorized #5 or similar)
+    let result = env.as_contract(&contract_id, || {
+        client.try_update_listing(
+            &artist,
+            &id,
+            &bytes!(&env, 0x52),
+            &15_000_000,
+            &contract_id,
+            &valid_recipients(&env, &artist),
+        )
+    });
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_update_listing_success_with_recipients() {
+    let (env, client, artist, _, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+
+    let id = create_test_listing(&env, &client, &artist, &contract_id);
+
+    let new_recipients = vec![
+        &env,
+        crate::types::Recipient {
+            address: artist.clone(),
+            percentage: 50,
+        },
+        crate::types::Recipient {
+            address: Address::generate(&env),
+            percentage: 50,
+        },
+    ];
+
+    client.update_listing(
+        &artist,
+        &id,
+        &bytes!(&env, 0x52),
+        &15_000_000,
+        &contract_id,
+        &new_recipients,
+    );
+
+    let listing = client.get_listing(&id);
+    assert_eq!(listing.price, 15_000_000);
+    assert_eq!(listing.recipients.len(), 2);
 }

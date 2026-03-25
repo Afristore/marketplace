@@ -102,10 +102,24 @@ impl MarketplaceContract {
         let mut new_whitelist = Vec::new(&env);
         for t in whitelist.iter() {
             if t != token {
-                new_whitelist.push_back(t.clone());
+                new_whitelist.push_back(t);
             }
         }
         env.storage().persistent().set(&key, &new_whitelist);
+    }
+
+    /// Revoke an artist's ability to create new listings (admin only)
+    pub fn revoke_artist(env: Env, artist: Address) {
+        Self::require_admin(&env);
+        crate::storage::set_artist_revocation(&env, &artist, true);
+        ArtistRevokedEvent { artist }.publish(&env);
+    }
+
+    /// Reinstate a revoked artist (admin only)
+    pub fn reinstate_artist(env: Env, artist: Address) {
+        Self::require_admin(&env);
+        crate::storage::set_artist_revocation(&env, &artist, false);
+        ArtistReinstatedEvent { artist }.publish(&env);
     }
 
     /// Internal: require that the caller is the admin
@@ -156,6 +170,9 @@ impl MarketplaceContract {
         recipients: Vec<Recipient>,
     ) -> u64 {
         artist.require_auth();
+        if crate::storage::is_artist_revoked(&env, &artist) {
+            panic_with_error!(&env, MarketplaceError::Unauthorized);
+        }
         if metadata_cid.is_empty() {
             panic_with_error!(&env, MarketplaceError::InvalidCid);
         }
@@ -220,6 +237,82 @@ impl MarketplaceContract {
         }
         .publish(&env);
         listing_id
+    }
+
+    // ── update_listing ───────────────────────────────────────
+    /// Update an active listing (artist only).
+    /// Now updated to support changing recipients and check for pending offers.
+    pub fn update_listing(
+        env: Env,
+        artist: Address,
+        listing_id: u64,
+        new_metadata_cid: Bytes,
+        new_price: i128,
+        new_token: Address,
+        new_recipients: Vec<Recipient>,
+    ) -> bool {
+        artist.require_auth();
+
+        let mut listing = load_listing(&env, listing_id).expect("Listing not found");
+        if listing.artist != artist {
+            panic_with_error!(&env, MarketplaceError::Unauthorized);
+        }
+
+        if listing.status != ListingStatus::Active {
+            panic_with_error!(&env, MarketplaceError::ListingNotActive);
+        }
+
+        // Check for pending offers
+        let offers = load_listing_offers(&env, listing_id);
+        for offer_id in offers.iter() {
+            let offer = load_offer(&env, offer_id).unwrap();
+            if offer.status == OfferStatus::Pending {
+                panic_with_error!(&env, MarketplaceError::Unauthorized); // Should add more specific error maybe, but using Unauthorized for now
+            }
+        }
+
+        if new_price <= 0 {
+            panic_with_error!(&env, MarketplaceError::InvalidPrice);
+        }
+
+        if new_metadata_cid.is_empty() {
+            panic_with_error!(&env, MarketplaceError::InvalidCid);
+        }
+
+        if !Self::is_token_whitelisted(&env, &new_token) {
+            panic_with_error!(&env, MarketplaceError::Unauthorized);
+        }
+
+        // Validate recipients
+        let recipients_len = new_recipients.len();
+        if recipients_len == 0 || recipients_len > 4 {
+            panic_with_error!(&env, MarketplaceError::TooManyRecipients);
+        }
+        let mut total_percentage = 0;
+        for i in 0..recipients_len {
+            total_percentage += new_recipients.get(i).unwrap().percentage;
+        }
+        if total_percentage != 100 {
+            panic_with_error!(&env, MarketplaceError::InvalidSplit);
+        }
+
+        listing.metadata_cid = new_metadata_cid;
+        listing.price = new_price;
+        listing.token = new_token;
+        listing.recipients = new_recipients;
+
+        save_listing(&env, &listing);
+
+        ListingUpdatedEvent {
+            listing_id,
+            artist,
+            new_price,
+            metadata_cid: listing.metadata_cid.clone(),
+            ledger_sequence: env.ledger().sequence(),
+        }
+        .publish(&env);
+
+        true
     }
 
     // ── buy_artwork ──────────────────────────────────────────
@@ -322,6 +415,9 @@ impl MarketplaceContract {
         recipients: Vec<Recipient>,
     ) -> u64 {
         creator.require_auth();
+        if crate::storage::is_artist_revoked(&env, &creator) {
+            panic_with_error!(&env, MarketplaceError::Unauthorized);
+        }
         if metadata_cid.is_empty() {
             panic_with_error!(&env, MarketplaceError::InvalidCid);
         }

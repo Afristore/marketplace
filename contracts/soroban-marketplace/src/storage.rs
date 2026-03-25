@@ -95,6 +95,26 @@ pub enum DataKey {
     ListingOffers(u64),
     /// Stores a `Vec<u64>` of offer IDs made by an offerer.
     OffererOffers(Address),
+    /// Stores whether an artist is revoked (bool)
+    RevokedArtist(Address),
+}
+
+// ── Revocation helpers ───────────────────────────────────────
+
+pub fn is_artist_revoked(env: &Env, artist: &Address) -> bool {
+    let key = DataKey::RevokedArtist(artist.clone());
+    env.storage()
+        .persistent()
+        .get::<DataKey, bool>(&key)
+        .unwrap_or(false)
+}
+
+pub fn set_artist_revocation(env: &Env, artist: &Address, revoked: bool) {
+    let key = DataKey::RevokedArtist(artist.clone());
+    env.storage().persistent().set(&key, &revoked);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
 }
 
 // ── Bump amounts (ledger sequences) ─────────────────────────

@@ -12,6 +12,7 @@ import {
   createListing,
   buyArtwork,
   cancelListing,
+  updateListing,
   Listing,
 } from "@/lib/contract";
 import { uploadImageToIPFS, uploadMetadataToIPFS, ArtworkMetadata } from "@/lib/ipfs";
@@ -87,8 +88,10 @@ export interface CreateListingInput {
   description: string;
   artistName: string;
   year: string;
+  price: number;
+  tokenAddress?: string;
+  royaltyBps?: number;
   imageFile: File;
-  priceXlm: number;
 }
 
 export function useCreateListing(artistPublicKey: string | null) {
@@ -129,7 +132,9 @@ export function useCreateListing(artistPublicKey: string | null) {
         const listingId = await createListing(
           artistPublicKey,
           metadataResult.cid,
-          input.priceXlm
+          input.price,
+          input.tokenAddress,
+          input.royaltyBps
         );
 
         setProgress("Listing created successfully!");
@@ -205,6 +210,83 @@ export function useCancelListing(artistPublicKey: string | null) {
   );
 
   return { cancel, isCancelling, error };
+}
+
+// ── useUpdateListing ──────────────────────────────────────────
+
+export interface UpdateListingInput {
+  listingId: number;
+  title: string;
+  description: string;
+  artistName: string;
+  year: string;
+  price: number;
+  tokenAddress: string;
+  imageFile?: File; // Optional: only if updating the image
+  currentMetadata: ArtworkMetadata;
+}
+
+export function useUpdateListing(artistPublicKey: string | null) {
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [progress, setProgress] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+
+  const update = useCallback(
+    async (input: UpdateListingInput): Promise<boolean> => {
+      if (!artistPublicKey) {
+        setError("Wallet not connected");
+        return false;
+      }
+
+      setIsUpdating(true);
+      setError(null);
+
+      try {
+        let imageCid = input.currentMetadata.image;
+
+        // Step 1: Upload new image to IPFS if provided.
+        if (input.imageFile) {
+          setProgress("Uploading new image to IPFS…");
+          const imageResult = await uploadImageToIPFS(input.imageFile, input.title);
+          imageCid = `ipfs://${imageResult.cid}`;
+        }
+
+        // Step 2: Build new metadata JSON.
+        const metadata: ArtworkMetadata = {
+          title: input.title,
+          description: input.description,
+          artist: input.artistName,
+          image: imageCid,
+          year: input.year,
+        };
+
+        // Step 3: Upload metadata to IPFS.
+        setProgress("Uploading new metadata to IPFS…");
+        const metadataResult = await uploadMetadataToIPFS(metadata, input.title);
+
+        // Step 4: Call the Soroban contract.
+        setProgress("Updating on-chain listing…");
+        const success = await updateListing(
+          artistPublicKey,
+          input.listingId,
+          metadataResult.cid,
+          input.price,
+          input.tokenAddress
+        );
+
+        setProgress("Listing updated successfully!");
+        return success;
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to update listing");
+        return false;
+      } finally {
+        setIsUpdating(false);
+      }
+    },
+    [artistPublicKey]
+  );
+
+  return { update, isUpdating, progress, error };
 }
 
 // ── useAuction ────────────────────────────────────────────────

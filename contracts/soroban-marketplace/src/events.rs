@@ -49,6 +49,16 @@ pub struct ListingCancelledEvent {
     pub ledger_sequence: u32,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ListingUpdatedEvent {
+    pub listing_id: u64,
+    pub artist: Address,
+    pub new_price: i128,
+    pub metadata_cid: Bytes,
+    pub ledger_sequence: u32,
+}
+
 // Add more event structs as needed for other actions
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -112,6 +122,12 @@ impl AuctionFinalizedEvent {
     }
 }
 
+impl ListingUpdatedEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((LISTING_UPDATED,), self);
+    }
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OfferMadeEvent {
@@ -168,6 +184,30 @@ impl OfferRejectedEvent {
 impl OfferWithdrawnEvent {
     pub fn publish(self, env: &Env) {
         env.events().publish((OFFER_WITHDRAWN,), self);
+    }
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtistRevokedEvent {
+    pub artist: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtistReinstatedEvent {
+    pub artist: Address,
+}
+
+impl ArtistRevokedEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((ARTIST_REVOKED,), self);
+    }
+}
+
+impl ArtistReinstatedEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((ARTIST_REINSTATED,), self);
     }
 }
 
