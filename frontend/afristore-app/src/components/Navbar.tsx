@@ -7,7 +7,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useWalletContext } from "@/context/WalletContext";
-import { Wallet, Store, LayoutDashboard, Menu, X, AlertTriangle, LogOut, ShieldCheck, Tag, Inbox, Compass } from "lucide-react";
+import { Wallet, Store, LayoutDashboard, Menu, X, AlertTriangle, LogOut, ShieldCheck, Tag, Inbox, Compass, User } from "lucide-react";
 import { ConnectWalletModal } from "./ConnectWalletModal";
 
 export function Navbar() {
