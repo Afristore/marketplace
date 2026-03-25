@@ -447,3 +447,180 @@ export async function getOffererOffers(
   const ids = scValToNative(retVal) as bigint[];
   return ids.map(Number);
 }
+
+// ── Auction types mirrored from the Rust contract ─────────────
+
+export type AuctionStatus = "Active" | "Finalized" | "Cancelled";
+
+export interface Auction {
+  auction_id: number;
+  creator: string;
+  metadata_cid: string;
+  token: string;
+  reserve_price: bigint;
+  highest_bid: bigint;
+  highest_bidder: string | null;
+  end_time: number;
+  status: AuctionStatus;
+  royalty_bps: number;
+  original_creator: string;
+}
+
+// ── Auction ScVal parsing ─────────────────────────────────────
+
+function parseAuctionFromScVal(raw: unknown): Auction {
+  const obj = scValToNative(raw as xdr.ScVal) as Record<string, unknown>;
+
+  return {
+    auction_id: Number(obj["auction_id"]),
+    creator: (obj["creator"] as Address).toString(),
+    metadata_cid: Buffer.from(obj["metadata_cid"] as Uint8Array).toString(
+      "utf-8"
+    ),
+    token: (obj["token"] as Address).toString(),
+    reserve_price: BigInt(obj["reserve_price"] as bigint),
+    highest_bid: BigInt(obj["highest_bid"] as bigint),
+    highest_bidder: obj["highest_bidder"]
+      ? (obj["highest_bidder"] as Address).toString()
+      : null,
+    end_time: Number(obj["end_time"]),
+    status: String(obj["status"]) as AuctionStatus,
+    royalty_bps: Number(obj["royalty_bps"]),
+    original_creator: (obj["original_creator"] as Address).toString(),
+  };
+}
+
+// ── Auction contract methods ──────────────────────────────────
+
+/**
+ * create_auction — Artist creates a new on-chain auction.
+ *
+ * @param creatorPublicKey   Stellar public key of the creator (must match Freighter)
+ * @param metadataCid        IPFS CID string of the metadata JSON
+ * @param reservePriceXlm    Reserve price in XLM (will be converted to stroops)
+ * @param durationSeconds    Auction duration in seconds
+ * @returns                  The new auction_id (number)
+ */
+export async function createAuction(
+  creatorPublicKey: string,
+  metadataCid: string,
+  reservePriceXlm: number,
+  durationSeconds: number
+): Promise<number> {
+  const reserveStroops = BigInt(Math.round(reservePriceXlm * 10_000_000));
+
+  const args: xdr.ScVal[] = [
+    // creator: Address
+    new Address(creatorPublicKey).toScVal(),
+    // metadata_cid: Bytes
+    nativeToScVal(Buffer.from(metadataCid, "utf-8"), { type: "bytes" }),
+    // token: Address (native XLM contract)
+    new Address("CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC").toScVal(),
+    // reserve_price: i128
+    nativeToScVal(reserveStroops, { type: "i128" }),
+    // duration: u64
+    nativeToScVal(BigInt(durationSeconds), { type: "u64" }),
+    // royalty_bps: u32
+    nativeToScVal(0, { type: "u32" }),
+    // recipients: Vec<Recipient> (empty for MVP)
+    nativeToScVal([], { type: "vec" }),
+  ];
+
+  const retVal = await invokeContract(
+    creatorPublicKey,
+    "create_auction",
+    args
+  );
+  return Number(scValToNative(retVal));
+}
+
+/**
+ * place_bid — Bidder places a bid on an active auction.
+ */
+export async function placeBid(
+  bidderPublicKey: string,
+  auctionId: number,
+  amountXlm: number
+): Promise<boolean> {
+  const amountStroops = BigInt(Math.round(amountXlm * 10_000_000));
+
+  const args: xdr.ScVal[] = [
+    new Address(bidderPublicKey).toScVal(),
+    nativeToScVal(BigInt(auctionId), { type: "u64" }),
+    nativeToScVal(amountStroops, { type: "i128" }),
+  ];
+
+  await invokeContract(bidderPublicKey, "place_bid", args);
+  return true;
+}
+
+/**
+ * finalize_auction — Finalize an expired or creator-cancelled auction.
+ */
+export async function finalizeAuction(
+  callerPublicKey: string,
+  auctionId: number
+): Promise<boolean> {
+  const args: xdr.ScVal[] = [
+    nativeToScVal(BigInt(auctionId), { type: "u64" }),
+  ];
+
+  await invokeContract(callerPublicKey, "finalize_auction", args);
+  return true;
+}
+
+/**
+ * get_auction — Fetch a single auction by ID (read-only).
+ */
+export async function getAuction(auctionId: number): Promise<Auction> {
+  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+
+  const args: xdr.ScVal[] = [
+    nativeToScVal(BigInt(auctionId), { type: "u64" }),
+  ];
+
+  const retVal = await invokeContract(DUMMY_KEY, "get_auction", args, true);
+  return parseAuctionFromScVal(retVal);
+}
+
+/**
+ * get_artist_auctions — Fetch all auction IDs for an artist.
+ */
+export async function getArtistAuctions(
+  artistPublicKey: string
+): Promise<number[]> {
+  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+
+  const args: xdr.ScVal[] = [new Address(artistPublicKey).toScVal()];
+
+  const retVal = await invokeContract(
+    DUMMY_KEY,
+    "get_artist_auctions",
+    args,
+    true
+  );
+
+  const ids = scValToNative(retVal) as bigint[];
+  return ids.map(Number);
+}
+
+/**
+ * getAllAuctions — Convenience: fetch every auction by trying IDs
+ * sequentially from 1 until a fetch fails.
+ */
+export async function getAllAuctions(): Promise<Auction[]> {
+  const auctions: Auction[] = [];
+  let consecutiveFailures = 0;
+
+  for (let i = 1; consecutiveFailures < 3; i++) {
+    try {
+      const a = await getAuction(i);
+      auctions.push(a);
+      consecutiveFailures = 0;
+    } catch {
+      consecutiveFailures++;
+    }
+  }
+
+  return auctions;
+}

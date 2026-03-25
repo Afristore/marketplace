@@ -7,7 +7,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useWalletContext } from "@/context/WalletContext";
-import { Wallet, Store, LayoutDashboard, Menu, X, AlertTriangle, LogOut, ShieldCheck, Tag, Inbox, Compass, User } from "lucide-react";
+import { Wallet, Store, LayoutDashboard, Menu, X, AlertTriangle, LogOut, ShieldCheck, Tag, Inbox, Compass, User, Gavel } from "lucide-react";
 import { ConnectWalletModal } from "./ConnectWalletModal";
 
 export function Navbar() {
@@ -65,6 +65,13 @@ export function Navbar() {
             >
               <Compass size={16} />
               Explore
+            </Link>
+            <Link
+              href="/auctions"
+              className="flex items-center gap-1.5 text-white/70 hover:text-brand-400 transition-colors duration-300"
+            >
+              <Gavel size={16} />
+              Auctions
             </Link>
             {isConnected && (
               <>
@@ -180,6 +187,14 @@ export function Navbar() {
               >
                 <Compass size={20} className="text-brand-500" />
                 Explore
+              </Link>
+              <Link
+                href="/auctions"
+                onClick={() => setMobileOpen(false)}
+                className="flex items-center gap-3 text-white/80 hover:text-brand-400 transition-colors text-lg font-display"
+              >
+                <Gavel size={20} className="text-brand-500" />
+                Auctions
               </Link>
               {isConnected && (
                 <>
