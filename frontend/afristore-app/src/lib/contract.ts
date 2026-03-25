@@ -153,12 +153,14 @@ function parseListingFromScVal(raw: unknown): Listing {
  * @param artistPublicKey  Stellar public key of the artist (must match Freighter)
  * @param metadataCid      IPFS CID string of the metadata JSON
  * @param priceXlm         Price in XLM (will be converted to stroops)
+ * @param token            Token symbol (e.g., "XLM", "USDC")
  * @returns                The new listing_id (number)
  */
 export async function createListing(
   artistPublicKey: string,
   metadataCid: string,
-  priceXlm: number
+  priceXlm: number,
+  token: string = "XLM"
 ): Promise<number> {
   const priceStroops = BigInt(Math.round(priceXlm * 10_000_000));
 
@@ -170,7 +172,7 @@ export async function createListing(
     // price: i128
     nativeToScVal(priceStroops, { type: "i128" }),
     // currency: Symbol
-    nativeToScVal("XLM", { type: "symbol" }),
+    nativeToScVal(token, { type: "symbol" }),
   ];
 
   const retVal = await invokeContract(artistPublicKey, "create_listing", args);

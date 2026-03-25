@@ -88,7 +88,7 @@ export default function DashboardPage() {
 
         {/* Tab content */}
         {tab === "list" ? (
-          <div className="max-w-lg">
+          <div className="max-w-lg mx-auto">
             <UploadArtworkForm
               onSuccess={() => {
                 refresh();

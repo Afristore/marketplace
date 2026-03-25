@@ -89,6 +89,7 @@ export interface CreateListingInput {
   year: string;
   imageFile: File;
   priceXlm: number;
+  token?: string;
 }
 
 export function useCreateListing(artistPublicKey: string | null) {
@@ -129,7 +130,8 @@ export function useCreateListing(artistPublicKey: string | null) {
         const listingId = await createListing(
           artistPublicKey,
           metadataResult.cid,
-          input.priceXlm
+          input.priceXlm,
+          input.token || "XLM"
         );
 
         setProgress("Listing created successfully!");
