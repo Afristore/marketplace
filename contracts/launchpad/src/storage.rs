@@ -23,14 +23,22 @@ pub fn get_admin(env: &Env) -> Option<Address> {
 }
 
 pub fn set_platform_fee(env: &Env, receiver: &Address, bps: u32) {
-    env.storage().instance().set(&DataKey::PlatformFeeReceiver, receiver);
+    env.storage()
+        .instance()
+        .set(&DataKey::PlatformFeeReceiver, receiver);
     env.storage().instance().set(&DataKey::PlatformFeeBps, &bps);
 }
 
 pub fn get_platform_fee(env: &Env) -> (Address, u32) {
     (
-        env.storage().instance().get(&DataKey::PlatformFeeReceiver).unwrap(),
-        env.storage().instance().get(&DataKey::PlatformFeeBps).unwrap_or(0),
+        env.storage()
+            .instance()
+            .get(&DataKey::PlatformFeeReceiver)
+            .unwrap(),
+        env.storage()
+            .instance()
+            .get(&DataKey::PlatformFeeBps)
+            .unwrap_or(0),
     )
 }
 
@@ -41,10 +49,18 @@ pub fn set_wasm_hashes(
     lazy_721: &BytesN<32>,
     lazy_1155: &BytesN<32>,
 ) {
-    env.storage().instance().set(&DataKey::WasmNormal721, normal_721);
-    env.storage().instance().set(&DataKey::WasmNormal1155, normal_1155);
-    env.storage().instance().set(&DataKey::WasmLazy721, lazy_721);
-    env.storage().instance().set(&DataKey::WasmLazy1155, lazy_1155);
+    env.storage()
+        .instance()
+        .set(&DataKey::WasmNormal721, normal_721);
+    env.storage()
+        .instance()
+        .set(&DataKey::WasmNormal1155, normal_1155);
+    env.storage()
+        .instance()
+        .set(&DataKey::WasmLazy721, lazy_721);
+    env.storage()
+        .instance()
+        .set(&DataKey::WasmLazy1155, lazy_1155);
 }
 
 pub fn get_wasm_normal_721(env: &Env) -> Option<BytesN<32>> {
@@ -93,14 +109,13 @@ pub fn all_collections(env: &Env) -> Vec<CollectionRecord> {
     result
 }
 
-// Counter for total collections ever deployed through this launchpad. 
+// Counter for total collections ever deployed through this launchpad.
 pub fn collection_count(env: &Env) -> u64 {
     env.storage()
         .persistent()
         .get(&DataKey::CollectionCount)
         .unwrap_or(0)
 }
-
 
 // ── Private helpers ───────────────────────────────────────────────────
 
@@ -121,9 +136,11 @@ pub fn record_collection(env: &Env, creator: &Address, address: &Address, kind: 
     env.storage()
         .persistent()
         .set(&DataKey::CollectionByIndex(global_idx), &rec);
-    env.storage()
-        .persistent()
-        .extend_ttl(&DataKey::CollectionByIndex(global_idx), TTL_THRESHOLD, TTL_BUMP);
+    env.storage().persistent().extend_ttl(
+        &DataKey::CollectionByIndex(global_idx),
+        TTL_THRESHOLD,
+        TTL_BUMP,
+    );
 
     // Per-creator indexed storage (#51) — same pattern per creator
     let creator_count: u64 = env
@@ -147,7 +164,9 @@ pub fn record_collection(env: &Env, creator: &Address, address: &Address, kind: 
 
     // Increment global counter
     let next = global_idx + 1;
-    env.storage().persistent().set(&DataKey::CollectionCount, &next);
+    env.storage()
+        .persistent()
+        .set(&DataKey::CollectionCount, &next);
 }
 
 /// Get a collection by global index.

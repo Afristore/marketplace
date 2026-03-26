@@ -1,7 +1,7 @@
 #![no_std]
 
-pub mod events;
 mod contract;
+pub mod events;
 mod storage;
 mod types;
 

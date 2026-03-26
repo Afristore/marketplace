@@ -1,9 +1,6 @@
 extern crate std;
 
-use soroban_sdk::{
-    testutils::Address as _,
-    Address, BytesN, Env, String,
-};
+use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String};
 
 use crate::{CollectionKind, Launchpad, LaunchpadClient};
 
@@ -98,8 +95,14 @@ fn deploys_normal_721_twice_with_unique_addresses() {
 
     let all = client.all_collections();
     assert_eq!(all.len(), 2);
-    assert!(matches!(all.get(0).unwrap().kind, CollectionKind::Normal721));
-    assert!(matches!(all.get(1).unwrap().kind, CollectionKind::Normal721));
+    assert!(matches!(
+        all.get(0).unwrap().kind,
+        CollectionKind::Normal721
+    ));
+    assert!(matches!(
+        all.get(1).unwrap().kind,
+        CollectionKind::Normal721
+    ));
 }
 
 #[test]
@@ -135,8 +138,14 @@ fn deploys_normal_1155_twice_with_unique_addresses() {
 
     let all = client.all_collections();
     assert_eq!(all.len(), 2);
-    assert!(matches!(all.get(0).unwrap().kind, CollectionKind::Normal1155));
-    assert!(matches!(all.get(1).unwrap().kind, CollectionKind::Normal1155));
+    assert!(matches!(
+        all.get(0).unwrap().kind,
+        CollectionKind::Normal1155
+    ));
+    assert!(matches!(
+        all.get(1).unwrap().kind,
+        CollectionKind::Normal1155
+    ));
 }
 
 #[test]
@@ -179,8 +188,14 @@ fn deploys_lazy_721_twice_with_unique_addresses() {
 
     let all = client.all_collections();
     assert_eq!(all.len(), 2);
-    assert!(matches!(all.get(0).unwrap().kind, CollectionKind::LazyMint721));
-    assert!(matches!(all.get(1).unwrap().kind, CollectionKind::LazyMint721));
+    assert!(matches!(
+        all.get(0).unwrap().kind,
+        CollectionKind::LazyMint721
+    ));
+    assert!(matches!(
+        all.get(1).unwrap().kind,
+        CollectionKind::LazyMint721
+    ));
 }
 
 #[test]
@@ -219,6 +234,12 @@ fn deploys_lazy_1155_twice_with_unique_addresses() {
 
     let all = client.all_collections();
     assert_eq!(all.len(), 2);
-    assert!(matches!(all.get(0).unwrap().kind, CollectionKind::LazyMint1155));
-    assert!(matches!(all.get(1).unwrap().kind, CollectionKind::LazyMint1155));
+    assert!(matches!(
+        all.get(0).unwrap().kind,
+        CollectionKind::LazyMint1155
+    ));
+    assert!(matches!(
+        all.get(1).unwrap().kind,
+        CollectionKind::LazyMint1155
+    ));
 }

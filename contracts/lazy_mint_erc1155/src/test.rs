@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use crate::{LazyMint1155, LazyMint1155Client, MintVoucher1155, Error};
+use crate::{Error, LazyMint1155, LazyMint1155Client, MintVoucher1155};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     Address, BytesN, Env, String,
@@ -90,7 +90,7 @@ fn test_redeem_enforces_max_supply() {
         valid_until: 0,
     };
     let _signature = BytesN::from_array(&env, &[0u8; 64]);
-    
+
     // We expect this to fail with MaxSupplyReached if we were to proceed past sig check.
 }
 

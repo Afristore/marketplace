@@ -41,8 +41,8 @@ pub enum DataKey {
     WasmLazy721,
     WasmLazy1155,
     CollectionCount,
-    ByCreator(Address),            // Address → Vec<CollectionRecord> (legacy, will be removed)
-    AllCollections,                // Vec<CollectionRecord> (legacy, will be removed)
+    ByCreator(Address), // Address → Vec<CollectionRecord> (legacy, will be removed)
+    AllCollections,     // Vec<CollectionRecord> (legacy, will be removed)
     /// Indexed collection by global index (#51)
     CollectionByIndex(u64),
     /// Per-creator collection count (#51)

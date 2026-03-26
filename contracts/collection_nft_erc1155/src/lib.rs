@@ -7,8 +7,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror, symbol_short,
-    Address, Env, String, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Vec,
 };
 
 // ─── Errors ──────────────────────────────────────────────────────────────────
@@ -17,12 +16,12 @@ use soroban_sdk::{
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
-    AlreadyInitialized   = 1,
-    NotInitialized       = 2,
-    NotApproved          = 3,
-    InsufficientBalance  = 4,
-    LengthMismatch       = 5,
-    NotCreator           = 6,
+    AlreadyInitialized = 1,
+    NotInitialized = 2,
+    NotApproved = 3,
+    InsufficientBalance = 4,
+    LengthMismatch = 5,
+    NotCreator = 6,
 }
 
 // ─── Storage Keys ─────────────────────────────────────────────────────────────
@@ -41,7 +40,7 @@ pub enum DataKey {
     Balance(Address, u64),            // (account, token_id) → u128
     ApprovedForAll(Address, Address), // (owner, operator) → bool
     TokenUri(u64),
-    TotalSupply(u64),                 // per token_id
+    TotalSupply(u64), // per token_id
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -63,12 +62,16 @@ impl NormalNFT1155 {
         if env.storage().instance().has(&DataKey::Initialized) {
             return Err(Error::AlreadyInitialized);
         }
-        env.storage().instance().set(&DataKey::Initialized,     &true);
-        env.storage().instance().set(&DataKey::Creator,         &creator);
-        env.storage().instance().set(&DataKey::Name,            &name);
-        env.storage().instance().set(&DataKey::NextTokenId,     &0u64);
-        env.storage().instance().set(&DataKey::RoyaltyBps,      &royalty_bps);
-        env.storage().instance().set(&DataKey::RoyaltyReceiver, &royalty_receiver);
+        env.storage().instance().set(&DataKey::Initialized, &true);
+        env.storage().instance().set(&DataKey::Creator, &creator);
+        env.storage().instance().set(&DataKey::Name, &name);
+        env.storage().instance().set(&DataKey::NextTokenId, &0u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::RoyaltyBps, &royalty_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::RoyaltyReceiver, &royalty_receiver);
         env.storage().instance().extend_ttl(50_000, 100_000);
         Ok(())
     }
@@ -77,17 +80,17 @@ impl NormalNFT1155 {
 
     /// Create a brand new token type, auto-assign the next ID.
     /// Returns the new token_id.
-    pub fn mint_new(
-        env: Env,
-        to: Address,
-        amount: u128,
-        uri: String,
-    ) -> Result<u64, Error> {
+    pub fn mint_new(env: Env, to: Address, amount: u128, uri: String) -> Result<u64, Error> {
         Self::only_creator(&env)?;
-        let token_id: u64 = env.storage().instance()
-            .get(&DataKey::NextTokenId).unwrap_or(0);
+        let token_id: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::NextTokenId)
+            .unwrap_or(0);
         Self::_mint(&env, &to, token_id, amount, &uri);
-        env.storage().instance().set(&DataKey::NextTokenId, &(token_id + 1));
+        env.storage()
+            .instance()
+            .set(&DataKey::NextTokenId, &(token_id + 1));
         Ok(token_id)
     }
 
@@ -167,7 +170,7 @@ impl NormalNFT1155 {
         amounts: Vec<u128>,
     ) -> Result<(), Error> {
         spender.require_auth();
-        
+
         // [SECURITY] Allow owner or authorized operator (#48)
         if spender != from && !Self::_is_approved_for_all(&env, &spender, &from) {
             return Err(Error::NotApproved);
@@ -190,17 +193,13 @@ impl NormalNFT1155 {
 
     // ── Approvals ─────────────────────────────────────────────────────────
 
-    pub fn set_approval_for_all(
-        env: Env,
-        owner: Address,
-        operator: Address,
-        approved: bool,
-    ) {
+    pub fn set_approval_for_all(env: Env, owner: Address, operator: Address, approved: bool) {
         owner.require_auth();
         let key = DataKey::ApprovedForAll(owner.clone(), operator.clone());
         env.storage().persistent().set(&key, &approved);
         env.storage().persistent().extend_ttl(&key, 50_000, 100_000);
-        env.events().publish((symbol_short!("appr_all"), owner), (operator, approved));
+        env.events()
+            .publish((symbol_short!("appr_all"), owner), (operator, approved));
     }
 
     // ── Burn ──────────────────────────────────────────────────────────────
@@ -219,38 +218,50 @@ impl NormalNFT1155 {
             return Err(Error::NotApproved);
         }
 
-        let bal: u128 = env.storage().persistent()
-            .get(&DataKey::Balance(from.clone(), token_id)).unwrap_or(0);
-        if bal < amount { return Err(Error::InsufficientBalance); }
+        let bal: u128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Balance(from.clone(), token_id))
+            .unwrap_or(0);
+        if bal < amount {
+            return Err(Error::InsufficientBalance);
+        }
 
-        env.storage().persistent()
+        env.storage()
+            .persistent()
             .set(&DataKey::Balance(from.clone(), token_id), &(bal - amount));
 
-        let supply: u128 = env.storage().persistent()
-            .get(&DataKey::TotalSupply(token_id)).unwrap_or(amount);
-        env.storage().persistent()
-            .set(&DataKey::TotalSupply(token_id), &(supply.saturating_sub(amount)));
+        let supply: u128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalSupply(token_id))
+            .unwrap_or(amount);
+        env.storage().persistent().set(
+            &DataKey::TotalSupply(token_id),
+            &(supply.saturating_sub(amount)),
+        );
 
-        env.events().publish((symbol_short!("burn"), from), (token_id, amount));
+        env.events()
+            .publish((symbol_short!("burn"), from), (token_id, amount));
         Ok(())
     }
 
     // ── View functions ────────────────────────────────────────────────────
 
     pub fn balance_of(env: Env, account: Address, token_id: u64) -> u128 {
-        env.storage().persistent()
-            .get(&DataKey::Balance(account, token_id)).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get(&DataKey::Balance(account, token_id))
+            .unwrap_or(0)
     }
 
     /// Batch balance query — mirrors ERC-1155 `balanceOfBatch`.
-    pub fn balance_of_batch(
-        env: Env,
-        accounts: Vec<Address>,
-        token_ids: Vec<u64>,
-    ) -> Vec<u128> {
+    pub fn balance_of_batch(env: Env, accounts: Vec<Address>, token_ids: Vec<u64>) -> Vec<u128> {
         let mut result = Vec::new(&env);
         for i in 0..accounts.len() {
-            let bal: u128 = env.storage().persistent()
+            let bal: u128 = env
+                .storage()
+                .persistent()
                 .get(&DataKey::Balance(
                     accounts.get(i).unwrap(),
                     token_ids.get(i).unwrap(),
@@ -266,18 +277,24 @@ impl NormalNFT1155 {
     }
 
     pub fn uri(env: Env, token_id: u64) -> String {
-        env.storage().persistent()
+        env.storage()
+            .persistent()
             .get(&DataKey::TokenUri(token_id))
             .unwrap()
     }
 
     pub fn total_supply(env: Env, token_id: u64) -> u128 {
-        env.storage().persistent()
-            .get(&DataKey::TotalSupply(token_id)).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get(&DataKey::TotalSupply(token_id))
+            .unwrap_or(0)
     }
 
     pub fn next_token_id(env: Env) -> u64 {
-        env.storage().instance().get(&DataKey::NextTokenId).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::NextTokenId)
+            .unwrap_or(0)
     }
 
     pub fn name(env: Env) -> String {
@@ -290,8 +307,14 @@ impl NormalNFT1155 {
 
     pub fn royalty_info(env: Env) -> (Address, u32) {
         (
-            env.storage().instance().get(&DataKey::RoyaltyReceiver).unwrap(),
-            env.storage().instance().get(&DataKey::RoyaltyBps).unwrap_or(0),
+            env.storage()
+                .instance()
+                .get(&DataKey::RoyaltyReceiver)
+                .unwrap(),
+            env.storage()
+                .instance()
+                .get(&DataKey::RoyaltyBps)
+                .unwrap_or(0),
         )
     }
 
@@ -299,13 +322,17 @@ impl NormalNFT1155 {
 
     pub fn transfer_ownership(env: Env, new_creator: Address) -> Result<(), Error> {
         Self::only_creator(&env)?;
-        env.storage().instance().set(&DataKey::Creator, &new_creator);
+        env.storage()
+            .instance()
+            .set(&DataKey::Creator, &new_creator);
         Ok(())
     }
 
     pub fn update_royalty(env: Env, receiver: Address, bps: u32) -> Result<(), Error> {
         Self::only_creator(&env)?;
-        env.storage().instance().set(&DataKey::RoyaltyReceiver, &receiver);
+        env.storage()
+            .instance()
+            .set(&DataKey::RoyaltyReceiver, &receiver);
         env.storage().instance().set(&DataKey::RoyaltyBps, &bps);
         Ok(())
     }
@@ -313,7 +340,9 @@ impl NormalNFT1155 {
     // ── Private helpers ───────────────────────────────────────────────────
 
     fn only_creator(env: &Env) -> Result<Address, Error> {
-        let creator: Address = env.storage().instance()
+        let creator: Address = env
+            .storage()
+            .instance()
             .get(&DataKey::Creator)
             .ok_or(Error::NotInitialized)?;
         creator.require_auth();
@@ -321,29 +350,41 @@ impl NormalNFT1155 {
     }
 
     fn _mint(env: &Env, to: &Address, token_id: u64, amount: u128, uri: &String) {
-        let bal: u128 = env.storage().persistent()
-            .get(&DataKey::Balance(to.clone(), token_id)).unwrap_or(0);
-        env.storage().persistent()
+        let bal: u128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Balance(to.clone(), token_id))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
             .set(&DataKey::Balance(to.clone(), token_id), &(bal + amount));
-        env.storage().persistent()
-            .extend_ttl(&DataKey::Balance(to.clone(), token_id), 50_000, 100_000);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Balance(to.clone(), token_id),
+            50_000,
+            100_000,
+        );
 
         // URI is set once; resupply mints don't overwrite it
         if !env.storage().persistent().has(&DataKey::TokenUri(token_id)) {
-            env.storage().persistent().set(&DataKey::TokenUri(token_id), uri);
-            env.storage().persistent()
+            env.storage()
+                .persistent()
+                .set(&DataKey::TokenUri(token_id), uri);
+            env.storage()
+                .persistent()
                 .extend_ttl(&DataKey::TokenUri(token_id), 50_000, 100_000);
         }
 
-        let supply: u128 = env.storage().persistent()
-            .get(&DataKey::TotalSupply(token_id)).unwrap_or(0);
-        env.storage().persistent()
+        let supply: u128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::TotalSupply(token_id))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
             .set(&DataKey::TotalSupply(token_id), &(supply + amount));
 
-        env.events().publish(
-            (symbol_short!("mint"), to.clone()),
-            (token_id, amount),
-        );
+        env.events()
+            .publish((symbol_short!("mint"), to.clone()), (token_id, amount));
     }
 
     fn _transfer(
@@ -353,19 +394,33 @@ impl NormalNFT1155 {
         token_id: u64,
         amount: u128,
     ) -> Result<(), Error> {
-        let from_bal: u128 = env.storage().persistent()
-            .get(&DataKey::Balance(from.clone(), token_id)).unwrap_or(0);
-        if from_bal < amount { return Err(Error::InsufficientBalance); }
+        let from_bal: u128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Balance(from.clone(), token_id))
+            .unwrap_or(0);
+        if from_bal < amount {
+            return Err(Error::InsufficientBalance);
+        }
 
-        env.storage().persistent()
-            .set(&DataKey::Balance(from.clone(), token_id), &(from_bal - amount));
+        env.storage().persistent().set(
+            &DataKey::Balance(from.clone(), token_id),
+            &(from_bal - amount),
+        );
 
-        let to_bal: u128 = env.storage().persistent()
-            .get(&DataKey::Balance(to.clone(), token_id)).unwrap_or(0);
-        env.storage().persistent()
+        let to_bal: u128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Balance(to.clone(), token_id))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
             .set(&DataKey::Balance(to.clone(), token_id), &(to_bal + amount));
-        env.storage().persistent()
-            .extend_ttl(&DataKey::Balance(to.clone(), token_id), 50_000, 100_000);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Balance(to.clone(), token_id),
+            50_000,
+            100_000,
+        );
 
         env.events().publish(
             (symbol_short!("transfer"), from.clone()),
@@ -375,7 +430,8 @@ impl NormalNFT1155 {
     }
 
     fn _is_approved_for_all(env: &Env, operator: &Address, owner: &Address) -> bool {
-        env.storage().persistent()
+        env.storage()
+            .persistent()
             .get(&DataKey::ApprovedForAll(owner.clone(), operator.clone()))
             .unwrap_or(false)
     }

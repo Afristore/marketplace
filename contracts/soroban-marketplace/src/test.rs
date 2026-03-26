@@ -347,7 +347,14 @@ fn test_update_listing_wrong_artist() {
 
     let new_cid = bytes!(&env, 0x51);
     let new_rec = valid_recipients(&env, &artist);
-    client.update_listing(&buyer, &id, &new_cid, &10_000_000_i128, &contract_id, &new_rec);
+    client.update_listing(
+        &buyer,
+        &id,
+        &new_cid,
+        &10_000_000_i128,
+        &contract_id,
+        &new_rec,
+    );
 }
 
 #[test]
@@ -372,7 +379,14 @@ fn test_update_listing_not_active() {
     let new_cid = bytes!(&env, 0x51);
     let new_rec = valid_recipients(&env, &artist);
     let new_rec = valid_recipients(&env, &artist);
-    client.update_listing(&artist, &id, &new_cid, &10_000_000_i128, &contract_id, &new_rec);
+    client.update_listing(
+        &artist,
+        &id,
+        &new_cid,
+        &10_000_000_i128,
+        &contract_id,
+        &new_rec,
+    );
 }
 
 #[test]
@@ -443,7 +457,14 @@ fn test_update_listing_fails_with_pending_offers() {
     // Try to update while offer is pending
     let new_cid = bytes!(&env, 0x51);
     let new_rec = valid_recipients(&env, &artist);
-    client.update_listing(&artist, &listing_id, &new_cid, &10_000_000_i128, &contract_id, &new_rec);
+    client.update_listing(
+        &artist,
+        &listing_id,
+        &new_cid,
+        &10_000_000_i128,
+        &contract_id,
+        &new_rec,
+    );
 }
 
 // ── get_artist_listings ──────────────────────────────────────

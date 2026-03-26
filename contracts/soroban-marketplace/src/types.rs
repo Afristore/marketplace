@@ -1,7 +1,6 @@
 // types.rs
 use soroban_sdk::{contracterror, contracttype, Address, Bytes, Symbol};
 
-// ✅ #[contracterror] generates Into<Error> automatically
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
@@ -21,10 +20,10 @@ pub enum MarketplaceError {
     AuctionNotExpired = 13,
     AuctionAlreadyFinalized = 14,
     ArtistRevoked = 15,
-    OfferNotFound = 15,
-    OfferNotPending = 16,
+    OfferNotFound = 16,
     CannotOfferOwnListing = 17,
-    InsufficientOfferAmount = 18,
+    OfferNotPending = 18,
+    InsufficientOfferAmount = 19,
 }
 
 #[contracttype]
@@ -50,14 +49,13 @@ pub struct Listing {
     pub metadata_cid: Bytes,
     pub price: i128,
     pub currency: Symbol,
-    pub token: Address, // Payment token contract address
+    pub token: Address,
     pub recipients: soroban_sdk::Vec<Recipient>,
     pub status: ListingStatus,
     pub owner: Option<Address>,
     pub created_at: u32,
-    // Royalties
     pub original_creator: Address,
-    pub royalty_bps: u32, // Royalty in basis points (1/100 of a percent)
+    pub royalty_bps: u32,
 }
 
 #[contracttype]
