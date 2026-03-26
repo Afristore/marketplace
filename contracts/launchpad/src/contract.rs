@@ -136,6 +136,7 @@ impl Launchpad {
         wasm_lazy_1155: BytesN<32>,
     ) -> Result<(), Error> {
         storage::require_admin(&env)?;
+        storage::extend_instance_ttl(&env);
         storage::set_wasm_hashes(
             &env,
             &wasm_normal_721,
@@ -165,6 +166,7 @@ impl Launchpad {
         salt: BytesN<32>,
     ) -> Result<Address, Error> {
         creator.require_auth();
+        storage::extend_instance_ttl(&env);
         let wasm = storage::get_wasm_normal_721(&env).ok_or(Error::WasmHashNotSet)?;
 
         // Deploy a new contract instance that shares the Normal721 WASM
@@ -195,6 +197,7 @@ impl Launchpad {
         salt: BytesN<32>,
     ) -> Result<Address, Error> {
         creator.require_auth();
+        storage::extend_instance_ttl(&env);
         let wasm = storage::get_wasm_normal_1155(&env).ok_or(Error::WasmHashNotSet)?;
 
         let addr = env.deployer().with_current_contract(salt).deploy_v2(wasm, ());
@@ -224,6 +227,7 @@ impl Launchpad {
         salt: BytesN<32>,
     ) -> Result<Address, Error> {
         creator.require_auth();
+        storage::extend_instance_ttl(&env);
         let wasm = storage::get_wasm_lazy_721(&env).ok_or(Error::WasmHashNotSet)?;
 
         let addr = env.deployer().with_current_contract(salt).deploy_v2(wasm, ());
@@ -255,6 +259,7 @@ impl Launchpad {
         salt: BytesN<32>,
     ) -> Result<Address, Error> {
         creator.require_auth();
+        storage::extend_instance_ttl(&env);
         let wasm = storage::get_wasm_lazy_1155(&env).ok_or(Error::WasmHashNotSet)?;
 
         let addr = env.deployer().with_current_contract(salt).deploy_v2(wasm, ());
@@ -277,12 +282,14 @@ impl Launchpad {
 
     pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), Error> {
         storage::require_admin(&env)?;
+        storage::extend_instance_ttl(&env);
         storage::set_admin(&env, &new_admin);
         Ok(())
     }
 
     pub fn update_platform_fee(env: Env, receiver: Address, fee_bps: u32) -> Result<(), Error> {
         storage::require_admin(&env)?;
+        storage::extend_instance_ttl(&env);
         storage::set_platform_fee(&env, &receiver, fee_bps);
         Ok(())
     }

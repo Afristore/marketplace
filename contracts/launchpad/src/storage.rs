@@ -85,6 +85,10 @@ pub fn collection_count(env: &Env) -> u64 {
 
 // ── Private helpers ───────────────────────────────────────────────────
 
+pub fn extend_instance_ttl(env: &Env) {
+    env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
+}
+
 pub fn require_admin(env: &Env) -> Result<Address, Error> {
     let admin = get_admin(env).ok_or(Error::NotInitialized)?;
     admin.require_auth();
