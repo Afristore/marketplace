@@ -9,10 +9,11 @@ import Image from "next/image";
 import Link from "next/link";
 import { Listing, stroopsToXlm } from "@/lib/contract";
 import { ArtworkMetadata, fetchMetadata, cidToGatewayUrl } from "@/lib/ipfs";
+import { useEffect } from "react";
 import { useWalletContext } from "@/context/WalletContext";
 import { useBuyArtwork } from "@/hooks/useMarketplace";
 import { ShoppingCart, User, Calendar, Tag } from "lucide-react";
-import { useEffect } from "react";
+import { GuardButton } from "./WalletGuard";
 
 interface ListingCardProps {
   listing: Listing;
@@ -26,7 +27,7 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 export function ListingCard({ listing, onPurchased }: ListingCardProps) {
-  const { publicKey, isConnected, connect } = useWalletContext();
+  const { publicKey, status } = useWalletContext();
   const { buy, isBuying, error: buyError } = useBuyArtwork(publicKey);
 
   const [metadata, setMetadata] = useState<ArtworkMetadata | null>(null);
@@ -44,13 +45,8 @@ export function ListingCard({ listing, onPurchased }: ListingCardProps) {
     : "/placeholder-art.svg";
 
   const isOwn = publicKey === listing.artist;
-  const canBuy = isConnected && listing.status === "Active" && !isOwn;
 
   const handleBuy = async () => {
-    if (!isConnected) {
-      await connect();
-      return;
-    }
     const success = await buy(listing.listing_id);
     if (success) onPurchased?.();
   };
@@ -58,35 +54,35 @@ export function ListingCard({ listing, onPurchased }: ListingCardProps) {
   return (
     <div className="group flex flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm hover:shadow-md transition-shadow">
       {/* Image */}
-      <Link href={`/listing/${listing.listing_id}`}>
-      <div className="relative aspect-square overflow-hidden bg-brand-50">
-        {!imgError ? (
-          <Image
-            src={imageUrl}
-            alt={metadata?.title ?? `Listing #${listing.listing_id}`}
-            fill
-            className="object-cover transition-transform duration-300 group-hover:scale-105"
-            onError={() => setImgError(true)}
-            unoptimized
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center text-5xl">
-            🖼️
-          </div>
-        )}
+      <Link href={`/listings/${listing.listing_id}`}>
+        <div className="relative aspect-square overflow-hidden bg-brand-50">
+          {!imgError ? (
+            <Image
+              src={imageUrl}
+              alt={metadata?.title ?? `Listing #${listing.listing_id}`}
+              fill
+              className="object-cover transition-transform duration-300 group-hover:scale-105"
+              onError={() => setImgError(true)}
+              unoptimized
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center text-5xl">
+              🖼️
+            </div>
+          )}
 
-        {/* Status badge */}
-        <span
-          className={`absolute right-3 top-3 rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_BADGE[listing.status] ?? "bg-gray-100 text-gray-500"}`}
-        >
-          {listing.status}
-        </span>
-      </div>
+          {/* Status badge */}
+          <span
+            className={`absolute right-3 top-3 rounded-full px-2.5 py-0.5 text-xs font-semibold ${STATUS_BADGE[listing.status] ?? "bg-gray-100 text-gray-500"}`}
+          >
+            {listing.status}
+          </span>
+        </div>
       </Link>
 
       {/* Info */}
       <div className="flex flex-1 flex-col p-4">
-        <Link href={`/listing/${listing.listing_id}`}>
+        <Link href={`/listings/${listing.listing_id}`}>
           <h3 className="truncate text-base font-semibold text-gray-900 hover:text-brand-600 transition-colors">
             {metadata?.title ?? `Artwork #${listing.listing_id}`}
           </h3>
@@ -122,23 +118,19 @@ export function ListingCard({ listing, onPurchased }: ListingCardProps) {
           </div>
 
           {listing.status === "Active" && (
-            <button
-              onClick={handleBuy}
+            <GuardButton
+              onAction={handleBuy}
               disabled={isBuying || isOwn}
+              actionName="To purchase this artwork"
               title={isOwn ? "You cannot buy your own listing" : undefined}
-              className="flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+              className="flex items-center gap-1.5 rounded-lg bg-brand-500 px-4 py-2 text-sm font-bold text-white hover:bg-brand-600 disabled:cursor-not-allowed disabled:opacity-50 transition-all shadow-md shadow-brand-500/20 active:scale-95"
             >
               <ShoppingCart size={14} />
-              {!isConnected
-                ? "Connect"
-                : isBuying
-                  ? "Buying…"
-                  : isOwn
-                    ? "Yours"
-                    : "Buy"}
-            </button>
+              {isBuying ? "Buying…" : isOwn ? "Yours" : "Buy Now"}
+            </GuardButton>
           )}
         </div>
+
 
         {buyError && (
           <p className="mt-2 text-xs text-red-500">{buyError}</p>

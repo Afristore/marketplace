@@ -1,6 +1,11 @@
 [workspace]
 members = [
     "contracts/soroban-marketplace",
+    "contracts/launchpad",
+    "contracts/collection_nft_erc721",
+    "contracts/collection_nft_erc1155",
+    "contracts/lazy_mint_erc721",
+    "contracts/lazy_mint_erc1155",
 ]
 resolver = "2"
 

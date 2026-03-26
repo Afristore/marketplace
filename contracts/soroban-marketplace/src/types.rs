@@ -21,6 +21,10 @@ pub enum MarketplaceError {
     AuctionNotExpired = 13,
     AuctionAlreadyFinalized = 14,
     ArtistRevoked = 15,
+    OfferNotFound = 15,
+    OfferNotPending = 16,
+    CannotOfferOwnListing = 17,
+    InsufficientOfferAmount = 18,
 }
 
 #[contracttype]
@@ -79,4 +83,25 @@ pub struct Auction {
     pub recipients: soroban_sdk::Vec<Recipient>,
     pub royalty_bps: u32,
     pub original_creator: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OfferStatus {
+    Pending,
+    Accepted,
+    Rejected,
+    Withdrawn,
+}
+
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct Offer {
+    pub offer_id: u64,
+    pub listing_id: u64,
+    pub offerer: Address,
+    pub amount: i128,
+    pub token: Address,
+    pub status: OfferStatus,
+    pub created_at: u32,
 }

@@ -49,6 +49,16 @@ pub struct ListingCancelledEvent {
     pub ledger_sequence: u32,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ListingUpdatedEvent {
+    pub listing_id: u64,
+    pub artist: Address,
+    pub new_price: i128,
+    pub metadata_cid: Bytes,
+    pub ledger_sequence: u32,
+}
+
 // Add more event structs as needed for other actions
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -109,6 +119,95 @@ impl BidPlacedEvent {
 impl AuctionFinalizedEvent {
     pub fn publish(self, env: &Env) {
         env.events().publish((AUCTION_RESOLVED,), self);
+    }
+}
+
+impl ListingUpdatedEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((LISTING_UPDATED,), self);
+    }
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OfferMadeEvent {
+    pub offer_id: u64,
+    pub listing_id: u64,
+    pub offerer: Address,
+    pub amount: i128,
+    pub token: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OfferAcceptedEvent {
+    pub offer_id: u64,
+    pub listing_id: u64,
+    pub offerer: Address,
+    pub amount: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OfferRejectedEvent {
+    pub offer_id: u64,
+    pub listing_id: u64,
+    pub offerer: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OfferWithdrawnEvent {
+    pub offer_id: u64,
+    pub listing_id: u64,
+    pub offerer: Address,
+}
+
+impl OfferMadeEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((OFFER_MADE,), self);
+    }
+}
+
+impl OfferAcceptedEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((OFFER_ACCEPTED,), self);
+    }
+}
+
+impl OfferRejectedEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((OFFER_REJECTED,), self);
+    }
+}
+
+impl OfferWithdrawnEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((OFFER_WITHDRAWN,), self);
+    }
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtistRevokedEvent {
+    pub artist: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ArtistReinstatedEvent {
+    pub artist: Address,
+}
+
+impl ArtistRevokedEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((ARTIST_REVOKED,), self);
+    }
+}
+
+impl ArtistReinstatedEvent {
+    pub fn publish(self, env: &Env) {
+        env.events().publish((ARTIST_REINSTATED,), self);
     }
 }
 

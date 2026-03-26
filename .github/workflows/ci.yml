@@ -1,0 +1,44 @@
+name: Soroban CI
+
+# This workflow triggers on every push to the main branch
+# and on every pull request opened against any branch.
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "*" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_and_test:
+    name: Build and Test Contracts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check Formatting
+        run: cargo fmt --all -- --check
+        
+      - name: Run Cargo Clippy (Linting)
+        # This will fail the build if there are any warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Build WASM Target
+        # Ensures that the contracts actually compile to Soroban's required WASM architecture
+        run: cargo build --target wasm32-unknown-unknown --release
+
+      - name: Run Unit Tests
+        run: cargo test

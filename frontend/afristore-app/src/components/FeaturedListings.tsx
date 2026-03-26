@@ -157,7 +157,7 @@ export function FeaturedListings() {
                                     className="min-w-[calc(33.333%-16px)] max-w-[calc(33.333%-16px)] flex-shrink-0 group relative"
                                     style={{ animationDelay: `${i * 150}ms` }}
                                 >
-                                    <Link href={`/listing/${item.listing.listing_id}`}>
+                                    <Link href={`/listings/${item.listing.listing_id}`}>
                                         <div className="relative aspect-[4/5] rounded-2xl overflow-hidden corner-accent">
                                             <Image
                                                 src={item.imageUrl}
@@ -205,39 +205,41 @@ export function FeaturedListings() {
                                     className="min-w-[calc(33.333%-16px)] max-w-[calc(33.333%-16px)] flex-shrink-0 group relative"
                                     style={{ animationDelay: `${i * 150}ms` }}
                                 >
-                                    <div className="relative aspect-[4/5] rounded-2xl overflow-hidden corner-accent cursor-pointer">
-                                        <Image
-                                            src={item.image}
-                                            alt={item.title}
-                                            fill
-                                            className="object-cover transition-transform duration-700 group-hover:scale-110"
-                                            unoptimized
-                                        />
-                                        <div className="absolute inset-0 bg-card-gradient opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                                    <Link href={`/listings/${i + 1}`}>
+                                        <div className="relative aspect-[4/5] rounded-2xl overflow-hidden corner-accent cursor-pointer">
+                                            <Image
+                                                src={item.image}
+                                                alt={item.title}
+                                                fill
+                                                className="object-cover transition-transform duration-700 group-hover:scale-110"
+                                                unoptimized
+                                            />
+                                            <div className="absolute inset-0 bg-card-gradient opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
 
-                                        <div className="absolute bottom-0 left-0 right-0 p-5 translate-y-4 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500">
-                                            <h3 className="text-white font-display font-bold text-lg">
-                                                {item.title}
-                                            </h3>
-                                            <p className="text-brand-200 text-sm mt-1">{item.artist}</p>
-                                            <div className="flex items-center justify-between mt-3">
-                                                <div className="flex items-center gap-1.5 text-brand-400">
-                                                    <Tag size={14} />
-                                                    <span className="font-bold text-white">
-                                                        {item.price} XLM
-                                                    </span>
-                                                </div>
-                                                <div className="flex items-center gap-1.5 text-white/70 text-sm">
-                                                    <Eye size={14} />
-                                                    Preview
+                                            <div className="absolute bottom-0 left-0 right-0 p-5 translate-y-4 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500">
+                                                <h3 className="text-white font-display font-bold text-lg">
+                                                    {item.title}
+                                                </h3>
+                                                <p className="text-brand-200 text-sm mt-1">{item.artist}</p>
+                                                <div className="flex items-center justify-between mt-3">
+                                                    <div className="flex items-center gap-1.5 text-brand-400">
+                                                        <Tag size={14} />
+                                                        <span className="font-bold text-white">
+                                                            {item.price} XLM
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5 text-white/70 text-sm">
+                                                        <Eye size={14} />
+                                                        Preview
+                                                    </div>
                                                 </div>
                                             </div>
-                                        </div>
 
-                                        <span className="absolute top-4 right-4 bg-mint-500/90 text-white text-xs font-semibold px-3 py-1 rounded-full backdrop-blur-sm">
-                                            Featured
-                                        </span>
-                                    </div>
+                                            <span className="absolute top-4 right-4 bg-mint-500/90 text-white text-xs font-semibold px-3 py-1 rounded-full backdrop-blur-sm">
+                                                Featured
+                                            </span>
+                                        </div>
+                                    </Link>
                                 </div>
                             ))}
                     </div>
@@ -279,7 +281,7 @@ export function FeaturedListings() {
                 {/* View All CTA */}
                 <div className="text-center mt-12">
                     <Link
-                        href="/"
+                        href="/explore"
                         className="inline-flex items-center gap-2 text-brand-600 font-semibold hover:text-brand-700 transition-colors group/link"
                     >
                         View All Artworks

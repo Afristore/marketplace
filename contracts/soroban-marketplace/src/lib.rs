@@ -12,7 +12,7 @@ mod types;
 mod test;
 
 pub use contract::MarketplaceContract;
-pub use types::{Listing, ListingStatus, MarketplaceError};
+pub use types::{Listing, ListingStatus, MarketplaceError, Offer, OfferStatus};
 
 // Re-export the generated client so test.rs can use MarketplaceContractClient.
 #[cfg(any(test, feature = "testutils"))]

@@ -1,0 +1,41 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model SyncState {
+  id          Int      @id @default(1)
+  lastLedger  Int      @default(0)
+  updatedAt   DateTime @updatedAt
+}
+
+model Listing {
+  listingId       BigInt   @id
+  artist          String
+  owner           String?
+  price           Decimal  @db.Decimal(32, 7)
+  currency        String
+  metadataCid     String
+  token           String
+  status          String   // "Active", "Sold", "Cancelled", "Auction"
+  royaltyBps      Int      @default(0)
+  createdAtLedger Int
+  updatedAtLedger Int
+}
+
+model MarketplaceEvent {
+  id              Int      @id @default(autoincrement())
+  listingId       BigInt?
+  eventType       String   // "LISTING_CREATED", "ARTWORK_SOLD", etc.
+  actor           String
+  data            Json
+  ledgerSequence  Int
+  ledgerTimestamp DateTime @default(now())
+}

@@ -112,8 +112,9 @@ export async function fetchMetadata(cid: string): Promise<ArtworkMetadata> {
 
 // ── Utility ───────────────────────────────────────────────────
 
-/** Converts a raw CID string to an IPFS gateway URL for image display. */
+/** Converts a raw CID string or an IPFS URI to an IPFS gateway URL for image display. Handles full URLs gracefully. */
 export function cidToGatewayUrl(cid: string): string {
+  if (cid.startsWith("http")) return cid;
   const cleanCid = cid.replace("ipfs://", "").trim();
   return `${config.pinataGateway}/ipfs/${cleanCid}`;
 }

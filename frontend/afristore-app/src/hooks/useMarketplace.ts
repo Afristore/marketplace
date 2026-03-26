@@ -12,6 +12,7 @@ import {
   createListing,
   buyArtwork,
   cancelListing,
+  updateListing,
   Listing,
 } from "@/lib/contract";
 import { uploadImageToIPFS, uploadMetadataToIPFS, ArtworkMetadata } from "@/lib/ipfs";
@@ -87,8 +88,10 @@ export interface CreateListingInput {
   description: string;
   artistName: string;
   year: string;
+  price: number;
+  tokenAddress?: string;
+  royaltyBps?: number;
   imageFile: File;
-  priceXlm: number;
 }
 
 export function useCreateListing(artistPublicKey: string | null) {
@@ -129,7 +132,9 @@ export function useCreateListing(artistPublicKey: string | null) {
         const listingId = await createListing(
           artistPublicKey,
           metadataResult.cid,
-          input.priceXlm
+          input.price,
+          input.tokenAddress,
+          input.royaltyBps
         );
 
         setProgress("Listing created successfully!");
@@ -205,4 +210,141 @@ export function useCancelListing(artistPublicKey: string | null) {
   );
 
   return { cancel, isCancelling, error };
+}
+
+// ── useUpdateListing ──────────────────────────────────────────
+
+export interface UpdateListingInput {
+  listingId: number;
+  title: string;
+  description: string;
+  artistName: string;
+  year: string;
+  price: number;
+  tokenAddress: string;
+  imageFile?: File; // Optional: only if updating the image
+  currentMetadata: ArtworkMetadata;
+}
+
+export function useUpdateListing(artistPublicKey: string | null) {
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [progress, setProgress] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+
+  const update = useCallback(
+    async (input: UpdateListingInput): Promise<boolean> => {
+      if (!artistPublicKey) {
+        setError("Wallet not connected");
+        return false;
+      }
+
+      setIsUpdating(true);
+      setError(null);
+
+      try {
+        let imageCid = input.currentMetadata.image;
+
+        // Step 1: Upload new image to IPFS if provided.
+        if (input.imageFile) {
+          setProgress("Uploading new image to IPFS…");
+          const imageResult = await uploadImageToIPFS(input.imageFile, input.title);
+          imageCid = `ipfs://${imageResult.cid}`;
+        }
+
+        // Step 2: Build new metadata JSON.
+        const metadata: ArtworkMetadata = {
+          title: input.title,
+          description: input.description,
+          artist: input.artistName,
+          image: imageCid,
+          year: input.year,
+        };
+
+        // Step 3: Upload metadata to IPFS.
+        setProgress("Uploading new metadata to IPFS…");
+        const metadataResult = await uploadMetadataToIPFS(metadata, input.title);
+
+        // Step 4: Call the Soroban contract.
+        setProgress("Updating on-chain listing…");
+        const success = await updateListing(
+          artistPublicKey,
+          input.listingId,
+          metadataResult.cid,
+          input.price,
+          input.tokenAddress
+        );
+
+        setProgress("Listing updated successfully!");
+        return success;
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Failed to update listing");
+        return false;
+      } finally {
+        setIsUpdating(false);
+      }
+    },
+    [artistPublicKey]
+  );
+
+  return { update, isUpdating, progress, error };
+}
+
+// ── useAuction ────────────────────────────────────────────────
+
+import { getAuction, placeBid, Auction } from "@/lib/contract";
+
+export function useAuction(auctionId: number | null) {
+  const [auction, setAuction] = useState<Auction | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    if (auctionId === null) return;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const a = await getAuction(auctionId);
+      setAuction(a);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load auction");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [auctionId]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  return { auction, isLoading, error, refresh };
+}
+
+// ── usePlaceBid ───────────────────────────────────────────────
+
+export function usePlaceBid(bidderPublicKey: string | null) {
+  const [isBidding, setIsBidding] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const bid = useCallback(
+    async (auctionId: number, amountXlm: number): Promise<boolean> => {
+      if (!bidderPublicKey) {
+        setError("Wallet not connected");
+        return false;
+      }
+      setIsBidding(true);
+      setError(null);
+      try {
+        await placeBid(bidderPublicKey, auctionId, amountXlm);
+        return true;
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "Bid failed");
+        return false;
+      } finally {
+        setIsBidding(false);
+      }
+    },
+    [bidderPublicKey]
+  );
+
+  return { bid, isBidding, error };
 }

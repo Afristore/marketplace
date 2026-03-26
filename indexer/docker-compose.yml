@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=marketplace_indexer
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  indexer:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/marketplace_indexer?schema=public
+      - PORT=4000
+      - STELLAR_RPC_URL=https://soroban-testnet.stellar.org
+      - MARKETPLACE_CONTRACT_ID=${MARKETPLACE_CONTRACT_ID}
+      - POLL_INTERVAL_MS=5000
+    ports:
+      - "4000:4000"
+
+volumes:
+  postgres_data:
