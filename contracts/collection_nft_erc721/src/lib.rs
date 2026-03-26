@@ -163,16 +163,20 @@ impl NormalNFT721 {
 
     pub fn approve(
         env: Env,
-        owner: Address,
+        spender: Address, // Renamed 'owner' to 'spender' as it identifies the caller
         approved: Address,
         token_id: u64,
     ) -> Result<(), Error> {
-        owner.require_auth();
+spender.require_auth();
         Self::extend_instance_ttl(&env);
-        let actual: Address = env.storage().persistent()
+        let owner: Address = env.storage().persistent()
             .get(&DataKey::Owner(token_id))
             .ok_or(Error::TokenNotFound)?;
-        if actual != owner { return Err(Error::NotOwner); }
+
+        // [SECURITY] Allow owner or authorized operator to approve (#48)
+        if spender != owner && !Self::is_approved_for_all(env.clone(), owner.clone(), spender.clone()) {
+            return Err(Error::NotApproved);
+        }
 
         env.storage().persistent().set(&DataKey::Approved(token_id), &approved);
         env.storage().persistent().extend_ttl(&DataKey::Approved(token_id), TTL_THRESHOLD, TTL_BUMP);
@@ -196,13 +200,15 @@ impl NormalNFT721 {
 
     // ── Burn ──────────────────────────────────────────────────────────────
 
-    pub fn burn(env: Env, owner: Address, token_id: u64) -> Result<(), Error> {
-        owner.require_auth();
+pub fn burn(env: Env, spender: Address, token_id: u64) -> Result<(), Error> {
+        spender.require_auth();
         Self::extend_instance_ttl(&env);
-        let actual: Address = env.storage().persistent()
+        let owner: Address = env.storage().persistent()
             .get(&DataKey::Owner(token_id))
             .ok_or(Error::TokenNotFound)?;
-        if actual != owner { return Err(Error::NotOwner); }
+
+        // [SECURITY] Allow owner, approved spender, or operator to burn (#48)
+        Self::_check_approved(&env, &spender, &owner, token_id)?;
 
         let bal: u64 = env.storage().persistent()
             .get(&DataKey::BalanceOf(owner.clone())).unwrap_or(1);
@@ -331,6 +337,9 @@ impl NormalNFT721 {
     }
 
     fn _transfer(env: &Env, from: &Address, to: &Address, token_id: u64) -> Result<(), Error> {
+        // [SECURITY] Clear single-token approval on every transfer (#50)
+        env.storage().persistent().remove(&DataKey::Approved(token_id));
+
         let owner: Address = env.storage().persistent()
             .get(&DataKey::Owner(token_id))
             .ok_or(Error::TokenNotFound)?;

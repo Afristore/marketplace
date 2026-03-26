@@ -222,13 +222,19 @@ impl LazyMint1155 {
 
     pub fn batch_transfer(
         env: Env,
+        spender: Address,
         from: Address,
         to: Address,
         token_ids: Vec<u64>,
         amounts: Vec<u128>,
     ) -> Result<(), Error> {
-        from.require_auth();
+spender.require_auth();
         Self::extend_instance_ttl(&env);
+
+        // [SECURITY] Allow owner or authorized operator (#48)
+        if spender != from && !Self::_is_approved_for_all(&env, &spender, &from) {
+            return Err(Error::NotApproved);
+        }
         if token_ids.len() != amounts.len() { return Err(Error::LengthMismatch); }
         for i in 0..token_ids.len() {
             Self::_transfer(
@@ -262,12 +268,18 @@ impl LazyMint1155 {
 
     pub fn burn(
         env: Env,
+        spender: Address,
         from: Address,
         token_id: u64,
         amount: u128,
     ) -> Result<(), Error> {
-        from.require_auth();
+spender.require_auth();
         Self::extend_instance_ttl(&env);
+
+        // [SECURITY] Allow owner or authorized operator to burn (#48)
+        if spender != from && !Self::_is_approved_for_all(&env, &spender, &from) {
+            return Err(Error::NotApproved);
+        }
         let bal: u128 = env.storage().persistent()
             .get(&DataKey::Balance(from.clone(), token_id)).unwrap_or(0);
         if bal < amount { return Err(Error::InsufficientBalance); }
@@ -383,9 +395,11 @@ impl LazyMint1155 {
         Ok(creator)
     }
 
-    /// sha256(token_id ‖ max_amount ‖ price_per_unit ‖ valid_until ‖ uri_hash ‖ currency_xdr)
+    /// sha256(contract_addr ‖ token_id ‖ max_amount ‖ price_per_unit ‖ valid_until ‖ uri_hash ‖ currency_xdr)
     fn _voucher_digest(env: &Env, v: &MintVoucher1155) -> Bytes {
         let mut raw = Bytes::new(env);
+        // [SECURITY] Bind signature to this contract instance to prevent replay (#49)
+        raw.append(&env.current_contract_address().to_xdr(env));
         raw.extend_from_array(&v.token_id.to_be_bytes());
         raw.extend_from_array(&v.max_amount.to_be_bytes());
         raw.extend_from_array(&v.price_per_unit.to_be_bytes());

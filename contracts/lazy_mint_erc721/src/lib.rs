@@ -234,16 +234,21 @@ impl LazyMint721 {
 
     pub fn approve(
         env: Env,
-        owner: Address,
+        spender: Address,
         approved: Address,
         token_id: u64,
     ) -> Result<(), Error> {
-        owner.require_auth();
+spender.require_auth();
         Self::extend_instance_ttl(&env);
-        let actual: Address = env.storage().persistent()
+        let owner: Address = env.storage().persistent()
             .get(&DataKey::Owner(token_id))
             .ok_or(Error::TokenNotFound)?;
-        if actual != owner { return Err(Error::NotOwner); }
+
+        // [SECURITY] Allow owner or authorized operator to approve (#48)
+        if spender != owner && !Self::is_approved_for_all(env.clone(), owner.clone(), spender.clone()) {
+            return Err(Error::NotApproved);
+        }
+
         env.storage().persistent().set(&DataKey::Approved(token_id), &approved);
         env.storage().persistent().extend_ttl(&DataKey::Approved(token_id), TTL_THRESHOLD, TTL_BUMP);
         Ok(())
@@ -366,6 +371,8 @@ impl LazyMint721 {
     ///  N   bytes  currency address XDR  (replay-binds to the payment token)
     fn _voucher_digest(env: &Env, v: &MintVoucher) -> Bytes {
         let mut raw = Bytes::new(env);
+        // [SECURITY] Bind signature to this contract instance to prevent replay (#49)
+        raw.append(&env.current_contract_address().to_xdr(env));
         raw.extend_from_array(&v.token_id.to_be_bytes());
         raw.extend_from_array(&v.price.to_be_bytes());
         raw.extend_from_array(&v.valid_until.to_be_bytes());
@@ -375,6 +382,9 @@ impl LazyMint721 {
     }
 
     fn _transfer(env: &Env, from: &Address, to: &Address, token_id: u64) -> Result<(), Error> {
+        // [SECURITY] Clear single-token approval on every transfer (#50)
+        env.storage().persistent().remove(&DataKey::Approved(token_id));
+
         let owner: Address = env.storage().persistent()
             .get(&DataKey::Owner(token_id))
             .ok_or(Error::TokenNotFound)?;
