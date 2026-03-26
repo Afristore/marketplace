@@ -222,3 +222,84 @@ fn deploys_lazy_1155_twice_with_unique_addresses() {
     assert!(matches!(all.get(0).unwrap().kind, CollectionKind::LazyMint1155));
     assert!(matches!(all.get(1).unwrap().kind, CollectionKind::LazyMint1155));
 }
+
+// ── TTL-extension regression tests ──────────────────────────────────────────
+// These verify that extend_instance_ttl calls (added for storage TTL safety)
+// do not panic and that state-modifying admin functions still work correctly.
+
+#[test]
+fn transfer_admin_and_update_fee_with_ttl() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    // transfer_admin now calls extend_instance_ttl
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+    assert_eq!(client.admin(), new_admin);
+
+    // update_platform_fee now calls extend_instance_ttl
+    let new_fee_rx = Address::generate(&env);
+    client.update_platform_fee(&new_fee_rx, &300u32);
+    let (rx, bps) = client.platform_fee();
+    assert_eq!(rx, new_fee_rx);
+    assert_eq!(bps, 300);
+}
+
+#[test]
+fn deploy_all_four_types_extends_ttl() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+    let royalty_receiver = Address::generate(&env);
+    let creator_pubkey = BytesN::from_array(&env, &[5u8; 32]);
+
+    // Each deploy_* now calls extend_instance_ttl before deploying
+    let _a1 = client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "N721"),
+        &String::from_str(&env, "N7"),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[50u8; 32]),
+    );
+
+    let _a2 = client.deploy_normal_1155(
+        &creator,
+        &String::from_str(&env, "N1155"),
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[51u8; 32]),
+    );
+
+    let _a3 = client.deploy_lazy_721(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "L721"),
+        &String::from_str(&env, "L7"),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[52u8; 32]),
+    );
+
+    let _a4 = client.deploy_lazy_1155(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "L1155"),
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[53u8; 32]),
+    );
+
+    assert_eq!(client.collection_count(), 4u64);
+
+    let all = client.all_collections();
+    assert_eq!(all.len(), 4);
+    assert!(matches!(all.get(0).unwrap().kind, CollectionKind::Normal721));
+    assert!(matches!(all.get(1).unwrap().kind, CollectionKind::Normal1155));
+    assert!(matches!(all.get(2).unwrap().kind, CollectionKind::LazyMint721));
+    assert!(matches!(all.get(3).unwrap().kind, CollectionKind::LazyMint1155));
+
+    let by_creator = client.collections_by_creator(&creator);
+    assert_eq!(by_creator.len(), 4);
+}

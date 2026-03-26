@@ -63,6 +63,11 @@ pub enum DataKey {
     MaxAmount(u64),                   // token_id → max_amount from voucher
 }
 
+// ─── TTL Constants ───────────────────────────────────────────────────────────
+
+const TTL_THRESHOLD: u32 = 50_000;
+const TTL_BUMP: u32 = 100_000;
+
 // ─── Contract ─────────────────────────────────────────────────────────────────
 
 #[contract]
@@ -89,7 +94,7 @@ impl LazyMint1155 {
         env.storage().instance().set(&DataKey::Name,            &name);
         env.storage().instance().set(&DataKey::RoyaltyBps,      &royalty_bps);
         env.storage().instance().set(&DataKey::RoyaltyReceiver, &royalty_receiver);
-        env.storage().instance().extend_ttl(50_000, 100_000);
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
         Ok(())
     }
 
@@ -108,6 +113,7 @@ impl LazyMint1155 {
         signature: BytesN<64>,
     ) -> Result<(), Error> {
         buyer.require_auth();
+        Self::extend_instance_ttl(&env);
 
         // 1. Expiry
         if voucher.valid_until != 0
@@ -129,7 +135,7 @@ impl LazyMint1155 {
             env.storage().persistent()
                 .set(&DataKey::MaxAmount(voucher.token_id), &voucher.max_amount);
             env.storage().persistent()
-                .extend_ttl(&DataKey::MaxAmount(voucher.token_id), 50_000, 100_000);
+                .extend_ttl(&DataKey::MaxAmount(voucher.token_id), TTL_THRESHOLD, TTL_BUMP);
         }
 
         // 4. Signature verification (panics tx on bad sig)
@@ -156,24 +162,26 @@ impl LazyMint1155 {
         env.storage().persistent()
             .set(&DataKey::Balance(buyer.clone(), voucher.token_id), &(bal + amount));
         env.storage().persistent()
-            .extend_ttl(&DataKey::Balance(buyer.clone(), voucher.token_id), 50_000, 100_000);
+            .extend_ttl(&DataKey::Balance(buyer.clone(), voucher.token_id), TTL_THRESHOLD, TTL_BUMP);
 
         // Set URI on first mint of this token_id
         if !env.storage().persistent().has(&DataKey::TokenUri(voucher.token_id)) {
             env.storage().persistent()
                 .set(&DataKey::TokenUri(voucher.token_id), &voucher.uri);
             env.storage().persistent()
-                .extend_ttl(&DataKey::TokenUri(voucher.token_id), 50_000, 100_000);
+                .extend_ttl(&DataKey::TokenUri(voucher.token_id), TTL_THRESHOLD, TTL_BUMP);
         }
 
         let supply: u128 = env.storage().persistent()
             .get(&DataKey::TotalSupply(voucher.token_id)).unwrap_or(0);
         env.storage().persistent()
             .set(&DataKey::TotalSupply(voucher.token_id), &(supply + amount));
+        env.storage().persistent()
+            .extend_ttl(&DataKey::TotalSupply(voucher.token_id), TTL_THRESHOLD, TTL_BUMP);
 
         // Update per-buyer counter
         env.storage().persistent().set(&minted_key, &(already + amount));
-        env.storage().persistent().extend_ttl(&minted_key, 50_000, 100_000);
+        env.storage().persistent().extend_ttl(&minted_key, TTL_THRESHOLD, TTL_BUMP);
 
         env.events().publish(
             (symbol_short!("redeem"), buyer),
@@ -192,6 +200,7 @@ impl LazyMint1155 {
         amount: u128,
     ) -> Result<(), Error> {
         from.require_auth();
+        Self::extend_instance_ttl(&env);
         Self::_transfer(&env, &from, &to, token_id, amount)
     }
 
@@ -204,6 +213,7 @@ impl LazyMint1155 {
         amount: u128,
     ) -> Result<(), Error> {
         operator.require_auth();
+        Self::extend_instance_ttl(&env);
         if !Self::_is_approved_for_all(&env, &operator, &from) {
             return Err(Error::NotApproved);
         }
@@ -218,13 +228,13 @@ impl LazyMint1155 {
         token_ids: Vec<u64>,
         amounts: Vec<u128>,
     ) -> Result<(), Error> {
-        spender.require_auth();
+spender.require_auth();
+        Self::extend_instance_ttl(&env);
 
         // [SECURITY] Allow owner or authorized operator (#48)
         if spender != from && !Self::_is_approved_for_all(&env, &spender, &from) {
             return Err(Error::NotApproved);
         }
-
         if token_ids.len() != amounts.len() { return Err(Error::LengthMismatch); }
         for i in 0..token_ids.len() {
             Self::_transfer(
@@ -247,9 +257,10 @@ impl LazyMint1155 {
         approved: bool,
     ) {
         owner.require_auth();
+        Self::extend_instance_ttl(&env);
         let key = DataKey::ApprovedForAll(owner.clone(), operator.clone());
         env.storage().persistent().set(&key, &approved);
-        env.storage().persistent().extend_ttl(&key, 50_000, 100_000);
+        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_BUMP);
         env.events().publish((symbol_short!("appr_all"), owner), (operator, approved));
     }
 
@@ -262,22 +273,26 @@ impl LazyMint1155 {
         token_id: u64,
         amount: u128,
     ) -> Result<(), Error> {
-        spender.require_auth();
+spender.require_auth();
+        Self::extend_instance_ttl(&env);
 
         // [SECURITY] Allow owner or authorized operator to burn (#48)
         if spender != from && !Self::_is_approved_for_all(&env, &spender, &from) {
             return Err(Error::NotApproved);
         }
-
         let bal: u128 = env.storage().persistent()
             .get(&DataKey::Balance(from.clone(), token_id)).unwrap_or(0);
         if bal < amount { return Err(Error::InsufficientBalance); }
         env.storage().persistent()
             .set(&DataKey::Balance(from.clone(), token_id), &(bal - amount));
+        env.storage().persistent()
+            .extend_ttl(&DataKey::Balance(from.clone(), token_id), TTL_THRESHOLD, TTL_BUMP);
         let supply: u128 = env.storage().persistent()
             .get(&DataKey::TotalSupply(token_id)).unwrap_or(amount);
         env.storage().persistent()
             .set(&DataKey::TotalSupply(token_id), &(supply.saturating_sub(amount)));
+        env.storage().persistent()
+            .extend_ttl(&DataKey::TotalSupply(token_id), TTL_THRESHOLD, TTL_BUMP);
         env.events().publish((symbol_short!("burn"), from), (token_id, amount));
         Ok(())
     }
@@ -346,24 +361,31 @@ impl LazyMint1155 {
 
     pub fn transfer_ownership(env: Env, new_creator: Address) -> Result<(), Error> {
         Self::only_creator(&env)?;
+        Self::extend_instance_ttl(&env);
         env.storage().instance().set(&DataKey::Creator, &new_creator);
         Ok(())
     }
 
     pub fn update_creator_pubkey(env: Env, new_pubkey: BytesN<32>) -> Result<(), Error> {
         Self::only_creator(&env)?;
+        Self::extend_instance_ttl(&env);
         env.storage().instance().set(&DataKey::CreatorPubkey, &new_pubkey);
         Ok(())
     }
 
     pub fn update_royalty(env: Env, receiver: Address, bps: u32) -> Result<(), Error> {
         Self::only_creator(&env)?;
+        Self::extend_instance_ttl(&env);
         env.storage().instance().set(&DataKey::RoyaltyReceiver, &receiver);
         env.storage().instance().set(&DataKey::RoyaltyBps, &bps);
         Ok(())
     }
 
     // ── Private helpers ───────────────────────────────────────────────────
+
+    fn extend_instance_ttl(env: &Env) {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
+    }
 
     fn only_creator(env: &Env) -> Result<Address, Error> {
         let creator: Address = env.storage().instance()
@@ -400,12 +422,14 @@ impl LazyMint1155 {
 
         env.storage().persistent()
             .set(&DataKey::Balance(from.clone(), token_id), &(from_bal - amount));
+        env.storage().persistent()
+            .extend_ttl(&DataKey::Balance(from.clone(), token_id), TTL_THRESHOLD, TTL_BUMP);
         let to_bal: u128 = env.storage().persistent()
             .get(&DataKey::Balance(to.clone(), token_id)).unwrap_or(0);
         env.storage().persistent()
             .set(&DataKey::Balance(to.clone(), token_id), &(to_bal + amount));
         env.storage().persistent()
-            .extend_ttl(&DataKey::Balance(to.clone(), token_id), 50_000, 100_000);
+            .extend_ttl(&DataKey::Balance(to.clone(), token_id), TTL_THRESHOLD, TTL_BUMP);
         env.events().publish(
             (symbol_short!("transfer"), from.clone()),
             (to.clone(), token_id, amount),

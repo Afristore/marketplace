@@ -44,6 +44,11 @@ pub enum DataKey {
     TotalSupply(u64),                 // per token_id
 }
 
+// ─── TTL Constants ───────────────────────────────────────────────────────────
+
+const TTL_THRESHOLD: u32 = 50_000;
+const TTL_BUMP: u32 = 100_000;
+
 // ─── Contract ─────────────────────────────────────────────────────────────────
 
 #[contract]
@@ -69,7 +74,7 @@ impl NormalNFT1155 {
         env.storage().instance().set(&DataKey::NextTokenId,     &0u64);
         env.storage().instance().set(&DataKey::RoyaltyBps,      &royalty_bps);
         env.storage().instance().set(&DataKey::RoyaltyReceiver, &royalty_receiver);
-        env.storage().instance().extend_ttl(50_000, 100_000);
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
         Ok(())
     }
 
@@ -84,6 +89,7 @@ impl NormalNFT1155 {
         uri: String,
     ) -> Result<u64, Error> {
         Self::only_creator(&env)?;
+        Self::extend_instance_ttl(&env);
         let token_id: u64 = env.storage().instance()
             .get(&DataKey::NextTokenId).unwrap_or(0);
         Self::_mint(&env, &to, token_id, amount, &uri);
@@ -100,6 +106,7 @@ impl NormalNFT1155 {
         uri: String,
     ) -> Result<(), Error> {
         Self::only_creator(&env)?;
+        Self::extend_instance_ttl(&env);
         Self::_mint(&env, &to, token_id, amount, &uri);
         Ok(())
     }
@@ -113,6 +120,7 @@ impl NormalNFT1155 {
         uris: Vec<String>,
     ) -> Result<(), Error> {
         Self::only_creator(&env)?;
+        Self::extend_instance_ttl(&env);
         if token_ids.len() != amounts.len() || token_ids.len() != uris.len() {
             return Err(Error::LengthMismatch);
         }
@@ -138,6 +146,7 @@ impl NormalNFT1155 {
         amount: u128,
     ) -> Result<(), Error> {
         from.require_auth();
+        Self::extend_instance_ttl(&env);
         Self::_transfer(&env, &from, &to, token_id, amount)
     }
 
@@ -151,6 +160,7 @@ impl NormalNFT1155 {
         amount: u128,
     ) -> Result<(), Error> {
         operator.require_auth();
+        Self::extend_instance_ttl(&env);
         if !Self::_is_approved_for_all(&env, &operator, &from) {
             return Err(Error::NotApproved);
         }
@@ -166,13 +176,13 @@ impl NormalNFT1155 {
         token_ids: Vec<u64>,
         amounts: Vec<u128>,
     ) -> Result<(), Error> {
-        spender.require_auth();
-        
+spender.require_auth();
+        Self::extend_instance_ttl(&env);
+
         // [SECURITY] Allow owner or authorized operator (#48)
         if spender != from && !Self::_is_approved_for_all(&env, &spender, &from) {
             return Err(Error::NotApproved);
         }
-
         if token_ids.len() != amounts.len() {
             return Err(Error::LengthMismatch);
         }
@@ -197,9 +207,10 @@ impl NormalNFT1155 {
         approved: bool,
     ) {
         owner.require_auth();
+        Self::extend_instance_ttl(&env);
         let key = DataKey::ApprovedForAll(owner.clone(), operator.clone());
         env.storage().persistent().set(&key, &approved);
-        env.storage().persistent().extend_ttl(&key, 50_000, 100_000);
+        env.storage().persistent().extend_ttl(&key, TTL_THRESHOLD, TTL_BUMP);
         env.events().publish((symbol_short!("appr_all"), owner), (operator, approved));
     }
 
@@ -212,24 +223,28 @@ impl NormalNFT1155 {
         token_id: u64,
         amount: u128,
     ) -> Result<(), Error> {
-        spender.require_auth();
+spender.require_auth();
+        Self::extend_instance_ttl(&env);
 
         // [SECURITY] Allow owner or authorized operator to burn (#48)
         if spender != from && !Self::_is_approved_for_all(&env, &spender, &from) {
             return Err(Error::NotApproved);
         }
-
         let bal: u128 = env.storage().persistent()
             .get(&DataKey::Balance(from.clone(), token_id)).unwrap_or(0);
         if bal < amount { return Err(Error::InsufficientBalance); }
 
         env.storage().persistent()
             .set(&DataKey::Balance(from.clone(), token_id), &(bal - amount));
+        env.storage().persistent()
+            .extend_ttl(&DataKey::Balance(from.clone(), token_id), TTL_THRESHOLD, TTL_BUMP);
 
         let supply: u128 = env.storage().persistent()
             .get(&DataKey::TotalSupply(token_id)).unwrap_or(amount);
         env.storage().persistent()
             .set(&DataKey::TotalSupply(token_id), &(supply.saturating_sub(amount)));
+        env.storage().persistent()
+            .extend_ttl(&DataKey::TotalSupply(token_id), TTL_THRESHOLD, TTL_BUMP);
 
         env.events().publish((symbol_short!("burn"), from), (token_id, amount));
         Ok(())
@@ -299,18 +314,24 @@ impl NormalNFT1155 {
 
     pub fn transfer_ownership(env: Env, new_creator: Address) -> Result<(), Error> {
         Self::only_creator(&env)?;
+        Self::extend_instance_ttl(&env);
         env.storage().instance().set(&DataKey::Creator, &new_creator);
         Ok(())
     }
 
     pub fn update_royalty(env: Env, receiver: Address, bps: u32) -> Result<(), Error> {
         Self::only_creator(&env)?;
+        Self::extend_instance_ttl(&env);
         env.storage().instance().set(&DataKey::RoyaltyReceiver, &receiver);
         env.storage().instance().set(&DataKey::RoyaltyBps, &bps);
         Ok(())
     }
 
     // ── Private helpers ───────────────────────────────────────────────────
+
+    fn extend_instance_ttl(env: &Env) {
+        env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
+    }
 
     fn only_creator(env: &Env) -> Result<Address, Error> {
         let creator: Address = env.storage().instance()
@@ -326,19 +347,21 @@ impl NormalNFT1155 {
         env.storage().persistent()
             .set(&DataKey::Balance(to.clone(), token_id), &(bal + amount));
         env.storage().persistent()
-            .extend_ttl(&DataKey::Balance(to.clone(), token_id), 50_000, 100_000);
+            .extend_ttl(&DataKey::Balance(to.clone(), token_id), TTL_THRESHOLD, TTL_BUMP);
 
         // URI is set once; resupply mints don't overwrite it
         if !env.storage().persistent().has(&DataKey::TokenUri(token_id)) {
             env.storage().persistent().set(&DataKey::TokenUri(token_id), uri);
             env.storage().persistent()
-                .extend_ttl(&DataKey::TokenUri(token_id), 50_000, 100_000);
+                .extend_ttl(&DataKey::TokenUri(token_id), TTL_THRESHOLD, TTL_BUMP);
         }
 
         let supply: u128 = env.storage().persistent()
             .get(&DataKey::TotalSupply(token_id)).unwrap_or(0);
         env.storage().persistent()
             .set(&DataKey::TotalSupply(token_id), &(supply + amount));
+        env.storage().persistent()
+            .extend_ttl(&DataKey::TotalSupply(token_id), TTL_THRESHOLD, TTL_BUMP);
 
         env.events().publish(
             (symbol_short!("mint"), to.clone()),
@@ -359,13 +382,15 @@ impl NormalNFT1155 {
 
         env.storage().persistent()
             .set(&DataKey::Balance(from.clone(), token_id), &(from_bal - amount));
+        env.storage().persistent()
+            .extend_ttl(&DataKey::Balance(from.clone(), token_id), TTL_THRESHOLD, TTL_BUMP);
 
         let to_bal: u128 = env.storage().persistent()
             .get(&DataKey::Balance(to.clone(), token_id)).unwrap_or(0);
         env.storage().persistent()
             .set(&DataKey::Balance(to.clone(), token_id), &(to_bal + amount));
         env.storage().persistent()
-            .extend_ttl(&DataKey::Balance(to.clone(), token_id), 50_000, 100_000);
+            .extend_ttl(&DataKey::Balance(to.clone(), token_id), TTL_THRESHOLD, TTL_BUMP);
 
         env.events().publish(
             (symbol_short!("transfer"), from.clone()),
@@ -380,3 +405,6 @@ impl NormalNFT1155 {
             .unwrap_or(false)
     }
 }
+
+#[cfg(test)]
+mod test;
