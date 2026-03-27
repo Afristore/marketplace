@@ -362,6 +362,10 @@ impl LazyMint1155 {
     }
 
     pub fn balance_of_batch(env: Env, accounts: Vec<Address>, token_ids: Vec<u64>) -> Vec<u128> {
+        if accounts.len() != token_ids.len() {
+            return Vec::new(&env);
+        }
+
         let mut out = Vec::new(&env);
         for i in 0..accounts.len() {
             let b: u128 = env

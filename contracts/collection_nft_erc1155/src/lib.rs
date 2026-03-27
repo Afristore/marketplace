@@ -279,6 +279,10 @@ impl NormalNFT1155 {
 
     /// Batch balance query — mirrors ERC-1155 `balanceOfBatch`.
     pub fn balance_of_batch(env: Env, accounts: Vec<Address>, token_ids: Vec<u64>) -> Vec<u128> {
+        if accounts.len() != token_ids.len() {
+            return Vec::new(&env);
+        }
+
         let mut result = Vec::new(&env);
         for i in 0..accounts.len() {
             let bal: u128 = env
