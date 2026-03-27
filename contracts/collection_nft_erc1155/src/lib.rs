@@ -126,14 +126,12 @@ impl NormalNFT1155 {
         if token_ids.len() != amounts.len() || token_ids.len() != uris.len() {
             return Err(Error::LengthMismatch);
         }
-        for i in 0..token_ids.len() {
-            Self::_mint(
-                &env,
-                &to,
-                token_ids.get(i).unwrap(),
-                amounts.get(i).unwrap(),
-                &uris.get(i).unwrap(),
-            );
+        for ((id, amount), uri) in token_ids
+            .iter()
+            .zip(amounts.iter())
+            .zip(uris.iter())
+        {
+            Self::_mint(&env, &to, id.unwrap(), amount.unwrap(), &uri.unwrap());
         }
         Ok(())
     }
@@ -189,14 +187,8 @@ impl NormalNFT1155 {
         if token_ids.len() != amounts.len() {
             return Err(Error::LengthMismatch);
         }
-        for i in 0..token_ids.len() {
-            Self::_transfer(
-                &env,
-                &from,
-                &to,
-                token_ids.get(i).unwrap(),
-                amounts.get(i).unwrap(),
-            )?;
+        for (id, amount) in token_ids.iter().zip(amounts.iter()) {
+            Self::_transfer(&env, &from, &to, id.unwrap(), amount.unwrap())?;
         }
         Ok(())
     }
@@ -284,14 +276,11 @@ impl NormalNFT1155 {
         }
 
         let mut result = Vec::new(&env);
-        for i in 0..accounts.len() {
+        for (account, token_id) in accounts.iter().zip(token_ids.iter()) {
             let bal: u128 = env
                 .storage()
                 .persistent()
-                .get(&DataKey::Balance(
-                    accounts.get(i).unwrap(),
-                    token_ids.get(i).unwrap(),
-                ))
+                .get(&DataKey::Balance(account.unwrap(), token_id.unwrap()))
                 .unwrap_or(0);
             result.push_back(bal);
         }

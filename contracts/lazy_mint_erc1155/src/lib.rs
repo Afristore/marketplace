@@ -276,14 +276,8 @@ impl LazyMint1155 {
         if token_ids.len() != amounts.len() {
             return Err(Error::LengthMismatch);
         }
-        for i in 0..token_ids.len() {
-            Self::_transfer(
-                &env,
-                &from,
-                &to,
-                token_ids.get(i).unwrap(),
-                amounts.get(i).unwrap(),
-            )?;
+        for (id, amount) in token_ids.iter().zip(amounts.iter()) {
+            Self::_transfer(&env, &from, &to, id.unwrap(), amount.unwrap())?;
         }
         Ok(())
     }
@@ -367,14 +361,11 @@ impl LazyMint1155 {
         }
 
         let mut out = Vec::new(&env);
-        for i in 0..accounts.len() {
+        for (account, token_id) in accounts.iter().zip(token_ids.iter()) {
             let b: u128 = env
                 .storage()
                 .persistent()
-                .get(&DataKey::Balance(
-                    accounts.get(i).unwrap(),
-                    token_ids.get(i).unwrap(),
-                ))
+                .get(&DataKey::Balance(account.unwrap(), token_id.unwrap()))
                 .unwrap_or(0);
             out.push_back(b);
         }
