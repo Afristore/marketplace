@@ -5,6 +5,7 @@
 //! via `mint_new` (auto-increments ID) or `mint` (explicit ID for resupply).
 //! Batch operations mirror ERC-1155 `safeBatchTransferFrom`.
 #![no_std]
+#![allow(clippy::too_many_arguments, deprecated)]
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Vec,

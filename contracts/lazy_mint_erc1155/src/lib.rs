@@ -8,6 +8,7 @@
 //! Signed digest:
 //!   sha256(token_id ‖ buyer_quota ‖ price_per_unit ‖ valid_until ‖ uri_hash ‖ currency_xdr)
 #![no_std]
+#![allow(clippy::too_many_arguments, deprecated)]
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token::TokenClient,
@@ -214,6 +215,7 @@ impl LazyMint1155 {
             .persistent()
             .extend_ttl(&minted_key, 50_000, 100_000);
 
+        #[allow(deprecated)]
         env.events()
             .publish((symbol_short!("redeem"), buyer), (voucher.token_id, amount));
         Ok(())
@@ -284,6 +286,7 @@ impl LazyMint1155 {
         let key = DataKey::ApprovedForAll(owner.clone(), operator.clone());
         env.storage().persistent().set(&key, &approved);
         env.storage().persistent().extend_ttl(&key, 50_000, 100_000);
+        #[allow(deprecated)]
         env.events()
             .publish((symbol_short!("appr_all"), owner), (operator, approved));
     }
@@ -324,6 +327,7 @@ impl LazyMint1155 {
             &DataKey::TotalSupply(token_id),
             &(supply.saturating_sub(amount)),
         );
+        #[allow(deprecated)]
         env.events()
             .publish((symbol_short!("burn"), from), (token_id, amount));
         Ok(())
@@ -449,6 +453,7 @@ impl LazyMint1155 {
         env.storage().persistent().set(&key, &max_supply);
         env.storage().persistent().extend_ttl(&key, 50_000, 100_000);
 
+        #[allow(deprecated)]
         env.events()
             .publish((symbol_short!("register"), token_id), max_supply);
         Ok(())
@@ -526,6 +531,7 @@ impl LazyMint1155 {
             50_000,
             100_000,
         );
+        #[allow(deprecated)]
         env.events().publish(
             (symbol_short!("transfer"), from.clone()),
             (to.clone(), token_id, amount),

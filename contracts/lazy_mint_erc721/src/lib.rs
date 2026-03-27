@@ -18,6 +18,7 @@
 //! Accepts any Stellar Asset Contract (SAC) token.  Pass the SAC address for
 //! XLM or any USDC/custom asset.  Price = 0 means free mint.
 #![no_std]
+#![allow(clippy::too_many_arguments, deprecated)]
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token::TokenClient,

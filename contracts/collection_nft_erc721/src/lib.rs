@@ -5,6 +5,7 @@
 //! ERC-721 semantics.  Royalty info (bps + receiver) is stored on-chain so
 //! marketplaces (Litemint, etc.) can query it.
 #![no_std]
+#![allow(clippy::too_many_arguments, deprecated)]
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String, Vec,
@@ -54,6 +55,7 @@ pub enum DataKey {
 pub struct NormalNFT721;
 
 #[contractimpl]
+#[allow(clippy::too_many_arguments)]
 impl NormalNFT721 {
     // ── Initializer (called by Launchpad factory) ──────────────────────────
 

@@ -378,7 +378,6 @@ fn test_update_listing_not_active() {
 
     let new_cid = bytes!(&env, 0x51);
     let new_rec = valid_recipients(&env, &artist);
-    let new_rec = valid_recipients(&env, &artist);
     client.update_listing(
         &artist,
         &id,
@@ -400,7 +399,7 @@ fn test_artist_revocation_and_reinstatement() {
 
     // Verify revoked artist cannot create listing
     let cid = bytes!(&env, 0x516d74657374);
-    let _res = env.as_contract(&client.address, || {
+    env.as_contract(&client.address, || {
         let r = client.try_create_listing(
             &artist_to_revoke,
             &cid,

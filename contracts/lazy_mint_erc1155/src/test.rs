@@ -1,8 +1,9 @@
 #![cfg(test)]
+#![allow(unused_variables, unused_imports)]
 
 use crate::{Error, LazyMint1155, LazyMint1155Client, MintVoucher1155};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::Address as _,
     Address, BytesN, Env, String,
 };
 
@@ -42,7 +43,7 @@ fn test_register_edition_success() {
 
 #[test]
 fn test_register_edition_only_creator_fails_without_auth() {
-    let (env, client, _creator, _) = setup_env();
+    let (env, client, creator, _) = setup_env();
     let token_id = 1u64;
 
     // Call without mock_all_auths should fail because creator auth is required

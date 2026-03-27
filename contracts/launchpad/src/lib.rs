@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(clippy::too_many_arguments, deprecated)]
 
 mod contract;
 pub mod events;

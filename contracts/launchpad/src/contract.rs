@@ -4,7 +4,7 @@
 //!
 //! 1. Admin deploys this contract and calls `initialize`.
 //! 2. Admin uploads each of the 4 collection WASMs with:
-//!      `stellar contract upload --wasm <file>.wasm --network testnet`
+//!    `stellar contract upload --wasm <file>.wasm --network testnet`
 //!    and then calls `set_wasm_hashes` with the 4 resulting 32-byte hashes.
 //! 3. Any user can now call one of the four `deploy_*` functions to launch
 //!    their own collection.  The factory calls `initialize` on the freshly
@@ -21,7 +21,7 @@
 //! Each instance gets completely isolated storage.
 
 use soroban_sdk::{
-    contract, contractclient, contractimpl, symbol_short, Address, BytesN, Env, String, Vec,
+    contract, contractimpl, symbol_short, Address, BytesN, Env, String, Vec,
 };
 
 use crate::{
@@ -37,6 +37,7 @@ mod iface {
     use soroban_sdk::{contractclient, Address, BytesN, Env, String};
 
     #[contractclient(name = "Normal721Client")]
+    #[allow(dead_code)]
     pub trait INormal721 {
         fn initialize(
             env: Env,
@@ -50,6 +51,7 @@ mod iface {
     }
 
     #[contractclient(name = "Normal1155Client")]
+    #[allow(dead_code)]
     pub trait INormal1155 {
         fn initialize(
             env: Env,
@@ -61,6 +63,8 @@ mod iface {
     }
 
     #[contractclient(name = "Lazy721Client")]
+    #[allow(dead_code)]
+    #[allow(clippy::too_many_arguments)]
     pub trait ILazy721 {
         fn initialize(
             env: Env,
@@ -75,6 +79,7 @@ mod iface {
     }
 
     #[contractclient(name = "Lazy1155Client")]
+    #[allow(dead_code)]
     pub trait ILazy1155 {
         fn initialize(
             env: Env,
@@ -93,6 +98,7 @@ use iface::{Lazy1155Client, Lazy721Client, Normal1155Client, Normal721Client};
 pub struct Launchpad;
 
 #[contractimpl]
+#[allow(clippy::too_many_arguments)]
 impl Launchpad {
     pub fn initialize(
         env: Env,

@@ -87,42 +87,49 @@ pub struct AuctionFinalizedEvent {
 }
 
 impl ListingCreatedEvent {
+    #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
         env.events().publish((LISTING_CREATED,), self);
     }
 }
 
 impl ArtworkSoldEvent {
+    #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
         env.events().publish((ARTWORK_SOLD,), self);
     }
 }
 
 impl ListingCancelledEvent {
+    #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
         env.events().publish((LISTING_CANCELLED,), self);
     }
 }
 
 impl AuctionCreatedEvent {
+    #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
         env.events().publish((symbol_short!("auc_crtd"),), self);
     }
 }
 
 impl BidPlacedEvent {
+    #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
         env.events().publish((BID_PLACED,), self);
     }
 }
 
 impl AuctionFinalizedEvent {
+    #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
         env.events().publish((AUCTION_RESOLVED,), self);
     }
 }
 
 impl ListingUpdatedEvent {
+    #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
         env.events().publish((LISTING_UPDATED,), self);
     }
@@ -164,24 +171,28 @@ pub struct OfferWithdrawnEvent {
 }
 
 impl OfferMadeEvent {
+    #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
         env.events().publish((OFFER_MADE,), self);
     }
 }
 
 impl OfferAcceptedEvent {
+    #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
         env.events().publish((OFFER_ACCEPTED,), self);
     }
 }
 
 impl OfferRejectedEvent {
+    #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
         env.events().publish((OFFER_REJECTED,), self);
     }
 }
 
 impl OfferWithdrawnEvent {
+    #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
         env.events().publish((OFFER_WITHDRAWN,), self);
     }
@@ -200,12 +211,14 @@ pub struct ArtistReinstatedEvent {
 }
 
 impl ArtistRevokedEvent {
+    #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
         env.events().publish((ARTIST_REVOKED,), self);
     }
 }
 
 impl ArtistReinstatedEvent {
+    #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
         env.events().publish((ARTIST_REINSTATED,), self);
     }

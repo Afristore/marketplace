@@ -12,7 +12,7 @@ use crate::events::*;
 
 use crate::{
     storage::{
-        add_artist_auction_id, add_artist_listing_id, get_artist_auction_ids,
+        add_artist_auction_id, add_artist_listing_id,
         get_artist_listing_ids, get_listing_count, increment_auction_count,
         increment_listing_count, increment_offer_count, is_artist_revoked_storage, load_auction,
         load_listing, load_listing_offers, load_offer, load_offerer_offers,
@@ -80,6 +80,7 @@ impl MarketplaceContract {
     pub fn revoke_artist(env: Env, artist: Address) {
         Self::require_admin(&env);
         set_artist_revocation_storage(&env, &artist);
+        #[allow(deprecated)]
         env.events()
             .publish((crate::events::ARTIST_REVOKED,), artist);
     }
@@ -87,6 +88,7 @@ impl MarketplaceContract {
     pub fn reinstate_artist(env: Env, artist: Address) {
         Self::require_admin(&env);
         remove_artist_revocation_storage(&env, &artist);
+        #[allow(deprecated)]
         env.events()
             .publish((crate::events::ARTIST_REINSTATED,), artist);
     }
@@ -130,6 +132,7 @@ impl MarketplaceContract {
 
     // ── Listing methods ──────────────────────────────────────
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_listing(
         env: Env,
         artist: Address,
@@ -308,6 +311,7 @@ impl MarketplaceContract {
         true
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn create_auction(
         env: Env,
         creator: Address,
@@ -369,7 +373,7 @@ impl MarketplaceContract {
             if let Some(prev) = auction.highest_bidder.clone() {
                 token_client.transfer(&env.current_contract_address(), &prev, &auction.highest_bid);
             }
-            token_client.transfer(&bidder, &env.current_contract_address(), &amount);
+            token_client.transfer(&bidder, env.current_contract_address(), &amount);
         }
         auction.highest_bid = amount;
         auction.highest_bidder = Some(bidder.clone());
@@ -385,7 +389,7 @@ impl MarketplaceContract {
         if env.ledger().timestamp() < auction.end_time {
             auction.creator.require_auth();
         }
-        if let Some(winner) = auction.highest_bidder.clone() {
+        if let Some(_winner) = auction.highest_bidder.clone() {
             #[cfg(not(test))]
             {
                 Self::distribute_payout(
@@ -396,7 +400,7 @@ impl MarketplaceContract {
                     auction.royalty_bps,
                     &auction.creator,
                     &auction.recipients,
-                    &winner,
+                    &_winner,
                     false,
                 );
             }
@@ -430,7 +434,7 @@ impl MarketplaceContract {
         {
             TokenClient::new(&env, &token).transfer(
                 &offerer,
-                &env.current_contract_address(),
+                env.current_contract_address(),
                 &amount,
             );
         }
@@ -604,6 +608,7 @@ impl MarketplaceContract {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code)]
     fn distribute_payout(
         env: &Env,
         token_addr: &Address,
@@ -617,7 +622,7 @@ impl MarketplaceContract {
     ) {
         let token = TokenClient::new(env, token_addr);
         if transfer_from_buyer {
-            token.transfer(buyer, &env.current_contract_address(), &amount);
+            token.transfer(buyer, env.current_contract_address(), &amount);
         }
         let mut payout = amount;
         if royalty_bps > 0 && original_creator != seller {
