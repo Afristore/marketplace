@@ -1,11 +1,8 @@
 #![cfg(test)]
 
-use soroban_sdk::{
-    testutils::Address as _,
-    Address, BytesN, Env, String,
-};
+use soroban_sdk::{testutils::Address as _, Address, BytesN, Env, String};
 
-use crate::{LazyMint721, LazyMint721Client, Error, DataKey};
+use crate::{DataKey, Error, LazyMint721, LazyMint721Client};
 
 fn setup_test() -> (Env, LazyMint721Client<'static>, Address) {
     let env = Env::default();
@@ -13,7 +10,7 @@ fn setup_test() -> (Env, LazyMint721Client<'static>, Address) {
     let contract_id = env.register(LazyMint721, ());
     let client = LazyMint721Client::new(&env, &contract_id);
     let creator = Address::generate(&env);
-    
+
     (env, client, creator)
 }
 
@@ -37,7 +34,7 @@ fn test_transfer_with_missing_balance_returns_error() {
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
 
-    // We manually set the Alice as owner in storage to simulate a state bug where 
+    // We manually set the Alice as owner in storage to simulate a state bug where
     // balance isn't incremented but ownership is recorded.
     env.as_contract(&client.address, || {
         env.storage().persistent().set(&DataKey::Owner(1), &alice);
@@ -74,7 +71,9 @@ fn test_transfer_with_zero_balance_returns_error() {
     env.as_contract(&client.address, || {
         env.storage().persistent().set(&DataKey::Owner(1), &alice);
         // Explicitly set Alice's balance to 0
-        env.storage().persistent().set(&DataKey::BalanceOf(alice.clone()), &0u64);
+        env.storage()
+            .persistent()
+            .set(&DataKey::BalanceOf(alice.clone()), &0u64);
     });
 
     let result = client.try_transfer(&alice, &bob, &1);

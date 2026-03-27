@@ -447,14 +447,18 @@ impl LazyMint721 {
             return Err(Error::NotOwner);
         }
 
-        let from_bal: u64 = env.storage().persistent()
-            .get(&DataKey::BalanceOf(from.clone())).unwrap_or(0);
+        let from_bal: u64 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::BalanceOf(from.clone()))
+            .unwrap_or(0);
 
         if from_bal == 0 {
             return Err(Error::NotOwner);
         }
 
-        env.storage().persistent()
+        env.storage()
+            .persistent()
             .set(&DataKey::BalanceOf(from.clone()), &(from_bal - 1));
         let from_bal: u64 = env
             .storage()
