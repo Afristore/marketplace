@@ -76,7 +76,7 @@ export async function startPolling() {
   }
 }
 
-async function processEvent(event: any) {
+export async function processEvent(event: any) {
   const { eventType, listingId, actor, ledgerSequence, data } = event;
 
   // 1. Log to MarketplaceEvent history

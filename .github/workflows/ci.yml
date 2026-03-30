@@ -43,6 +43,35 @@ jobs:
       - name: Run Unit Tests
         run: cargo test
 
+  indexer_test:
+    name: Test Indexer
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache NPM dependencies
+        uses: actions/cache@v3
+        with:
+          path: indexer/node_modules
+          key: ${{ runner.os }}-indexer-${{ hashFiles('indexer/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-indexer-
+
+      - name: Install Indexer Dependencies
+        run: npm install
+        working-directory: indexer
+
+      - name: Run Indexer Tests
+        run: npm test
+        working-directory: indexer
+
   frontend_build_and_test:
     name: Build and Test Frontend
     runs-on: ubuntu-latest
@@ -65,7 +94,7 @@ jobs:
             ${{ runner.os }}-node-
 
       - name: Install Frontend Dependencies
-        run: npm ci
+        run: npm install
         working-directory: frontend/afristore-app
 
       - name: Run Frontend Lint
@@ -73,7 +102,7 @@ jobs:
         working-directory: frontend/afristore-app
 
       - name: Run Frontend Tests
-        run: npm test --if-present
+        run: npm test
         working-directory: frontend/afristore-app
 
       - name: Build Frontend
