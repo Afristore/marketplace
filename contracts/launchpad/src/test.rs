@@ -369,7 +369,10 @@ fn same_salt_different_creators_normal_721_yields_different_addresses() {
     );
 
     // Because secure_salt = sha256(creator ‖ raw_salt) they must differ.
-    assert_ne!(addr_alice, addr_bob, "same raw salt must not collide across creators");
+    assert_ne!(
+        addr_alice, addr_bob,
+        "same raw salt must not collide across creators"
+    );
     assert_eq!(client.collection_count(), 2u64);
 }
 
@@ -527,7 +530,10 @@ fn front_runner_cannot_grief_normal_721() {
         &salt,
     );
 
-    assert_ne!(addr_alice, addr_bob, "front-runner must not occupy Alice's slot");
+    assert_ne!(
+        addr_alice, addr_bob,
+        "front-runner must not occupy Alice's slot"
+    );
     assert_eq!(client.collection_count(), 2u64);
 }
 

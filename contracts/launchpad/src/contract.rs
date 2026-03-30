@@ -20,7 +20,9 @@
 //! Every `deploy()` call shares that same WASM — no bytecode duplication.
 //! Each instance gets completely isolated storage.
 
-use soroban_sdk::{contract, contractimpl, symbol_short, xdr::ToXdr, Address, Bytes, BytesN, Env, String, Vec};
+use soroban_sdk::{
+    contract, contractimpl, symbol_short, xdr::ToXdr, Address, Bytes, BytesN, Env, String, Vec,
+};
 
 use crate::{
     events, storage,
