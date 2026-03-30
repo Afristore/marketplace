@@ -20,7 +20,9 @@
 //! Every `deploy()` call shares that same WASM — no bytecode duplication.
 //! Each instance gets completely isolated storage.
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, BytesN, Env, String, Vec};
+use soroban_sdk::{
+    contract, contractimpl, symbol_short, xdr::ToXdr, Address, Bytes, BytesN, Env, String, Vec,
+};
 
 use crate::{
     events, storage,
@@ -91,6 +93,19 @@ mod iface {
 }
 
 use iface::{Lazy1155Client, Lazy721Client, Normal1155Client, Normal721Client};
+
+// ─── Salt hardening (fix #53) ─────────────────────────────────────────────────
+/// Bind `raw_salt` to the caller so that two different creators can never
+/// collide, and a front-runner who copies someone else's salt will end up
+/// deploying to a *different* address than the victim.
+///
+/// `secure_salt = sha256( creator.to_xdr() ‖ raw_salt )`
+fn make_secure_salt(env: &Env, creator: &Address, raw_salt: &BytesN<32>) -> BytesN<32> {
+    let mut raw = Bytes::new(env);
+    raw.append(&creator.to_xdr(env));
+    raw.extend_from_array(&raw_salt.to_array());
+    env.crypto().sha256(&raw).into()
+}
 
 #[contract]
 pub struct Launchpad;
@@ -176,10 +191,12 @@ impl Launchpad {
 
         let wasm = storage::get_wasm_normal_721(&env).ok_or(Error::WasmHashNotSet)?;
 
-        // Deploy a new contract instance that shares the Normal721 WASM
+        // Deploy a new contract instance that shares the Normal721 WASM.
+        // Use a creator-bound salt to prevent front-running (fix #53).
+        let secure_salt = make_secure_salt(&env, &creator, &salt);
         let addr = env
             .deployer()
-            .with_current_contract(salt)
+            .with_current_contract(secure_salt)
             .deploy_v2(wasm, ());
 
         // Initialize the freshly deployed collection in the same tx
@@ -222,9 +239,11 @@ impl Launchpad {
 
         let wasm = storage::get_wasm_normal_1155(&env).ok_or(Error::WasmHashNotSet)?;
 
+        // Use a creator-bound salt to prevent front-running (fix #53).
+        let secure_salt = make_secure_salt(&env, &creator, &salt);
         let addr = env
             .deployer()
-            .with_current_contract(salt)
+            .with_current_contract(secure_salt)
             .deploy_v2(wasm, ());
 
         Normal1155Client::new(&env, &addr).initialize(
@@ -271,9 +290,11 @@ impl Launchpad {
 
         let wasm = storage::get_wasm_lazy_721(&env).ok_or(Error::WasmHashNotSet)?;
 
+        // Use a creator-bound salt to prevent front-running (fix #53).
+        let secure_salt = make_secure_salt(&env, &creator, &salt);
         let addr = env
             .deployer()
-            .with_current_contract(salt)
+            .with_current_contract(secure_salt)
             .deploy_v2(wasm, ());
 
         Lazy721Client::new(&env, &addr).initialize(
@@ -317,9 +338,11 @@ impl Launchpad {
 
         let wasm = storage::get_wasm_lazy_1155(&env).ok_or(Error::WasmHashNotSet)?;
 
+        // Use a creator-bound salt to prevent front-running (fix #53).
+        let secure_salt = make_secure_salt(&env, &creator, &salt);
         let addr = env
             .deployer()
-            .with_current_contract(salt)
+            .with_current_contract(secure_salt)
             .deploy_v2(wasm, ());
 
         Lazy1155Client::new(&env, &addr).initialize(

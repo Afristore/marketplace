@@ -322,3 +322,329 @@ fn admin_calls_extend_instance_ttl() {
 
     assert_eq!(client.admin(), new_admin);
 }
+
+// ─── Issue #53 — Salt front-running / griefing tests ─────────────────────────
+//
+// The fix: secure_salt = sha256(creator.to_xdr() ‖ raw_salt)
+//
+// Two categories of tests:
+//   A. Same raw salt from two different creators → different deployed addresses.
+//   B. Front-runner copies Alice's raw salt and transacts first → Alice's
+//      subsequent transaction still succeeds (different address).
+
+// ── Category A: Per-creator namespace isolation ──────────────────────────────
+
+/// deploy_normal_721: same raw salt, different creators ⟹ different addresses.
+#[test]
+fn same_salt_different_creators_normal_721_yields_different_addresses() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, alice) = setup_launchpad(&env);
+    let bob = Address::generate(&env);
+
+    let salt = BytesN::from_array(&env, &[0xAAu8; 32]);
+    let royalty_receiver = Address::generate(&env);
+    let currency = Address::generate(&env);
+
+    let addr_alice = client.deploy_normal_721(
+        &alice,
+        &currency,
+        &String::from_str(&env, "Alice 721"),
+        &String::from_str(&env, "AL7"),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    let addr_bob = client.deploy_normal_721(
+        &bob,
+        &currency,
+        &String::from_str(&env, "Bob 721"),
+        &String::from_str(&env, "BO7"),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &salt, // identical raw salt
+    );
+
+    // Because secure_salt = sha256(creator ‖ raw_salt) they must differ.
+    assert_ne!(
+        addr_alice, addr_bob,
+        "same raw salt must not collide across creators"
+    );
+    assert_eq!(client.collection_count(), 2u64);
+}
+
+/// deploy_normal_1155: same raw salt, different creators ⟹ different addresses.
+#[test]
+fn same_salt_different_creators_normal_1155_yields_different_addresses() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, alice) = setup_launchpad(&env);
+    let bob = Address::generate(&env);
+
+    let salt = BytesN::from_array(&env, &[0xBBu8; 32]);
+    let royalty_receiver = Address::generate(&env);
+    let currency = Address::generate(&env);
+
+    let addr_alice = client.deploy_normal_1155(
+        &alice,
+        &currency,
+        &String::from_str(&env, "Alice 1155"),
+        &500u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    let addr_bob = client.deploy_normal_1155(
+        &bob,
+        &currency,
+        &String::from_str(&env, "Bob 1155"),
+        &500u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    assert_ne!(addr_alice, addr_bob);
+    assert_eq!(client.collection_count(), 2u64);
+}
+
+/// deploy_lazy_721: same raw salt, different creators ⟹ different addresses.
+#[test]
+fn same_salt_different_creators_lazy_721_yields_different_addresses() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, alice) = setup_launchpad(&env);
+    let bob = Address::generate(&env);
+
+    let salt = BytesN::from_array(&env, &[0xCCu8; 32]);
+    let creator_pubkey = BytesN::from_array(&env, &[0x01u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+    let currency = Address::generate(&env);
+
+    let addr_alice = client.deploy_lazy_721(
+        &alice,
+        &currency,
+        &creator_pubkey,
+        &String::from_str(&env, "Alice L721"),
+        &String::from_str(&env, "AL7L"),
+        &500u64,
+        &300u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    let addr_bob = client.deploy_lazy_721(
+        &bob,
+        &currency,
+        &creator_pubkey,
+        &String::from_str(&env, "Bob L721"),
+        &String::from_str(&env, "BO7L"),
+        &500u64,
+        &300u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    assert_ne!(addr_alice, addr_bob);
+    assert_eq!(client.collection_count(), 2u64);
+}
+
+/// deploy_lazy_1155: same raw salt, different creators ⟹ different addresses.
+#[test]
+fn same_salt_different_creators_lazy_1155_yields_different_addresses() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, alice) = setup_launchpad(&env);
+    let bob = Address::generate(&env);
+
+    let salt = BytesN::from_array(&env, &[0xDDu8; 32]);
+    let creator_pubkey = BytesN::from_array(&env, &[0x02u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+    let currency = Address::generate(&env);
+
+    let addr_alice = client.deploy_lazy_1155(
+        &alice,
+        &currency,
+        &creator_pubkey,
+        &String::from_str(&env, "Alice L1155"),
+        &400u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    let addr_bob = client.deploy_lazy_1155(
+        &bob,
+        &currency,
+        &creator_pubkey,
+        &String::from_str(&env, "Bob L1155"),
+        &400u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    assert_ne!(addr_alice, addr_bob);
+    assert_eq!(client.collection_count(), 2u64);
+}
+
+// ── Category B: Front-runner cannot block the victim ─────────────────────────
+//
+// Bob front-runs with the same raw salt as Alice.  After the fix, Bob's
+// deploy lands at sha256(Bob ‖ salt).  Alice's subsequent deploy lands at
+// sha256(Alice ‖ salt) — a distinct address — so her tx must succeed.
+
+/// deploy_normal_721: front-runner copies Alice's salt → Alice still succeeds.
+#[test]
+fn front_runner_cannot_grief_normal_721() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, alice) = setup_launchpad(&env);
+    let bob = Address::generate(&env); // malicious actor
+
+    let salt = BytesN::from_array(&env, &[0x11u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+    let currency = Address::generate(&env);
+
+    // Bob front-runs using Alice's raw salt.
+    let addr_bob = client.deploy_normal_721(
+        &bob,
+        &currency,
+        &String::from_str(&env, "Bob Grief 721"),
+        &String::from_str(&env, "BG7"),
+        &100u64,
+        &0u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    // Alice's transaction must still succeed (no panic / error).
+    let addr_alice = client.deploy_normal_721(
+        &alice,
+        &currency,
+        &String::from_str(&env, "Alice 721"),
+        &String::from_str(&env, "AL7"),
+        &100u64,
+        &0u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    assert_ne!(
+        addr_alice, addr_bob,
+        "front-runner must not occupy Alice's slot"
+    );
+    assert_eq!(client.collection_count(), 2u64);
+}
+
+/// deploy_normal_1155: front-runner copies Alice's salt → Alice still succeeds.
+#[test]
+fn front_runner_cannot_grief_normal_1155() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, alice) = setup_launchpad(&env);
+    let bob = Address::generate(&env);
+
+    let salt = BytesN::from_array(&env, &[0x22u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+    let currency = Address::generate(&env);
+
+    let addr_bob = client.deploy_normal_1155(
+        &bob,
+        &currency,
+        &String::from_str(&env, "Bob Grief 1155"),
+        &0u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    let addr_alice = client.deploy_normal_1155(
+        &alice,
+        &currency,
+        &String::from_str(&env, "Alice 1155"),
+        &0u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    assert_ne!(addr_alice, addr_bob);
+    assert_eq!(client.collection_count(), 2u64);
+}
+
+/// deploy_lazy_721: front-runner copies Alice's salt → Alice still succeeds.
+#[test]
+fn front_runner_cannot_grief_lazy_721() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, alice) = setup_launchpad(&env);
+    let bob = Address::generate(&env);
+
+    let salt = BytesN::from_array(&env, &[0x33u8; 32]);
+    let creator_pubkey = BytesN::from_array(&env, &[0x03u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+    let currency = Address::generate(&env);
+
+    let addr_bob = client.deploy_lazy_721(
+        &bob,
+        &currency,
+        &creator_pubkey,
+        &String::from_str(&env, "Bob Grief L721"),
+        &String::from_str(&env, "BGL7"),
+        &200u64,
+        &0u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    let addr_alice = client.deploy_lazy_721(
+        &alice,
+        &currency,
+        &creator_pubkey,
+        &String::from_str(&env, "Alice L721"),
+        &String::from_str(&env, "ALL7"),
+        &200u64,
+        &0u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    assert_ne!(addr_alice, addr_bob);
+    assert_eq!(client.collection_count(), 2u64);
+}
+
+/// deploy_lazy_1155: front-runner copies Alice's salt → Alice still succeeds.
+#[test]
+fn front_runner_cannot_grief_lazy_1155() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, alice) = setup_launchpad(&env);
+    let bob = Address::generate(&env);
+
+    let salt = BytesN::from_array(&env, &[0x44u8; 32]);
+    let creator_pubkey = BytesN::from_array(&env, &[0x04u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+    let currency = Address::generate(&env);
+
+    let addr_bob = client.deploy_lazy_1155(
+        &bob,
+        &currency,
+        &creator_pubkey,
+        &String::from_str(&env, "Bob Grief L1155"),
+        &0u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    let addr_alice = client.deploy_lazy_1155(
+        &alice,
+        &currency,
+        &creator_pubkey,
+        &String::from_str(&env, "Alice L1155"),
+        &0u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    assert_ne!(addr_alice, addr_bob);
+    assert_eq!(client.collection_count(), 2u64);
+}
