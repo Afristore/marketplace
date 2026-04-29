@@ -14,7 +14,7 @@ datasource db {
 model SyncState {
   id          Int      @id @default(1)
   lastLedger  Int      @default(0)
-  lastHash    String?
+  ledgerHash  String?
   updatedAt   DateTime @updatedAt
 }
 
