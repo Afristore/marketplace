@@ -12,8 +12,20 @@ const PORT = process.env.PORT || 4000;
 app.use(cors());
 app.use(express.json());
 
+import { register } from 'prom-client';
+
 // API Routes
 app.use('/', routes);
+
+// Prometheus metrics endpoint
+app.get('/metrics', async (req, res) => {
+    try {
+        res.set('Content-Type', register.contentType);
+        res.end(await register.metrics());
+    } catch (ex) {
+        res.status(500).end(ex);
+    }
+});
 
 // Health check
 app.get('/health', (req: express.Request, res: express.Response) => {

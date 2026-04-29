@@ -1,26 +1,61 @@
-import { rpc } from '@stellar/stellar-sdk';
-import prisma from './db';
-import { parseMarketplaceEvent } from './parser';
-import dotenv from 'dotenv';
-dotenv.config();
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.startPolling = startPolling;
+exports.processEvent = processEvent;
+exports.revertLedgers = revertLedgers;
+const stellar_sdk_1 = require("@stellar/stellar-sdk");
+const db_js_1 = __importDefault(require("./db.js"));
+const parser_js_1 = require("./parser.js");
+const prom_client_1 = require("prom-client");
+const dotenv_1 = __importDefault(require("dotenv"));
+dotenv_1.default.config();
 const RPC_URL = process.env.STELLAR_RPC_URL || 'https://soroban-testnet.stellar.org';
 const CONTRACT_ID = process.env.MARKETPLACE_CONTRACT_ID || '';
 const LAUNCHPAD_CONTRACT_ID = process.env.LAUNCHPAD_CONTRACT_ID || '';
 const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL_MS || '5000');
-const server = new rpc.Server(RPC_URL);
-export async function startPolling() {
+const server = new stellar_sdk_1.rpc.Server(RPC_URL);
+// Metrics
+const latestLedgerProcessed = new prom_client_1.Gauge({
+    name: 'indexer_latest_ledger_processed',
+    help: 'The last ledger sequence number processed by the indexer',
+});
+const networkLatestLedgerGauge = new prom_client_1.Gauge({
+    name: 'indexer_network_latest_ledger',
+    help: 'The latest ledger sequence number on the network',
+});
+async function startPolling() {
     console.log(`Starting indexer poller for contract: ${CONTRACT_ID}`);
     while (true) {
         try {
             // 1. Get last indexed ledger
-            let syncState = await prisma.syncState.findUnique({ where: { id: 1 } });
+            let syncState = await db_js_1.default.syncState.findUnique({ where: { id: 1 } });
             if (!syncState) {
-                syncState = await prisma.syncState.create({ data: { id: 1, lastLedger: 0 } });
+                syncState = await db_js_1.default.syncState.create({ data: { id: 1, lastLedger: 0, lastHash: '' } });
             }
             // 2. Fetch network state to know current ledger
-            // const networkDetails = await server.getNetwork();
-            // 3. Get events from lastLedger + 1
+            const networkDetails = await server.getLatestLedger();
+            const currentNetworkLedger = networkDetails.sequence;
+            networkLatestLedgerGauge.set(currentNetworkLedger);
+            latestLedgerProcessed.set(syncState.lastLedger);
+            // 3. Check for chain re-organization
+            // If our last known ledger is the network's latest (or ahead?), check if the hash matches.
+            // Note: In a real scenario with high throughput, we'd check the hash of the specific lastLedger.
+            // For Soroban RPC, we can at least check if we are at the tip.
+            if (syncState.lastLedger === currentNetworkLedger && syncState.lastHash && syncState.lastHash !== networkDetails.id) {
+                console.warn(`Chain re-org detected at ledger ${syncState.lastLedger}. Expected ${syncState.lastHash}, got ${networkDetails.id}`);
+                await revertLedgers(syncState.lastLedger - 1);
+                continue; // Restart polling from previous ledger
+            }
+            // 4. Get events from lastLedger + 1
             const startLedger = syncState.lastLedger + 1;
+            if (startLedger > currentNetworkLedger) {
+                // Already at tip
+                await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+                continue;
+            }
             const response = await server.getEvents({
                 startLedger: startLedger,
                 filters: [
@@ -40,7 +75,7 @@ export async function startPolling() {
                             return t; // Already a string/base64
                         return t.toXDR('base64'); // If it's an ScVal object
                     });
-                    const decoded = parseMarketplaceEvent(topicStrings, typeof event.value === 'string' ? event.value : event.value.toXDR('base64'), event.ledger);
+                    const decoded = (0, parser_js_1.parseMarketplaceEvent)(topicStrings, typeof event.value === 'string' ? event.value : event.value.toXDR('base64'), event.ledger);
                     if (decoded) {
                         await processEvent(decoded);
                     }
@@ -48,10 +83,36 @@ export async function startPolling() {
                         maxLedger = event.ledger;
                 }
                 // Update sync state
-                await prisma.syncState.update({
+                // To accurately track continuity, we store the hash of the latest ledger we've seen.
+                // If we processed multiple ledgers, we should ideally store the hash of the last one.
+                // Since getEvents doesn't return hashes, we fetch the latest ledger info if we reached the tip.
+                let lastHash = syncState.lastHash;
+                if (maxLedger === currentNetworkLedger) {
+                    lastHash = networkDetails.id;
+                }
+                await db_js_1.default.syncState.update({
                     where: { id: 1 },
-                    data: { lastLedger: maxLedger },
+                    data: {
+                        lastLedger: maxLedger,
+                        lastHash: lastHash
+                    },
                 });
+                latestLedgerProcessed.set(maxLedger);
+            }
+            else {
+                // No events but we might have progressed ledgers if we were behind the tip
+                if (currentNetworkLedger > syncState.lastLedger) {
+                    // We can safely jump to the tip if no events were found in the range?
+                    // No, getEvents should return all events. If no events, we just update lastLedger.
+                    await db_js_1.default.syncState.update({
+                        where: { id: 1 },
+                        data: {
+                            lastLedger: currentNetworkLedger,
+                            lastHash: networkDetails.id
+                        },
+                    });
+                    latestLedgerProcessed.set(currentNetworkLedger);
+                }
             }
         }
         catch (error) {
@@ -63,7 +124,7 @@ export async function startPolling() {
 async function processEvent(event) {
     const { eventType, listingId, actor, ledgerSequence, data } = event;
     // 1. Log to MarketplaceEvent history
-    await prisma.marketplaceEvent.create({
+    await db_js_1.default.marketplaceEvent.create({
         data: {
             listingId,
             eventType,
@@ -77,7 +138,7 @@ async function processEvent(event) {
         return;
     switch (eventType) {
         case 'LISTING_CREATED':
-            await prisma.listing.upsert({
+            await db_js_1.default.listing.upsert({
                 where: { listingId },
                 create: {
                     listingId,
@@ -102,7 +163,7 @@ async function processEvent(event) {
             });
             break;
         case 'LISTING_UPDATED':
-            await prisma.listing.update({
+            await db_js_1.default.listing.update({
                 where: { listingId },
                 data: {
                     price: data.new_price,
@@ -112,7 +173,7 @@ async function processEvent(event) {
             });
             break;
         case 'ARTWORK_SOLD':
-            await prisma.listing.update({
+            await db_js_1.default.listing.update({
                 where: { listingId },
                 data: {
                     status: 'Sold',
@@ -122,7 +183,7 @@ async function processEvent(event) {
             });
             break;
         case 'LISTING_CANCELLED':
-            await prisma.listing.update({
+            await db_js_1.default.listing.update({
                 where: { listingId },
                 data: {
                     status: 'Cancelled',
@@ -133,7 +194,7 @@ async function processEvent(event) {
         // For Auctions and Offers, we might add more logic or separate tables if needed.
         // For now, we mainly update listing status if an auction starts.
         case 'AUCTION_CREATED':
-            await prisma.listing.update({
+            await db_js_1.default.listing.update({
                 where: { listingId },
                 data: {
                     status: 'Auction',
@@ -156,7 +217,7 @@ async function processEvent(event) {
             const creatorAddr = rawData[0]?.toString() || actor;
             const contractAddr = rawData[1]?.toString() || '';
             if (contractAddr) {
-                await prisma.collection.upsert({
+                await db_js_1.default.collection.upsert({
                     where: { contractAddress: contractAddr },
                     create: {
                         contractAddress: contractAddr,
@@ -171,6 +232,135 @@ async function processEvent(event) {
                 });
             }
             break;
+        }
+    }
+}
+async function revertLedgers(toLedger) {
+    console.log(`Reverting database to ledger ${toLedger}`);
+    // 1. Identify affected entities before deleting events
+    const affectedListings = await db_js_1.default.marketplaceEvent.findMany({
+        where: { ledgerSequence: { gt: toLedger } },
+        select: { listingId: true },
+        distinct: ['listingId'],
+    });
+    const affectedCollections = await db_js_1.default.marketplaceEvent.findMany({
+        where: {
+            ledgerSequence: { gt: toLedger },
+            eventType: { startsWith: 'DEPLOY_' }
+        },
+        select: { data: true },
+    });
+    // 2. Delete events from the database
+    await db_js_1.default.marketplaceEvent.deleteMany({
+        where: { ledgerSequence: { gt: toLedger } },
+    });
+    // 3. Revert Listing states
+    for (const item of affectedListings) {
+        if (item.listingId) {
+            await recomputeListingState(item.listingId);
+        }
+    }
+    // 4. Revert Collections (delete if they were deployed in the reverted ledgers)
+    for (const item of affectedCollections) {
+        const data = item.data;
+        const contractAddr = Array.isArray(data) ? data[1]?.toString() : '';
+        if (contractAddr) {
+            await db_js_1.default.collection.deleteMany({
+                where: { contractAddress: contractAddr, deployedAtLedger: { gt: toLedger } }
+            });
+        }
+    }
+    // 5. Update sync state
+    await db_js_1.default.syncState.update({
+        where: { id: 1 },
+        data: {
+            lastLedger: toLedger,
+            lastHash: null // Reset hash as we don't know the hash of the old ledger easily
+        },
+    });
+}
+async function recomputeListingState(listingId) {
+    console.log(`Recomputing state for listing ${listingId}`);
+    const events = await db_js_1.default.marketplaceEvent.findMany({
+        where: { listingId },
+        orderBy: { ledgerSequence: 'asc' },
+    });
+    if (events.length === 0) {
+        // If no events left, delete the listing
+        await db_js_1.default.listing.deleteMany({ where: { listingId } });
+        return;
+    }
+    // Apply events in order to reconstruct the state
+    // This is a simplified version of processEvent but specifically for one listing
+    for (let i = 0; i < events.length; i++) {
+        const event = events[i];
+        const { eventType, actor, ledgerSequence, data: rawData } = event;
+        const data = rawData;
+        if (i === 0) {
+            // First event must be creation
+            await db_js_1.default.listing.upsert({
+                where: { listingId },
+                create: {
+                    listingId,
+                    artist: data.artist || actor,
+                    owner: null,
+                    price: data.price,
+                    currency: data.currency,
+                    metadataCid: data.metadata_cid,
+                    token: data.token || '',
+                    status: 'Active',
+                    royaltyBps: data.royalty_bps || 0,
+                    createdAtLedger: ledgerSequence,
+                    updatedAtLedger: ledgerSequence,
+                },
+                update: {
+                    status: 'Active',
+                    updatedAtLedger: ledgerSequence,
+                }
+            });
+        }
+        else {
+            // Apply subsequent updates
+            switch (eventType) {
+                case 'LISTING_UPDATED':
+                    await db_js_1.default.listing.update({
+                        where: { listingId },
+                        data: {
+                            price: data.new_price,
+                            metadataCid: data.metadata_cid,
+                            updatedAtLedger: ledgerSequence,
+                        },
+                    });
+                    break;
+                case 'ARTWORK_SOLD':
+                    await db_js_1.default.listing.update({
+                        where: { listingId },
+                        data: {
+                            status: 'Sold',
+                            owner: data.buyer,
+                            updatedAtLedger: ledgerSequence,
+                        },
+                    });
+                    break;
+                case 'LISTING_CANCELLED':
+                    await db_js_1.default.listing.update({
+                        where: { listingId },
+                        data: {
+                            status: 'Cancelled',
+                            updatedAtLedger: ledgerSequence,
+                        },
+                    });
+                    break;
+                case 'AUCTION_CREATED':
+                    await db_js_1.default.listing.update({
+                        where: { listingId },
+                        data: {
+                            status: 'Auction',
+                            updatedAtLedger: ledgerSequence,
+                        }
+                    });
+                    break;
+            }
         }
     }
 }

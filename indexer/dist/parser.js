@@ -1,4 +1,7 @@
-import { xdr, scValToNative } from '@stellar/stellar-sdk';
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.parseMarketplaceEvent = parseMarketplaceEvent;
+const stellar_sdk_1 = require("@stellar/stellar-sdk");
 // Map contract symbols to human-readable types
 const TOPIC_MAP = {
     'lst_crtd': 'LISTING_CREATED',
@@ -17,12 +20,12 @@ const TOPIC_MAP = {
     'dep_l721': 'DEPLOY_LAZY_721',
     'dep_l1155': 'DEPLOY_LAZY_1155',
 };
-export function parseMarketplaceEvent(topics, valueXdr, ledger) {
+function parseMarketplaceEvent(topics, valueXdr, ledger) {
     // Topics might be XDR base64 strings or decoded symbols
     let topic = '';
     try {
-        const rawTopic = xdr.ScVal.fromXDR(topics[0], 'base64');
-        topic = scValToNative(rawTopic);
+        const rawTopic = stellar_sdk_1.xdr.ScVal.fromXDR(topics[0], 'base64');
+        topic = (0, stellar_sdk_1.scValToNative)(rawTopic);
     }
     catch {
         topic = topics[0]; // Fallback if already decoded
@@ -30,8 +33,8 @@ export function parseMarketplaceEvent(topics, valueXdr, ledger) {
     const type = TOPIC_MAP[topic];
     if (!type)
         return null;
-    const rawVal = xdr.ScVal.fromXDR(valueXdr, 'base64');
-    const nativeData = scValToNative(rawVal);
+    const rawVal = stellar_sdk_1.xdr.ScVal.fromXDR(valueXdr, 'base64');
+    const nativeData = (0, stellar_sdk_1.scValToNative)(rawVal);
     let listingId = null;
     let actor = '';
     // Extract common fields based on event type structure in events.rs

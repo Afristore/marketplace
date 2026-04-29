@@ -98,7 +98,7 @@ router.get('/wallets/:address/activity', async (req: Request, res: Response) => 
 
         const events = await prisma.marketplaceEvent.findMany({
             where: {
-                OR: [{ actor: address }, ...fromJson],
+                OR: [{ actor: address as string }, ...fromJson],
             },
             orderBy: { ledgerSequence: 'desc' },
             take,
