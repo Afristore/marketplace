@@ -33,7 +33,7 @@ async function startPolling() {
             // 1. Get last indexed ledger
             let syncState = await db_js_1.default.syncState.findUnique({ where: { id: 1 } });
             if (!syncState) {
-                syncState = await db_js_1.default.syncState.create({ data: { id: 1, lastLedger: 0, lastHash: '' } });
+                syncState = await db_js_1.default.syncState.create({ data: { id: 1, lastLedger: 0, ledgerHash: '' } });
             }
             // 2. Fetch network state to know current ledger
             const networkDetails = await server.getLatestLedger();
@@ -44,8 +44,8 @@ async function startPolling() {
             // If our last known ledger is the network's latest (or ahead?), check if the hash matches.
             // Note: In a real scenario with high throughput, we'd check the hash of the specific lastLedger.
             // For Soroban RPC, we can at least check if we are at the tip.
-            if (syncState.lastLedger === currentNetworkLedger && syncState.lastHash && syncState.lastHash !== networkDetails.id) {
-                console.warn(`Chain re-org detected at ledger ${syncState.lastLedger}. Expected ${syncState.lastHash}, got ${networkDetails.id}`);
+            if (syncState.lastLedger === currentNetworkLedger && syncState.ledgerHash && syncState.ledgerHash !== networkDetails.id) {
+                console.warn(`Chain re-org detected at ledger ${syncState.lastLedger}. Expected ${syncState.ledgerHash}, got ${networkDetails.id}`);
                 await revertLedgers(syncState.lastLedger - 1);
                 continue; // Restart polling from previous ledger
             }
@@ -86,15 +86,15 @@ async function startPolling() {
                 // To accurately track continuity, we store the hash of the latest ledger we've seen.
                 // If we processed multiple ledgers, we should ideally store the hash of the last one.
                 // Since getEvents doesn't return hashes, we fetch the latest ledger info if we reached the tip.
-                let lastHash = syncState.lastHash;
+                let ledgerHash = syncState.ledgerHash;
                 if (maxLedger === currentNetworkLedger) {
-                    lastHash = networkDetails.id;
+                    ledgerHash = networkDetails.id;
                 }
                 await db_js_1.default.syncState.update({
                     where: { id: 1 },
                     data: {
                         lastLedger: maxLedger,
-                        lastHash: lastHash
+                        ledgerHash: ledgerHash
                     },
                 });
                 latestLedgerProcessed.set(maxLedger);
@@ -108,7 +108,7 @@ async function startPolling() {
                         where: { id: 1 },
                         data: {
                             lastLedger: currentNetworkLedger,
-                            lastHash: networkDetails.id
+                            ledgerHash: networkDetails.id
                         },
                     });
                     latestLedgerProcessed.set(currentNetworkLedger);
@@ -275,7 +275,7 @@ async function revertLedgers(toLedger) {
         where: { id: 1 },
         data: {
             lastLedger: toLedger,
-            lastHash: null // Reset hash as we don't know the hash of the old ledger easily
+            ledgerHash: null // Reset hash as we don't know the hash of the old ledger easily
         },
     });
 }
