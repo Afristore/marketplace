@@ -383,6 +383,25 @@ impl MarketplaceContract {
         }
         listing.status = ListingStatus::Cancelled;
         save_listing(&env, &listing);
+
+        let offers = load_listing_offers(&env, listing_id);
+        for offer_id in offers.iter() {
+            if let Some(mut offer) = load_offer(&env, offer_id) {
+                if offer.status == OfferStatus::Pending {
+                    #[cfg(not(test))]
+                    {
+                        TokenClient::new(&env, &offer.token).transfer(
+                            &env.current_contract_address(),
+                            &offer.offerer,
+                            &offer.amount,
+                        );
+                    }
+                    offer.status = OfferStatus::Rejected;
+                    save_offer(&env, &offer);
+                }
+            }
+        }
+
         true
     }
 

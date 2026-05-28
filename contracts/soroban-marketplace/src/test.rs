@@ -279,6 +279,30 @@ fn test_cancel_listing_success() {
 }
 
 #[test]
+fn test_cancel_listing_rejects_pending_offers() {
+    let (env, client, artist, buyer, contract_id) = setup();
+    let buyer2 = Address::generate(&env);
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+
+    let listing_id = create_test_listing(&env, &client, &artist, &contract_id);
+    let offer_token = Address::generate(&env);
+    let offer_id_1 = client.make_offer(&buyer, &listing_id, &5_000_000_i128, &offer_token);
+    let offer_id_2 = client.make_offer(&buyer2, &listing_id, &7_000_000_i128, &offer_token);
+
+    client.cancel_listing(&artist, &listing_id);
+
+    let listing = client.get_listing(&listing_id);
+    assert_eq!(listing.status, ListingStatus::Cancelled);
+
+    let offer1 = client.get_offer(&offer_id_1);
+    assert_eq!(offer1.status, OfferStatus::Rejected);
+
+    let offer2 = client.get_offer(&offer_id_2);
+    assert_eq!(offer2.status, OfferStatus::Rejected);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #5)")]
 fn test_cancel_listing_wrong_artist() {
     let (env, client, artist, buyer, contract_id) = setup();
