@@ -404,14 +404,15 @@ function parseOfferFromScVal(raw: unknown): Offer {
 export async function makeOffer(
   offererPublicKey: string,
   listingId: number,
-  amountXlm: number
+  amountXlm: number,
+  tokenAddress: string
 ): Promise<number> {
   const amountStroops = BigInt(Math.round(amountXlm * 10_000_000));
   const args = [
     new Address(offererPublicKey).toScVal(),
     nativeToScVal(BigInt(listingId), { type: "u64" }),
     nativeToScVal(amountStroops, { type: "i128" }),
-    nativeToScVal("XLM", { type: "symbol" }),
+    new Address(tokenAddress).toScVal(),
   ];
   const retVal = await invokeContract(offererPublicKey, "make_offer", args);
   return Number(scValToNative(retVal));

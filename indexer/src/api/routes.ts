@@ -31,15 +31,77 @@ router.get('/listings', async (req: Request, res: Response) => {
 
 // GET /listings/:id/history — full event timeline for a single listing
 router.get('/listings/:id/history', async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const id = req.params.id as string;
+    if (!/^\d+$/.test(id)) {
+        return res.status(400).json({ error: 'Invalid ID format' });
+    }
     try {
         const results = await prisma.marketplaceEvent.findMany({
-            where: { listingId: BigInt(id as string) },
+            where: { listingId: BigInt(id) },
             orderBy: { ledgerSequence: 'asc' },
         });
         res.json(serialize(results));
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch listing history' });
+    }
+});
+
+// GET /auctions — all active or finished auctions
+router.get('/auctions', async (req: Request, res: Response) => {
+    const { creator, status } = req.query;
+    try {
+        const where: any = {};
+        if (creator) where.creator = creator as string;
+        if (status) where.status = status as string;
+
+        const results = await prisma.auction.findMany({
+            where,
+            orderBy: { updatedAtLedger: 'desc' },
+        });
+        res.json(serialize(results));
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch auctions' });
+    }
+});
+
+// GET /auctions/:id — a single auction by ID
+router.get('/auctions/:id', async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    if (!/^\d+$/.test(id)) {
+        return res.status(400).json({ error: 'Invalid ID format' });
+    }
+    try {
+        const result = await prisma.auction.findUnique({
+            where: { auctionId: BigInt(id) },
+        });
+        if (!result) {
+            return res.status(404).json({ error: 'Auction not found' });
+        }
+        res.json(serialize(result));
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch auction' });
+    }
+});
+
+// GET /offers — all offers for a listing
+router.get('/offers', async (req: Request, res: Response) => {
+    const { listing_id } = req.query;
+    try {
+        const where: any = {};
+        if (listing_id) {
+            if (!/^\d+$/.test(listing_id as string)) {
+                return res.status(400).json({ error: 'Invalid listing_id format' });
+            }
+            where.listingId = BigInt(listing_id as string);
+        }
+
+        const results = await prisma.offer.findMany({
+            where,
+            orderBy: { updatedAtLedger: 'desc' },
+        });
+        res.json(serialize(results));
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch offers' });
     }
 });
 

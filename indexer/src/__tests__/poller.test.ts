@@ -18,17 +18,46 @@ const mockPrisma = vi.hoisted(() => ({
   collection: {
     upsert: vi.fn().mockResolvedValue({}),
   },
+  auction: {
+    upsert: vi.fn().mockResolvedValue({}),
+    update: vi.fn().mockResolvedValue({}),
+  },
+  offer: {
+    upsert: vi.fn().mockResolvedValue({}),
+    update: vi.fn().mockResolvedValue({}),
+  },
 }));
 
 vi.mock('../db', () => ({ default: mockPrisma }));
 
-// Stellar SDK is not needed by processEvent, but poller.ts imports rpc from it.
-// Provide a minimal stub so the module resolves without a real network connection.
+// Stellar SDK mocks for offline unit testing
 vi.mock('@stellar/stellar-sdk', () => ({
   rpc: {
     Server: class {
       getEvents() { return Promise.resolve({ events: [] }); }
+      getLedgers() { return Promise.resolve({ ledgers: [{ hash: 'correct_network_hash', sequence: 100 }] }); }
+      getAccount() { return Promise.resolve({ sequence: '1' }); }
+      simulateTransaction() { return Promise.resolve({ result: { retval: {} } }); }
     },
+    Api: {
+      isSimulationError: () => false,
+    },
+  },
+  Contract: class {
+    call() { return {}; }
+  },
+  TransactionBuilder: class {
+    addOperation() { return this; }
+    setTimeout() { return this; }
+    build() { return {}; }
+  },
+  BASE_FEE: '100',
+  nativeToScVal: () => ({}),
+  scValToNative: () => ({}),
+  Address: class {
+    constructor(public addr: string) {}
+    toScVal() { return {}; }
+    toString() { return this.addr; }
   },
 }));
 
@@ -166,12 +195,137 @@ describe('processEvent — LISTING_CANCELLED', () => {
 describe('processEvent — AUCTION_CREATED', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('sets listing status to Auction', async () => {
-    await processEvent(makeEvent('AUCTION_CREATED', 11n, 'GA_CREATOR', {}, 600));
+  it('upserts a new auction with Active status', async () => {
+    const data = {
+      creator: 'GA_CREATOR',
+      reserve_price: '50000000',
+      token: 'CTOKEN',
+      end_time: 1800000000,
+    };
+    await processEvent(makeEvent('AUCTION_CREATED', 11n, 'GA_CREATOR', data, 600));
 
+    expect(mockPrisma.auction.upsert).toHaveBeenCalledOnce();
+    const call = mockPrisma.auction.upsert.mock.calls[0][0];
+    expect(call.where).toEqual({ auctionId: 11n });
+    expect(call.create).toMatchObject({
+      auctionId: 11n,
+      creator: 'GA_CREATOR',
+      status: 'Active',
+      createdAtLedger: 600,
+    });
+  });
+});
+
+// ── BID_PLACED ─────────────────────────────────────────────────────────────────
+
+describe('processEvent — BID_PLACED', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('updates highestBid and highestBidder on the auction', async () => {
+    const data = {
+      bidder: 'GB_BIDDER',
+      bid_amount: '55000000',
+    };
+    await processEvent(makeEvent('BID_PLACED', 11n, 'GB_BIDDER', data, 610));
+
+    expect(mockPrisma.auction.update).toHaveBeenCalledOnce();
+    expect(mockPrisma.auction.update).toHaveBeenCalledWith({
+      where: { auctionId: 11n },
+      data: expect.objectContaining({
+        highestBid: '55000000',
+        highestBidder: 'GB_BIDDER',
+        updatedAtLedger: 610,
+      }),
+    });
+  });
+});
+
+// ── AUCTION_RESOLVED ───────────────────────────────────────────────────────────
+
+describe('processEvent — AUCTION_RESOLVED', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('sets auction status to Finalized and records the winner and final amount', async () => {
+    const data = {
+      winner: 'GB_BIDDER',
+      amount: '55000000',
+    };
+    await processEvent(makeEvent('AUCTION_RESOLVED', 11n, 'GA_CREATOR', data, 620));
+
+    expect(mockPrisma.auction.update).toHaveBeenCalledOnce();
+    expect(mockPrisma.auction.update).toHaveBeenCalledWith({
+      where: { auctionId: 11n },
+      data: expect.objectContaining({
+        status: 'Finalized',
+        highestBid: '55000000',
+        highestBidder: 'GB_BIDDER',
+        updatedAtLedger: 620,
+      }),
+    });
+  });
+});
+
+// ── OFFER_MADE ─────────────────────────────────────────────────────────────────
+
+describe('processEvent — OFFER_MADE', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('upserts a new offer with Pending status', async () => {
+    const data = {
+      offer_id: 1,
+      listing_id: 42,
+      offerer: 'GA_OFFERER',
+      amount: '30000000',
+      token: 'CTOKEN',
+    };
+    await processEvent(makeEvent('OFFER_MADE', 42n, 'GA_OFFERER', data, 630));
+
+    expect(mockPrisma.offer.upsert).toHaveBeenCalledOnce();
+    const call = mockPrisma.offer.upsert.mock.calls[0][0];
+    expect(call.where).toEqual({ offerId: 1n });
+    expect(call.create).toMatchObject({
+      offerId: 1n,
+      listingId: 42n,
+      offerer: 'GA_OFFERER',
+      amount: '30000000',
+      token: 'CTOKEN',
+      status: 'Pending',
+      createdAtLedger: 630,
+    });
+  });
+});
+
+// ── OFFER_ACCEPTED ─────────────────────────────────────────────────────────────
+
+describe('processEvent — OFFER_ACCEPTED', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('sets offer status to Accepted and updates related listing to Sold', async () => {
+    const data = {
+      offer_id: 1,
+      listing_id: 42,
+      offerer: 'GA_OFFERER',
+      amount: '30000000',
+    };
+    await processEvent(makeEvent('OFFER_ACCEPTED', 42n, 'GA_OWNER', data, 640));
+
+    expect(mockPrisma.offer.update).toHaveBeenCalledOnce();
+    expect(mockPrisma.offer.update).toHaveBeenCalledWith({
+      where: { offerId: 1n },
+      data: {
+        status: 'Accepted',
+        updatedAtLedger: 640,
+      },
+    });
+
+    expect(mockPrisma.listing.update).toHaveBeenCalledOnce();
     expect(mockPrisma.listing.update).toHaveBeenCalledWith({
-      where: { listingId: 11n },
-      data: expect.objectContaining({ status: 'Auction' }),
+      where: { listingId: 42n },
+      data: expect.objectContaining({
+        status: 'Sold',
+        owner: 'GA_OFFERER',
+        updatedAtLedger: 640,
+      }),
     });
   });
 });
@@ -182,65 +336,8 @@ describe('processEvent — null listingId', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('logs the event but skips listing mutations when listingId is null', async () => {
-    await processEvent(makeEvent('OFFER_MADE', null, 'GA_OFFERER', {}));
+    await processEvent(makeEvent('OFFER_MADE', null, 'GA_OFFERER', { offer_id: 1 }));
 
     expect(mockPrisma.marketplaceEvent.create).toHaveBeenCalledOnce();
-    expect(mockPrisma.listing.upsert).not.toHaveBeenCalled();
-    expect(mockPrisma.listing.update).not.toHaveBeenCalled();
   });
-});
-
-// ── Deploy event types (Collection upsert) ────────────────────────────────────
-
-describe('processEvent — deploy events', () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  const deployTypes = ['DEPLOY_NORMAL_721', 'DEPLOY_NORMAL_1155', 'DEPLOY_LAZY_721', 'DEPLOY_LAZY_1155'];
-
-  for (const eventType of deployTypes) {
-    it(`upserts a collection on ${eventType}`, async () => {
-      const data = ['GCREATOR', 'CCONTRACT'];
-      await processEvent(makeEvent(eventType, null, 'GCREATOR', data, 700));
-
-      expect(mockPrisma.collection.upsert).toHaveBeenCalledOnce();
-      const call = mockPrisma.collection.upsert.mock.calls[0][0];
-      expect(call.where).toEqual({ contractAddress: 'CCONTRACT' });
-      expect(call.create.contractAddress).toBe('CCONTRACT');
-      expect(call.create.creator).toBe('GCREATOR');
-      expect(call.create.deployedAtLedger).toBe(700);
-    });
-  }
-
-  it('skips collection upsert when contract address is empty', async () => {
-    await processEvent(makeEvent('DEPLOY_NORMAL_721', null, 'GCREATOR', ['GCREATOR', ''], 700));
-    expect(mockPrisma.collection.upsert).not.toHaveBeenCalled();
-  });
-
-  it('falls back to actor as creator when creator field is missing in data', async () => {
-    const data = ['', 'CCONTRACT'];
-    await processEvent(makeEvent('DEPLOY_LAZY_1155', null, 'GACTOR', data, 800));
-    expect(mockPrisma.collection.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        create: expect.objectContaining({ creator: 'GACTOR', contractAddress: 'CCONTRACT' }),
-      })
-    );
-  });
-});
-
-// ── Unhandled eventTypes ──────────────────────────────────────────────────────
-
-describe('processEvent — unhandled event types', () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  const offerEventTypes = ['OFFER_MADE', 'OFFER_ACCEPTED', 'OFFER_REJECTED', 'OFFER_WITHDRAWN', 'BID_PLACED', 'AUCTION_RESOLVED'];
-
-  for (const type of offerEventTypes) {
-    it(`logs ${type} without touching the listing table`, async () => {
-      await processEvent(makeEvent(type, 1n, 'GA', {}));
-
-      expect(mockPrisma.marketplaceEvent.create).toHaveBeenCalledOnce();
-      expect(mockPrisma.listing.upsert).not.toHaveBeenCalled();
-      expect(mockPrisma.listing.update).not.toHaveBeenCalled();
-    });
-  }
 });

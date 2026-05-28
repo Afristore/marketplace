@@ -14,6 +14,7 @@ import {
   withdrawOffer,
   acceptOffer,
   rejectOffer,
+  makeOffer,
   Offer,
   Listing,
 } from "@/lib/contract";
@@ -256,3 +257,35 @@ export function useRejectOffer(publicKey: string | null) {
 
   return { reject, isRejecting, error };
 }
+
+// ── useMakeOffer ─────────────────────────────────────────────
+
+export function useMakeOffer(publicKey: string | null) {
+  const [isOffering, setIsOffering] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
+
+  const make = useCallback(
+    async (listingId: number, amountXlm: number, tokenAddress: string): Promise<boolean> => {
+      if (!publicKey) {
+        setError("Wallet not connected");
+        return false;
+      }
+      setIsOffering(true);
+      setError(null);
+      try {
+        await makeOffer(publicKey, listingId, amountXlm, tokenAddress);
+        return true;
+      } catch (err: unknown) {
+        setError(getReadableErrorMessage(err, "Failed to make offer"));
+        return false;
+      } finally {
+        setIsOffering(false);
+      }
+    },
+    [publicKey]
+  );
+
+  return { make, isOffering, error };
+}
+

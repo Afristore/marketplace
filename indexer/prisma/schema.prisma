@@ -28,9 +28,40 @@ model Listing {
   token           String
   status          String   // "Active", "Sold", "Cancelled", "Auction"
   royaltyBps      Int      @default(0)
+  originalCreator String?
+  recipients      Json?
   createdAtLedger Int
   updatedAtLedger Int
 }
+
+model Auction {
+  auctionId       BigInt   @id
+  creator         String
+  metadataCid     String
+  token           String
+  reservePrice    Decimal  @db.Decimal(32, 7)
+  highestBid      Decimal  @db.Decimal(32, 7)
+  highestBidder   String?
+  endTime         BigInt
+  status          String   // "Active", "Finalized", "Cancelled"
+  recipients      Json?
+  royaltyBps      Int      @default(0)
+  originalCreator String
+  createdAtLedger Int
+  updatedAtLedger Int
+}
+
+model Offer {
+  offerId         BigInt   @id
+  listingId       BigInt
+  offerer         String
+  amount          Decimal  @db.Decimal(32, 7)
+  token           String
+  status          String   // "Pending", "Accepted", "Rejected", "Withdrawn"
+  createdAtLedger Int
+  updatedAtLedger Int
+}
+
 
 model MarketplaceEvent {
   id              Int      @id @default(autoincrement())

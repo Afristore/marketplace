@@ -22,6 +22,16 @@ const { mockGetLedgers, mockPrisma } = vi.hoisted(() => {
     collection: {
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
+    auction: {
+      findMany: vi.fn().mockResolvedValue([]),
+      update: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
+    },
+    offer: {
+      findMany: vi.fn().mockResolvedValue([]),
+      update: vi.fn().mockResolvedValue({}),
+      delete: vi.fn().mockResolvedValue({}),
+    },
   };
   
   mPrisma.$transaction = vi.fn((callback) => callback(mPrisma));
