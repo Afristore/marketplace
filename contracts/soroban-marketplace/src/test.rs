@@ -859,6 +859,24 @@ fn test_create_auction_success() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn test_create_auction_rejects_zero_reserve_price() {
+    let (env, client, artist, _, contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&contract_id);
+
+    client.create_auction(
+        &artist,
+        &bytes!(&env, 0x51),
+        &contract_id,
+        &0_i128,
+        &3600,
+        &0,
+        &valid_recipients(&env, &artist),
+    );
+}
+
+#[test]
 fn test_place_bid_success() {
     let (env, client, artist, buyer, contract_id) = setup();
     client.set_admin(&artist);

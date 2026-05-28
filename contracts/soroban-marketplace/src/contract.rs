@@ -404,7 +404,7 @@ impl MarketplaceContract {
         if Self::is_artist_revoked(env.clone(), creator.clone()) {
             panic_with_error!(&env, MarketplaceError::Unauthorized);
         }
-        if metadata_cid.is_empty() || reserve_price < 0 {
+        if metadata_cid.is_empty() || reserve_price <= 0 {
             panic_with_error!(&env, MarketplaceError::InvalidCid);
         }
         if !Self::is_token_whitelisted(&env, &token) {
