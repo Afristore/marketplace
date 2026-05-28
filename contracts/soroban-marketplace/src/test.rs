@@ -597,6 +597,28 @@ fn test_set_admin_only_once() {
 }
 
 #[test]
+fn test_transfer_admin_updates_admin() {
+    let (_env, client, artist, buyer, _) = setup();
+    client.set_admin(&artist);
+
+    client.transfer_admin(&artist, &buyer);
+
+    assert_eq!(client.get_admin(), Some(buyer.clone()));
+    client.set_protocol_fee(&buyer, &250u32);
+    assert_eq!(client.get_protocol_fee(), 250u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_transfer_admin_rejects_non_admin() {
+    let (env, client, artist, buyer, _) = setup();
+    client.set_admin(&artist);
+    let new_admin = Address::generate(&env);
+
+    client.transfer_admin(&buyer, &new_admin);
+}
+
+#[test]
 fn test_add_and_remove_token_whitelist() {
     let (env, client, artist, _, contract_id) = setup();
     client.set_admin(&artist);

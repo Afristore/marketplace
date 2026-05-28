@@ -41,6 +41,20 @@ impl MarketplaceContract {
         env.storage().persistent().set(&key, &admin);
     }
 
+    pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) {
+        current_admin.require_auth();
+        let key = crate::storage::DataKey::Admin;
+        let stored_admin = env
+            .storage()
+            .persistent()
+            .get::<_, Address>(&key)
+            .expect("admin not set");
+        if current_admin != stored_admin {
+            panic_with_error!(&env, MarketplaceError::Unauthorized);
+        }
+        env.storage().persistent().set(&key, &new_admin);
+    }
+
     pub fn get_admin(env: Env) -> Option<Address> {
         let key = crate::storage::DataKey::Admin;
         env.storage().persistent().get::<_, Address>(&key)
