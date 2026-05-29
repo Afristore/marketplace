@@ -6,6 +6,51 @@ import axios from 'axios';
 
 const router = Router();
 
+// ── Server-Sent Events (Issue #161) ─────────────────────────
+
+/** Active SSE response streams. */
+const sseClients = new Set<Response>();
+
+/**
+ * Broadcast a marketplace event to all connected SSE clients.
+ * Called by processEvent in poller.ts after writing to the DB.
+ */
+export function emitSSEEvent(event: unknown): void {
+    if (sseClients.size === 0) return;
+    const payload = `data: ${JSON.stringify(event)}\n\n`;
+    for (const res of sseClients) {
+        try {
+            res.write(payload);
+        } catch {
+            sseClients.delete(res);
+        }
+    }
+}
+
+/** GET /events/stream — subscribe to real-time marketplace events. */
+router.get('/events/stream', (req: Request, res: Response) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    sseClients.add(res);
+
+    // Send a heartbeat every 30 s to keep the connection alive through proxies.
+    const heartbeat = setInterval(() => {
+        try {
+            res.write(': heartbeat\n\n');
+        } catch {
+            clearInterval(heartbeat);
+        }
+    }, 30_000);
+
+    req.on('close', () => {
+        clearInterval(heartbeat);
+        sseClients.delete(res);
+    });
+});
+
 // Helper to serialize BigInts to strings for JSON
 const serialize = (obj: any) => 
     JSON.parse(JSON.stringify(obj, (key, value) =>

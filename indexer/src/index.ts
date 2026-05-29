@@ -11,7 +11,30 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-app.use(cors());
+// Restrict CORS when ALLOWED_ORIGINS is set; otherwise allow all origins (dev default).
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+    : [];
+if (allowedOrigins.length === 0 && process.env.NODE_ENV === 'production') {
+    console.warn('WARNING: ALLOWED_ORIGINS is not set in production — CORS is fully open.');
+}
+app.use(
+    cors(
+        allowedOrigins.length > 0
+            ? {
+                  origin: (origin, cb) => {
+                      // Allow server-to-server requests (no origin header) and listed origins.
+                      if (!origin || allowedOrigins.includes(origin)) {
+                          cb(null, true);
+                      } else {
+                          cb(new Error(`CORS: origin ${origin} not allowed`));
+                      }
+                  },
+                  credentials: true,
+              }
+            : undefined // permissive when no allowlist is configured
+    )
+);
 app.use(express.json());
 
 // Track response time metrics for all routes

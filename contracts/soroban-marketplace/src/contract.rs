@@ -392,20 +392,17 @@ impl MarketplaceContract {
             panic_with_error!(&env, MarketplaceError::CannotBuyOwnListing);
         }
 
-        #[cfg(not(test))]
-        {
-            Self::distribute_payout(
-                &env,
-                &listing.token,
-                listing.price,
-                &listing.original_creator,
-                listing.royalty_bps,
-                &listing.artist,
-                &listing.recipients,
-                &buyer,
-                true,
-            );
-        }
+        Self::distribute_payout(
+            &env,
+            &listing.token,
+            listing.price,
+            &listing.original_creator,
+            listing.royalty_bps,
+            &listing.artist,
+            &listing.recipients,
+            &buyer,
+            true,
+        );
 
         listing.status = ListingStatus::Sold;
         listing.owner = Some(buyer.clone());
@@ -426,14 +423,11 @@ impl MarketplaceContract {
         for offer_id in offers.iter() {
             if let Some(mut offer) = load_offer(&env, offer_id) {
                 if offer.status == OfferStatus::Pending {
-                    #[cfg(not(test))]
-                    {
-                        TokenClient::new(&env, &offer.token).transfer(
-                            &env.current_contract_address(),
-                            &offer.offerer,
-                            &offer.amount,
-                        );
-                    }
+                    TokenClient::new(&env, &offer.token).transfer(
+                        &env.current_contract_address(),
+                        &offer.offerer,
+                        &offer.amount,
+                    );
                     offer.status = OfferStatus::Rejected;
                     save_offer(&env, &offer);
                 }
@@ -462,14 +456,11 @@ impl MarketplaceContract {
         for offer_id in offers.iter() {
             if let Some(mut offer) = load_offer(&env, offer_id) {
                 if offer.status == OfferStatus::Pending {
-                    #[cfg(not(test))]
-                    {
-                        TokenClient::new(&env, &offer.token).transfer(
-                            &env.current_contract_address(),
-                            &offer.offerer,
-                            &offer.amount,
-                        );
-                    }
+                    TokenClient::new(&env, &offer.token).transfer(
+                        &env.current_contract_address(),
+                        &offer.offerer,
+                        &offer.amount,
+                    );
                     offer.status = OfferStatus::Rejected;
                     save_offer(&env, &offer);
                 }
@@ -561,14 +552,11 @@ impl MarketplaceContract {
             panic_with_error!(&env, MarketplaceError::BidTooLow);
         }
 
-        #[cfg(not(test))]
-        {
-            let token_client = TokenClient::new(&env, &auction.token);
-            if let Some(prev) = auction.highest_bidder.clone() {
-                token_client.transfer(&env.current_contract_address(), &prev, &auction.highest_bid);
-            }
-            token_client.transfer(&bidder, env.current_contract_address(), &amount);
+        let token_client = TokenClient::new(&env, &auction.token);
+        if let Some(prev) = auction.highest_bidder.clone() {
+            token_client.transfer(&env.current_contract_address(), &prev, &auction.highest_bid);
         }
+        token_client.transfer(&bidder, &env.current_contract_address(), &amount);
         auction.highest_bid = amount;
         auction.highest_bidder = Some(bidder.clone());
         save_auction(&env, &auction);
@@ -613,20 +601,17 @@ impl MarketplaceContract {
 
         let (finalized_winner, finalized_amount) =
             if let Some(ref winner) = auction.highest_bidder.clone() {
-                #[cfg(not(test))]
-                {
-                    Self::distribute_payout(
-                        &env,
-                        &auction.token,
-                        auction.highest_bid,
-                        &auction.original_creator,
-                        auction.royalty_bps,
-                        &auction.creator,
-                        &auction.recipients,
-                        winner,
-                        false,
-                    );
-                }
+                Self::distribute_payout(
+                    &env,
+                    &auction.token,
+                    auction.highest_bid,
+                    &auction.original_creator,
+                    auction.royalty_bps,
+                    &auction.creator,
+                    &auction.recipients,
+                    winner,
+                    false,
+                );
                 auction.status = AuctionStatus::Finalized;
                 (Some(winner.clone()), auction.highest_bid)
             } else {
@@ -667,14 +652,11 @@ impl MarketplaceContract {
         if amount <= 0 {
             panic_with_error!(&env, MarketplaceError::InsufficientOfferAmount);
         }
-        #[cfg(not(test))]
-        {
-            TokenClient::new(&env, &token).transfer(
-                &offerer,
-                env.current_contract_address(),
-                &amount,
-            );
-        }
+        TokenClient::new(&env, &token).transfer(
+            &offerer,
+            &env.current_contract_address(),
+            &amount,
+        );
         let offer_id = increment_offer_count(&env);
         save_offer(
             &env,
@@ -720,14 +702,11 @@ impl MarketplaceContract {
         if offer.status != OfferStatus::Pending {
             panic_with_error!(&env, MarketplaceError::OfferNotPending);
         }
-        #[cfg(not(test))]
-        {
-            TokenClient::new(&env, &offer.token).transfer(
-                &env.current_contract_address(),
-                &offerer,
-                &offer.amount,
-            );
-        }
+        TokenClient::new(&env, &offer.token).transfer(
+            &env.current_contract_address(),
+            &offerer,
+            &offer.amount,
+        );
         offer.status = OfferStatus::Withdrawn;
         save_offer(&env, &offer);
 
@@ -754,14 +733,11 @@ impl MarketplaceContract {
         if offer.status != OfferStatus::Pending {
             panic_with_error!(&env, MarketplaceError::OfferNotPending);
         }
-        #[cfg(not(test))]
-        {
-            TokenClient::new(&env, &offer.token).transfer(
-                &env.current_contract_address(),
-                &offer.offerer,
-                &offer.amount,
-            );
-        }
+        TokenClient::new(&env, &offer.token).transfer(
+            &env.current_contract_address(),
+            &offer.offerer,
+            &offer.amount,
+        );
         offer.status = OfferStatus::Rejected;
         save_offer(&env, &offer);
 
@@ -788,20 +764,17 @@ impl MarketplaceContract {
         if offer.status != OfferStatus::Pending || listing.status != ListingStatus::Active {
             panic_with_error!(&env, MarketplaceError::OfferNotPending);
         }
-        #[cfg(not(test))]
-        {
-            Self::distribute_payout(
-                &env,
-                &offer.token,
-                offer.amount,
-                &listing.original_creator,
-                listing.royalty_bps,
-                &artist,
-                &listing.recipients,
-                &offer.offerer,
-                false,
-            );
-        }
+        Self::distribute_payout(
+            &env,
+            &offer.token,
+            offer.amount,
+            &listing.original_creator,
+            listing.royalty_bps,
+            &artist,
+            &listing.recipients,
+            &offer.offerer,
+            false,
+        );
         let accepted_offerer = offer.offerer.clone();
         let accepted_amount = offer.amount;
         let accepted_listing_id = offer.listing_id;
@@ -824,14 +797,11 @@ impl MarketplaceContract {
             if oid != offer_id {
                 if let Some(mut other) = load_offer(&env, oid) {
                     if other.status == OfferStatus::Pending {
-                        #[cfg(not(test))]
-                        {
-                            TokenClient::new(&env, &other.token).transfer(
-                                &env.current_contract_address(),
-                                &other.offerer,
-                                &other.amount,
-                            );
-                        }
+                        TokenClient::new(&env, &other.token).transfer(
+                            &env.current_contract_address(),
+                            &other.offerer,
+                            &other.amount,
+                        );
                         other.status = OfferStatus::Rejected;
                         save_offer(&env, &other);
                     }

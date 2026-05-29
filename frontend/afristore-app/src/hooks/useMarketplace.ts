@@ -4,7 +4,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   getAllListings,
   getListing,
@@ -16,6 +16,7 @@ import {
   Listing,
 } from "@/lib/contract";
 import { fetchListings } from "@/lib/indexer";
+import { config } from "@/lib/config";
 import { uploadImageToIPFS, uploadMetadataToIPFS, ArtworkMetadata } from "@/lib/ipfs";
 import { getReadableErrorMessage } from "@/lib/errors";
 import { useTransientErrorToast } from "./useTransientErrorToast";
@@ -75,6 +76,19 @@ export function useMarketplace(opts?: { page?: number; limit?: number }) {
 
   useEffect(() => {
     refresh();
+  }, [refresh]);
+
+  // Subscribe to real-time updates via SSE (issue #161).
+  useEffect(() => {
+    if (typeof window === "undefined" || !config.indexerUrl) return;
+    const es = new EventSource(`${config.indexerUrl}/events/stream`);
+    es.onmessage = () => {
+      refresh();
+    };
+    es.onerror = () => {
+      es.close();
+    };
+    return () => es.close();
   }, [refresh]);
 
   return { listings, isLoading, error, refresh };

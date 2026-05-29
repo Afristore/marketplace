@@ -14,6 +14,7 @@ import {
   finalizeAuction,
   Auction,
 } from "@/lib/contract";
+import { fetchAuctions } from "@/lib/indexer";
 import { uploadImageToIPFS, uploadMetadataToIPFS, ArtworkMetadata } from "@/lib/ipfs";
 import { getReadableErrorMessage } from "@/lib/errors";
 import { useTransientErrorToast } from "./useTransientErrorToast";
@@ -21,7 +22,7 @@ import { useTransientErrorToast } from "./useTransientErrorToast";
 // ── useAuctions ──────────────────────────────────────────────
 
 /**
- * Fetches all auctions from the contract.
+ * Fetches all auctions — prefers the indexer, falls back to on-chain.
  */
 export function useAuctions() {
   const [auctions, setAuctions] = useState<Auction[]>([]);
@@ -33,6 +34,15 @@ export function useAuctions() {
     setIsLoading(true);
     setError(null);
     try {
+      try {
+        const raw = await fetchAuctions();
+        if (raw.length >= 0) {
+          setAuctions(raw as Auction[]);
+          return;
+        }
+      } catch {
+        // Indexer unreachable — fall through to on-chain
+      }
       const all = await getAllAuctions();
       setAuctions(all);
     } catch (err: unknown) {

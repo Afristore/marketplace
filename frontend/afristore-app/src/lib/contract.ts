@@ -353,20 +353,15 @@ export async function getArtistListings(artistPublicKey: string): Promise<number
 }
 
 /**
- * getAllListings — Fetch every listing from ID 1 → total.
+ * getAllListings — Fetch every listing from ID 1 → total in parallel.
  */
 export async function getAllListings(): Promise<Listing[]> {
   const total = await getTotalListings();
-  const listings: Listing[] = [];
-  for (let i = 1; i <= total; i++) {
-    try {
-      const l = await getListing(i);
-      listings.push(l);
-    } catch {
-      // Skip deleted / archived entries.
-    }
-  }
-  return listings;
+  const ids = Array.from({ length: total }, (_, i) => i + 1);
+  const results = await Promise.all(
+    ids.map((id) => getListing(id).catch(() => null))
+  );
+  return results.filter((l): l is Listing => l !== null);
 }
 
 // ── Offer types mirrored from the Rust contract ──────────────
@@ -578,23 +573,21 @@ export async function getArtistAuctions(
 }
 
 /**
- * getAllAuctions — Convenience: fetch every auction by trying IDs
- * sequentially from 1 until a fetch fails.
+ * getAllAuctions — Fetch auctions by probing IDs in parallel batches.
+ * Stops after a batch where every fetch fails (no more auctions exist).
  */
 export async function getAllAuctions(): Promise<Auction[]> {
   const auctions: Auction[] = [];
-  let consecutiveFailures = 0;
-
-  for (let i = 1; consecutiveFailures < 3; i++) {
-    try {
-      const a = await getAuction(i);
-      auctions.push(a);
-      consecutiveFailures = 0;
-    } catch {
-      consecutiveFailures++;
-    }
+  const BATCH = 10;
+  let offset = 1;
+  while (true) {
+    const ids = Array.from({ length: BATCH }, (_, i) => offset + i);
+    const results = await Promise.all(ids.map((id) => getAuction(id).catch(() => null)));
+    const found = results.filter((a): a is Auction => a !== null);
+    auctions.push(...found);
+    if (found.length === 0) break;
+    offset += BATCH;
   }
-
   return auctions;
 }
 

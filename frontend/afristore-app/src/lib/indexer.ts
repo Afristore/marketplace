@@ -402,6 +402,23 @@ export async function fetchListings(options: {
 }
 
 /**
+ * Fetch auctions from the indexer with optional filters.
+ * Throws if the indexer is unreachable so callers can fall back to on-chain.
+ */
+export async function fetchAuctions(options: {
+  creator?: string;
+  status?: string;
+} = {}): Promise<any[]> {
+  const params = new URLSearchParams();
+  if (options.creator) params.set('creator', options.creator);
+  if (options.status) params.set('status', options.status);
+  const q = params.toString();
+  const raw = await fetchWithRetry<unknown>(`/auctions${q ? `?${q}` : ''}`);
+  if (Array.isArray(raw)) return raw;
+  return [];
+}
+
+/**
  * Fetch a single listing (with optional metadata) from the indexer.
  */
 export async function fetchListingById(id: number): Promise<any | null> {

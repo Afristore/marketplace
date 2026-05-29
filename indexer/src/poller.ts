@@ -1,6 +1,7 @@
 import { rpc, Contract, TransactionBuilder, BASE_FEE, nativeToScVal, scValToNative } from '@stellar/stellar-sdk';
 import prisma from './db.js';
 import { parseMarketplaceEvent } from './parser.js';
+import { emitSSEEvent } from './api/routes.js';
 import dotenv from 'dotenv';
 import {
   latestLedgerProcessedGauge,
@@ -837,4 +838,7 @@ export async function processEvent(event: any) {
     }
 
   }
+
+  // Broadcast to any connected SSE clients after the DB write is complete.
+  emitSSEEvent(event);
 }
