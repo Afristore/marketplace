@@ -23,6 +23,7 @@ import {
   Loader2,
   RefreshCw,
 } from "lucide-react";
+import { getReadableErrorMessage } from "@/lib/errors";
 
 type TxPhase =
   | "idle"
@@ -75,39 +76,39 @@ export default function CollectionMintPage({
     [record]
   );
 
+  const loadCollection = useCallback(async () => {
+    setLoadPhase(true);
+    setLoadError(null);
+    try {
+      const [r, m] = await Promise.all([
+        getCollectionRecordByAddress(address),
+        getCollectionMetadata(address),
+      ]);
+      setRecord(r);
+      setMetadata(m);
+      if (publicKey) {
+        setRecipient((prev) => (prev ? prev : publicKey));
+      }
+      if (!r) {
+        setLoadError("This contract is not registered in the launchpad index.");
+      }
+    } catch (e) {
+      setLoadError(getReadableErrorMessage(e, "Failed to load collection"));
+    } finally {
+      setLoadPhase(false);
+    }
+  }, [address, publicKey]);
+
   useEffect(() => {
     let cancel = false;
     (async () => {
-      setLoadPhase(true);
-      setLoadError(null);
-      try {
-        const [r, m] = await Promise.all([
-          getCollectionRecordByAddress(address),
-          getCollectionMetadata(address),
-        ]);
-        if (cancel) return;
-        setRecord(r);
-        setMetadata(m);
-        if (publicKey) {
-          setRecipient((prev) => (prev ? prev : publicKey));
-        }
-        if (!r) {
-          setLoadError("This contract is not registered in the launchpad index.");
-        }
-      } catch (e) {
-        if (!cancel) {
-          setLoadError(
-            e instanceof Error ? e.message : "Failed to load collection"
-          );
-        }
-      } finally {
-        if (!cancel) setLoadPhase(false);
-      }
+      await loadCollection();
+      if (cancel) return;
     })();
     return () => {
       cancel = true;
     };
-  }, [address, publicKey]);
+  }, [loadCollection]);
 
   const resetFlow = useCallback(() => {
     setTxPhase("idle");
@@ -335,6 +336,14 @@ export default function CollectionMintPage({
             >
               <p className="text-red-700 font-bold font-display mb-2">Cannot mint</p>
               <p className="text-red-600/90 text-sm font-inter">{loadError}</p>
+              <button
+                type="button"
+                onClick={loadCollection}
+                className="mt-5 inline-flex items-center gap-2 rounded-xl bg-red-100 px-4 py-2 text-sm font-bold text-red-800 border border-red-200 hover:bg-red-200"
+              >
+                <RefreshCw size={14} />
+                Retry
+              </button>
             </div>
           ) : !metadata || record === null ? null : (
             <div className="space-y-6">

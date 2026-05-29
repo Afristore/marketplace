@@ -4,7 +4,7 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Image from "next/image";
 import {
@@ -17,6 +17,7 @@ import {
     AuctionStatus
 } from "@/lib/contract";
 import { fetchMetadata, cidToGatewayUrl, ArtworkMetadata } from "@/lib/ipfs";
+import { getReadableErrorMessage } from "@/lib/errors";
 import { useWalletContext } from "@/context/WalletContext";
 import { useBuyArtwork, usePlaceBid } from "@/hooks/useMarketplace";
 import { useListingOffers } from "@/hooks/useOffers";
@@ -39,6 +40,7 @@ import {
     TrendingUp,
     Landmark,
     Share2,
+    RefreshCw,
 } from "lucide-react";
 
 export default function ListingDetailPage() {
@@ -60,12 +62,11 @@ export default function ListingDetailPage() {
     const { offers, isLoading: isLoadingOffers, refresh: refreshOffers } = useListingOffers(id ? Number(id) : null);
     const { activities, isLoading: isLoadingActivity } = useListingActivity(id ? Number(id) : null);
 
-    useEffect(() => {
-        const loadData = async () => {
-            if (!id) return;
-            setIsLoading(true);
-            setError(null);
-            try {
+    const loadData = useCallback(async () => {
+        if (!id) return;
+        setIsLoading(true);
+        setError(null);
+        try {
                 // Mock data fallback for placeholder IDs (1-6)
                 if (Number(id) >= 1 && Number(id) <= 6) {
                     const mockIdx = Number(id) - 1;
@@ -131,14 +132,16 @@ export default function ListingDetailPage() {
                     const m = await fetchMetadata(cid);
                     setMetadata(m);
                 }
-            } catch (err: any) {
-                setError(err.message || "Failed to load artwork details");
-            } finally {
-                setIsLoading(false);
-            }
-        };
-        loadData();
+        } catch (err: unknown) {
+            setError(getReadableErrorMessage(err, "Failed to load artwork details"));
+        } finally {
+            setIsLoading(false);
+        }
     }, [id]);
+
+    useEffect(() => {
+        loadData();
+    }, [loadData]);
 
     const handleBuy = async () => {
         if (!listing) return;
@@ -178,6 +181,15 @@ export default function ListingDetailPage() {
                 </div>
                 <h2 className="text-2xl font-display font-bold text-white mb-2">Artwork Not Found</h2>
                 <p className="text-white/60 mb-8 max-w-md">{error ?? "The listing you are looking for does not exist or has been removed."}</p>
+                <button
+                    onClick={loadData}
+                    className="px-8 py-3 rounded-xl border border-white/10 text-white font-bold hover:bg-white/5 transition-all"
+                >
+                    <span className="inline-flex items-center gap-2">
+                        <RefreshCw size={16} />
+                        Retry
+                    </span>
+                </button>
                 <button
                     onClick={() => router.push('/')}
                     className="px-8 py-3 rounded-xl bg-brand-500 text-white font-bold hover:bg-brand-600 transition-all shadow-lg shadow-brand-500/20"

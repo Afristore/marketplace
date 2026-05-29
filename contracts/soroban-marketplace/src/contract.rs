@@ -13,11 +13,13 @@ use crate::events::*;
 use crate::{
     storage::{
         acquire_auction_lock, acquire_listing_lock, add_artist_auction_id, add_artist_listing_id,
-        get_artist_listing_ids, get_listing_count, increment_auction_count,
-        increment_listing_count, increment_offer_count, is_artist_revoked_storage, load_auction,
-        load_listing, load_listing_offers, load_offer, load_offerer_offers, release_auction_lock,
+        clear_pending_admin_storage, get_artist_listing_ids, get_listing_count,
+        get_pending_admin_storage, increment_auction_count, increment_listing_count,
+        increment_offer_count, is_artist_revoked_storage, load_auction, load_listing,
+        load_listing_offers, load_offer, load_offerer_offers, release_auction_lock,
         release_listing_lock, remove_artist_revocation_storage, save_auction, save_listing,
         save_listing_offers, save_offer, save_offerer_offers, set_artist_revocation_storage,
+        set_pending_admin_storage,
     },
     types::{
         Auction, AuctionStatus, Listing, ListingStatus, MarketplaceError, Offer, OfferStatus,
@@ -44,6 +46,48 @@ impl MarketplaceContract {
     pub fn get_admin(env: Env) -> Option<Address> {
         let key = crate::storage::DataKey::Admin;
         env.storage().persistent().get::<_, Address>(&key)
+    }
+
+    /// Step 1 of a 2-step admin transfer: the current admin proposes a successor.
+    /// The successor must call `accept_admin` to complete the handover.
+    pub fn transfer_admin(env: Env, current_admin: Address, new_admin: Address) {
+        current_admin.require_auth();
+        let stored_admin = Self::get_admin(env.clone())
+            .unwrap_or_else(|| panic_with_error!(&env, MarketplaceError::Unauthorized));
+        if current_admin != stored_admin {
+            panic_with_error!(&env, MarketplaceError::Unauthorized);
+        }
+        set_pending_admin_storage(&env, &new_admin);
+        crate::events::AdminTransferProposedEvent {
+            current_admin,
+            proposed_admin: new_admin,
+        }
+        .publish(&env);
+    }
+
+    /// Step 2 of a 2-step admin transfer: the proposed new admin accepts the role.
+    pub fn accept_admin(env: Env, new_admin: Address) {
+        new_admin.require_auth();
+        let pending = get_pending_admin_storage(&env)
+            .unwrap_or_else(|| panic_with_error!(&env, MarketplaceError::Unauthorized));
+        if new_admin != pending {
+            panic_with_error!(&env, MarketplaceError::Unauthorized);
+        }
+        let old_admin = Self::get_admin(env.clone())
+            .unwrap_or_else(|| panic_with_error!(&env, MarketplaceError::Unauthorized));
+        let key = crate::storage::DataKey::Admin;
+        env.storage().persistent().set(&key, &new_admin);
+        env.storage().persistent().extend_ttl(
+            &key,
+            crate::storage::LEDGER_TTL_THRESHOLD,
+            crate::storage::LEDGER_TTL_BUMP,
+        );
+        clear_pending_admin_storage(&env);
+        crate::events::AdminTransferredEvent {
+            old_admin,
+            new_admin,
+        }
+        .publish(&env);
     }
 
     pub fn set_treasury(env: Env, admin: Address, treasury: Address) {
@@ -280,12 +324,34 @@ impl MarketplaceContract {
             panic_with_error!(&env, MarketplaceError::Unauthorized);
         }
 
-        listing.metadata_cid = new_metadata_cid;
+        let new_recipients_len = new_recipients.len();
+        if new_recipients_len == 0 || new_recipients_len > 4 {
+            panic_with_error!(&env, MarketplaceError::TooManyRecipients);
+        }
+        let mut total_pct = 0u32;
+        for i in 0..new_recipients_len {
+            total_pct += new_recipients.get(i).unwrap().percentage;
+        }
+        if total_pct != 100 {
+            panic_with_error!(&env, MarketplaceError::InvalidSplit);
+        }
+
+        listing.metadata_cid = new_metadata_cid.clone();
         listing.price = new_price;
         listing.token = new_token;
         listing.recipients = new_recipients;
 
         save_listing(&env, &listing);
+
+        ListingUpdatedEvent {
+            listing_id,
+            artist: artist.clone(),
+            new_price,
+            metadata_cid: new_metadata_cid,
+            ledger_sequence: env.ledger().sequence(),
+        }
+        .publish(&env);
+
         true
     }
 
@@ -345,6 +411,16 @@ impl MarketplaceContract {
         listing.owner = Some(buyer.clone());
         save_listing(&env, &listing);
 
+        ArtworkSoldEvent {
+            listing_id,
+            artist: listing.artist.clone(),
+            buyer: buyer.clone(),
+            price: listing.price,
+            currency: listing.currency.clone(),
+            ledger_sequence: env.ledger().sequence(),
+        }
+        .publish(&env);
+
         // Reject all pending offers
         let offers = load_listing_offers(&env, listing_id);
         for offer_id in offers.iter() {
@@ -381,8 +457,35 @@ impl MarketplaceContract {
         if listing.status != ListingStatus::Active {
             panic_with_error!(&env, MarketplaceError::ListingNotActive);
         }
+
+        let offers = load_listing_offers(&env, listing_id);
+        for offer_id in offers.iter() {
+            if let Some(mut offer) = load_offer(&env, offer_id) {
+                if offer.status == OfferStatus::Pending {
+                    #[cfg(not(test))]
+                    {
+                        TokenClient::new(&env, &offer.token).transfer(
+                            &env.current_contract_address(),
+                            &offer.offerer,
+                            &offer.amount,
+                        );
+                    }
+                    offer.status = OfferStatus::Rejected;
+                    save_offer(&env, &offer);
+                }
+            }
+        }
+
         listing.status = ListingStatus::Cancelled;
         save_listing(&env, &listing);
+
+        ListingCancelledEvent {
+            listing_id,
+            artist: artist.clone(),
+            ledger_sequence: env.ledger().sequence(),
+        }
+        .publish(&env);
+
         true
     }
 
@@ -428,6 +531,16 @@ impl MarketplaceContract {
         };
         save_auction(&env, &auction);
         add_artist_auction_id(&env, &creator, auction_id);
+
+        AuctionCreatedEvent {
+            auction_id,
+            creator: creator.clone(),
+            reserve_price,
+            token: token.clone(),
+            end_time,
+        }
+        .publish(&env);
+
         auction_id
     }
 
@@ -459,9 +572,18 @@ impl MarketplaceContract {
         auction.highest_bid = amount;
         auction.highest_bidder = Some(bidder.clone());
         save_auction(&env, &auction);
+
+        BidPlacedEvent {
+            auction_id,
+            bidder: bidder.clone(),
+            bid_amount: amount,
+        }
+        .publish(&env);
     }
 
-    pub fn finalize_auction(env: Env, auction_id: u64) {
+    pub fn finalize_auction(env: Env, caller: Address, auction_id: u64) {
+        caller.require_auth();
+
         // Reentrancy guard
         if !acquire_auction_lock(&env, auction_id) {
             panic_with_error!(&env, MarketplaceError::ReentrancyGuard);
@@ -483,30 +605,44 @@ impl MarketplaceContract {
 
         // Time check
         if env.ledger().timestamp() < auction.end_time {
-            auction.creator.require_auth();
+            if caller != auction.creator {
+                release_auction_lock(&env, auction_id);
+                panic_with_error!(&env, MarketplaceError::Unauthorized);
+            }
         }
 
-        if let Some(_winner) = auction.highest_bidder.clone() {
-            #[cfg(not(test))]
-            {
-                Self::distribute_payout(
-                    &env,
-                    &auction.token,
-                    auction.highest_bid,
-                    &auction.original_creator,
-                    auction.royalty_bps,
-                    &auction.creator,
-                    &auction.recipients,
-                    &_winner,
-                    false,
-                );
-            }
-            auction.status = AuctionStatus::Finalized;
-        } else {
-            auction.status = AuctionStatus::Cancelled;
-        }
+        let (finalized_winner, finalized_amount) =
+            if let Some(ref winner) = auction.highest_bidder.clone() {
+                #[cfg(not(test))]
+                {
+                    Self::distribute_payout(
+                        &env,
+                        &auction.token,
+                        auction.highest_bid,
+                        &auction.original_creator,
+                        auction.royalty_bps,
+                        &auction.creator,
+                        &auction.recipients,
+                        winner,
+                        false,
+                    );
+                }
+                auction.status = AuctionStatus::Finalized;
+                (Some(winner.clone()), auction.highest_bid)
+            } else {
+                auction.status = AuctionStatus::Cancelled;
+                (None, 0)
+            };
+
         save_auction(&env, &auction);
         release_auction_lock(&env, auction_id);
+
+        AuctionFinalizedEvent {
+            auction_id,
+            winner: finalized_winner,
+            amount: finalized_amount,
+        }
+        .publish(&env);
     }
 
     pub fn make_offer(
@@ -547,7 +683,7 @@ impl MarketplaceContract {
                 listing_id,
                 offerer: offerer.clone(),
                 amount,
-                token,
+                token: token.clone(),
                 status: OfferStatus::Pending,
                 created_at: env.ledger().sequence(),
             },
@@ -558,6 +694,16 @@ impl MarketplaceContract {
         let mut oo = load_offerer_offers(&env, &offerer);
         oo.push_back(offer_id);
         save_offerer_offers(&env, &offerer, &oo);
+
+        OfferMadeEvent {
+            offer_id,
+            listing_id,
+            offerer: offerer.clone(),
+            amount,
+            token,
+        }
+        .publish(&env);
+
         offer_id
     }
 
@@ -584,6 +730,13 @@ impl MarketplaceContract {
         }
         offer.status = OfferStatus::Withdrawn;
         save_offer(&env, &offer);
+
+        OfferWithdrawnEvent {
+            offer_id,
+            listing_id: offer.listing_id,
+            offerer: offerer.clone(),
+        }
+        .publish(&env);
     }
 
     pub fn reject_offer(env: Env, artist: Address, offer_id: u64) {
@@ -611,6 +764,13 @@ impl MarketplaceContract {
         }
         offer.status = OfferStatus::Rejected;
         save_offer(&env, &offer);
+
+        OfferRejectedEvent {
+            offer_id,
+            listing_id: offer.listing_id,
+            offerer: offer.offerer.clone(),
+        }
+        .publish(&env);
     }
 
     pub fn accept_offer(env: Env, artist: Address, offer_id: u64) {
@@ -642,11 +802,23 @@ impl MarketplaceContract {
                 false,
             );
         }
+        let accepted_offerer = offer.offerer.clone();
+        let accepted_amount = offer.amount;
+        let accepted_listing_id = offer.listing_id;
         offer.status = OfferStatus::Accepted;
         save_offer(&env, &offer);
         listing.status = ListingStatus::Sold;
-        listing.owner = Some(offer.offerer.clone());
+        listing.owner = Some(accepted_offerer.clone());
         save_listing(&env, &listing);
+
+        OfferAcceptedEvent {
+            offer_id,
+            listing_id: accepted_listing_id,
+            offerer: accepted_offerer.clone(),
+            amount: accepted_amount,
+        }
+        .publish(&env);
+
         let offers = load_listing_offers(&env, listing.listing_id);
         for oid in offers.iter() {
             if oid != offer_id {

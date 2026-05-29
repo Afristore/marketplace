@@ -14,9 +14,12 @@ import {
   withdrawOffer,
   acceptOffer,
   rejectOffer,
+  makeOffer,
   Offer,
   Listing,
 } from "@/lib/contract";
+import { getReadableErrorMessage } from "@/lib/errors";
+import { useTransientErrorToast } from "./useTransientErrorToast";
 
 // ── useOffererOffers ─────────────────────────────────────────
 
@@ -31,6 +34,7 @@ export function useOffererOffers(publicKey: string | null) {
   const [offers, setOffers] = useState<OffererOffer[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
 
   const refresh = useCallback(async () => {
     if (!publicKey) return;
@@ -54,9 +58,7 @@ export function useOffererOffers(publicKey: string | null) {
 
       setOffers(enriched.sort((a, b) => b.created_at - a.created_at));
     } catch (err: unknown) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load your offers"
-      );
+      setError(getReadableErrorMessage(err, "Failed to load your offers"));
     } finally {
       setIsLoading(false);
     }
@@ -78,6 +80,7 @@ export function useListingOffers(listingId: number | null) {
   const [offers, setOffers] = useState<Offer[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
 
   const refresh = useCallback(async () => {
     if (listingId === null) return;
@@ -88,9 +91,7 @@ export function useListingOffers(listingId: number | null) {
       const resolved = await Promise.all(ids.map((id) => getOffer(id)));
       setOffers(resolved.sort((a, b) => b.created_at - a.created_at));
     } catch (err: unknown) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load listing offers"
-      );
+      setError(getReadableErrorMessage(err, "Failed to load listing offers"));
     } finally {
       setIsLoading(false);
     }
@@ -115,6 +116,7 @@ export function useIncomingOffers(ownerPublicKey: string | null) {
   >([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
 
   const refresh = useCallback(async () => {
     if (!ownerPublicKey) return;
@@ -150,9 +152,7 @@ export function useIncomingOffers(ownerPublicKey: string | null) {
 
       setOffersByListing(result);
     } catch (err: unknown) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load incoming offers"
-      );
+      setError(getReadableErrorMessage(err, "Failed to load incoming offers"));
     } finally {
       setIsLoading(false);
     }
@@ -170,6 +170,7 @@ export function useIncomingOffers(ownerPublicKey: string | null) {
 export function useWithdrawOffer(publicKey: string | null) {
   const [isWithdrawing, setIsWithdrawing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
 
   const withdraw = useCallback(
     async (offerId: number): Promise<boolean> => {
@@ -183,9 +184,7 @@ export function useWithdrawOffer(publicKey: string | null) {
         await withdrawOffer(publicKey, offerId);
         return true;
       } catch (err: unknown) {
-        setError(
-          err instanceof Error ? err.message : "Failed to withdraw offer"
-        );
+        setError(getReadableErrorMessage(err, "Failed to withdraw offer"));
         return false;
       } finally {
         setIsWithdrawing(false);
@@ -202,6 +201,7 @@ export function useWithdrawOffer(publicKey: string | null) {
 export function useAcceptOffer(publicKey: string | null) {
   const [isAccepting, setIsAccepting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
 
   const accept = useCallback(
     async (offerId: number): Promise<boolean> => {
@@ -215,9 +215,7 @@ export function useAcceptOffer(publicKey: string | null) {
         await acceptOffer(publicKey, offerId);
         return true;
       } catch (err: unknown) {
-        setError(
-          err instanceof Error ? err.message : "Failed to accept offer"
-        );
+        setError(getReadableErrorMessage(err, "Failed to accept offer"));
         return false;
       } finally {
         setIsAccepting(false);
@@ -234,6 +232,7 @@ export function useAcceptOffer(publicKey: string | null) {
 export function useRejectOffer(publicKey: string | null) {
   const [isRejecting, setIsRejecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
 
   const reject = useCallback(
     async (offerId: number): Promise<boolean> => {
@@ -247,9 +246,7 @@ export function useRejectOffer(publicKey: string | null) {
         await rejectOffer(publicKey, offerId);
         return true;
       } catch (err: unknown) {
-        setError(
-          err instanceof Error ? err.message : "Failed to reject offer"
-        );
+        setError(getReadableErrorMessage(err, "Failed to reject offer"));
         return false;
       } finally {
         setIsRejecting(false);
@@ -260,3 +257,35 @@ export function useRejectOffer(publicKey: string | null) {
 
   return { reject, isRejecting, error };
 }
+
+// ── useMakeOffer ─────────────────────────────────────────────
+
+export function useMakeOffer(publicKey: string | null) {
+  const [isOffering, setIsOffering] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
+
+  const make = useCallback(
+    async (listingId: number, amountXlm: number, tokenAddress: string): Promise<boolean> => {
+      if (!publicKey) {
+        setError("Wallet not connected");
+        return false;
+      }
+      setIsOffering(true);
+      setError(null);
+      try {
+        await makeOffer(publicKey, listingId, amountXlm, tokenAddress);
+        return true;
+      } catch (err: unknown) {
+        setError(getReadableErrorMessage(err, "Failed to make offer"));
+        return false;
+      } finally {
+        setIsOffering(false);
+      }
+    },
+    [publicKey]
+  );
+
+  return { make, isOffering, error };
+}
+
