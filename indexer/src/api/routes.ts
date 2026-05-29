@@ -1,58 +1,29 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../db.js';
-import { cacheMiddleware } from './cache-middleware.js';
-import { strictRateLimiter } from './rate-limit-middleware.js';
-import axios from 'axios';
+import redis from '../redis.js';
 
 const router = Router();
 
-// ── Server-Sent Events (Issue #161) ─────────────────────────
+const CACHE_TTL_SECONDS = parseInt(process.env.REDIS_CACHE_TTL_SECONDS || '30');
 
-/** Active SSE response streams. */
-const sseClients = new Set<Response>();
-
-/**
- * Broadcast a marketplace event to all connected SSE clients.
- * Called by processEvent in poller.ts after writing to the DB.
- */
-export function emitSSEEvent(event: unknown): void {
-    if (sseClients.size === 0) return;
-    const payload = `data: ${JSON.stringify(event)}\n\n`;
-    for (const res of sseClients) {
-        try {
-            res.write(payload);
-        } catch {
-            sseClients.delete(res);
-        }
+async function getCached<T>(key: string, ttl: number, fetcher: () => Promise<T>): Promise<T> {
+    try {
+        const cached = await redis.get(key);
+        if (cached) return JSON.parse(cached) as T;
+    } catch {
+        // Redis unavailable — fall through to DB
     }
+    const result = await fetcher();
+    try {
+        await redis.set(key, JSON.stringify(result), 'EX', ttl);
+    } catch {
+        // ignore cache write failures
+    }
+    return result;
 }
 
-/** GET /events/stream — subscribe to real-time marketplace events. */
-router.get('/events/stream', (req: Request, res: Response) => {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    sseClients.add(res);
-
-    // Send a heartbeat every 30 s to keep the connection alive through proxies.
-    const heartbeat = setInterval(() => {
-        try {
-            res.write(': heartbeat\n\n');
-        } catch {
-            clearInterval(heartbeat);
-        }
-    }, 30_000);
-
-    req.on('close', () => {
-        clearInterval(heartbeat);
-        sseClients.delete(res);
-    });
-});
-
 // Helper to serialize BigInts to strings for JSON
-const serialize = (obj: any) => 
+const serialize = (obj: any) =>
     JSON.parse(JSON.stringify(obj, (key, value) =>
         typeof value === 'bigint' ? value.toString() : value
     ));
@@ -214,10 +185,12 @@ router.get('/offers', async (req: Request, res: Response) => {
 // Cache for 30 seconds to handle traffic spikes
 router.get('/activity/recent', cacheMiddleware(30), async (req: Request, res: Response) => {
     try {
-        const results = await prisma.marketplaceEvent.findMany({
-            take: 20,
-            orderBy: { ledgerSequence: 'desc' },
-        });
+        const results = await getCached('activity:recent', CACHE_TTL_SECONDS, () =>
+            prisma.marketplaceEvent.findMany({
+                take: 20,
+                orderBy: { ledgerSequence: 'desc' },
+            })
+        );
         res.json(serialize(results));
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch recent activity' });
@@ -233,10 +206,13 @@ router.get('/collections', cacheMiddleware(60), async (req: Request, res: Respon
         const where: any = {};
         if (kind)    where.kind    = kind as string;
         if (creator) where.creator = creator as string;
-        const results = await prisma.collection.findMany({
-            where,
-            orderBy: { deployedAtLedger: 'desc' },
-        });
+        const cacheKey = `collections:${kind ?? ''}:${creator ?? ''}`;
+        const results = await getCached(cacheKey, CACHE_TTL_SECONDS, () =>
+            prisma.collection.findMany({
+                where,
+                orderBy: { deployedAtLedger: 'desc' },
+            })
+        );
         res.json(serialize(results));
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch collections' });

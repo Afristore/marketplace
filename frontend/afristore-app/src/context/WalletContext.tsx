@@ -37,7 +37,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
   const publicKey = freighter.publicKey ?? magic.publicAddress ?? null;
 
-  const status = freighter.isConnected || (!magic.isConnected && freighter.status !== "DISCONNECTED")
+  const status: UnifiedWalletState['status'] = freighter.isConnected || (!magic.isConnected && freighter.status !== "DISCONNECTED")
     ? freighter.status
     : magic.isConnected
       ? "MAGIC_CONNECTED"

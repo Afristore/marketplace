@@ -2,6 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ── Mock Prisma ───────────────────────────────────────────────────────────────
 
+const mockTx = vi.hoisted(() => ({
+  marketplaceEvent: { deleteMany: vi.fn().mockResolvedValue({}) },
+  listing: {
+    deleteMany: vi.fn().mockResolvedValue({}),
+    updateMany: vi.fn().mockResolvedValue({}),
+  },
+  collection: { deleteMany: vi.fn().mockResolvedValue({}) },
+  syncState: { update: vi.fn().mockResolvedValue({}) },
+}));
+
 const mockPrisma = vi.hoisted(() => ({
   marketplaceEvent: {
     create: vi.fn().mockResolvedValue({}),
@@ -15,17 +25,7 @@ const mockPrisma = vi.hoisted(() => ({
     create: vi.fn().mockResolvedValue({ id: 1, lastLedger: 0 }),
     update: vi.fn().mockResolvedValue({}),
   },
-  collection: {
-    upsert: vi.fn().mockResolvedValue({}),
-  },
-  auction: {
-    upsert: vi.fn().mockResolvedValue({}),
-    update: vi.fn().mockResolvedValue({}),
-  },
-  offer: {
-    upsert: vi.fn().mockResolvedValue({}),
-    update: vi.fn().mockResolvedValue({}),
-  },
+  $transaction: vi.fn((fn: (tx: typeof mockTx) => Promise<void>) => fn(mockTx)),
 }));
 
 vi.mock('../db', () => ({ default: mockPrisma }));
@@ -62,7 +62,7 @@ vi.mock('@stellar/stellar-sdk', () => ({
   },
 }));
 
-import { processEvent } from '../poller';
+import { processEvent, revertLedgers } from '../poller';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -341,5 +341,53 @@ describe('processEvent — null listingId', () => {
     await processEvent(makeEvent('OFFER_MADE', null, 'GA_OFFERER', { offer_id: 1 }));
 
     expect(mockPrisma.marketplaceEvent.create).toHaveBeenCalledOnce();
+  });
+});
+
+// ── revertLedgers ─────────────────────────────────────────────────────────────
+
+describe('revertLedgers', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('deletes marketplace events beyond the safe ledger', async () => {
+    await revertLedgers(500);
+    expect(mockTx.marketplaceEvent.deleteMany).toHaveBeenCalledWith({
+      where: { ledgerSequence: { gt: 500 } },
+    });
+  });
+
+  it('removes listings first created after the safe ledger', async () => {
+    await revertLedgers(500);
+    expect(mockTx.listing.deleteMany).toHaveBeenCalledWith({
+      where: { createdAtLedger: { gt: 500 } },
+    });
+  });
+
+  it('resets listing status to Active for listings updated after safe ledger', async () => {
+    await revertLedgers(500);
+    expect(mockTx.listing.updateMany).toHaveBeenCalledWith({
+      where: { updatedAtLedger: { gt: 500 } },
+      data: { status: 'Active', updatedAtLedger: 500 },
+    });
+  });
+
+  it('removes collections deployed after the safe ledger', async () => {
+    await revertLedgers(500);
+    expect(mockTx.collection.deleteMany).toHaveBeenCalledWith({
+      where: { deployedAtLedger: { gt: 500 } },
+    });
+  });
+
+  it('resets SyncState cursor to the safe ledger and clears the hash', async () => {
+    await revertLedgers(500);
+    expect(mockTx.syncState.update).toHaveBeenCalledWith({
+      where: { id: 1 },
+      data: { lastLedger: 500, lastLedgerHash: null },
+    });
+  });
+
+  it('runs all operations inside a single transaction', async () => {
+    await revertLedgers(300);
+    expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
   });
 });

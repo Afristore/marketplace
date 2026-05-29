@@ -63,6 +63,8 @@ export async function connectFreighter(): Promise<FreighterAccount> {
     throw new Error(`Freighter network error: ${(networkResult as any)?.error || "Unknown error"}`);
   }
 
+  const networkPassphrase = (networkResult as any).networkPassphrase ?? (networkResult as any).network_passphrase ?? '';
+
   return {
     publicKey,
     networkPassphrase,

@@ -8,9 +8,33 @@ import {
   CheckCircle2,
   Loader2,
   DollarSign,
+  Lock,
+  ArrowRight,
 } from "lucide-react";
 import { Listing, stroopsToXlm } from "@/lib/contract";
 import posthog from "posthog-js";
+
+// Sponsor relay: POST to /api/fiat-relay with listing + card token.
+// The backend buys XLM via a fiat anchor and executes the contract trade.
+async function callFiatRelay(
+  listingId: number,
+  cardToken: string,
+  amountFiat: string,
+): Promise<void> {
+  const res = await fetch("/api/fiat-relay", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      listing_id: listingId,
+      card_token: cardToken,
+      amount_fiat: amountFiat,
+    }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `Relay failed (${res.status})`);
+  }
+}
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -31,8 +55,11 @@ export function CheckoutModal({
 }: CheckoutModalProps) {
   const [method, setMethod] = useState<"crypto" | "fiat">("crypto");
   const [fiatStep, setFiatStep] = useState<
-    "idle" | "processing" | "success" | "error"
+    "idle" | "selecting" | "processing" | "success" | "error"
   >("idle");
+  const [cardNumber, setCardNumber] = useState("");
+  const [cardExpiry, setCardExpiry] = useState("");
+  const [cardCvc, setCardCvc] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
 
   if (!isOpen) return null;
@@ -44,29 +71,27 @@ export function CheckoutModal({
     setFiatStep("processing");
     setErrorMsg("");
     try {
-      // Mocking the backend transaction sponsor/relay logic
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      // Simulating a successful relay response
-      const relaySuccess = true;
-      if (relaySuccess) {
-        setFiatStep("success");
-        posthog.capture("Purchase Successful", {
-          listing_id: listing.listing_id,
-          price_xlm: priceXlm,
-          method: "fiat",
-        });
-        setTimeout(() => {
-          onPurchased?.();
-          onClose();
-          setFiatStep("idle");
-        }, 2000);
-      } else {
-        throw new Error("Transaction relay failed. Please try again.");
-      }
-    } catch (err: any) {
+      // In production: tokenise the card via Stripe.js / Moneywave and pass the token.
+      const cardToken = `tok_mock_${cardNumber.replace(/\s/g, "").slice(-4)}`;
+      await callFiatRelay(listing.listing_id, cardToken, estimatedFiat);
+      setFiatStep("success");
+      posthog.capture("Purchase Successful", {
+        listing_id: listing.listing_id,
+        price_xlm: priceXlm,
+        method: "fiat",
+      });
+      setTimeout(() => {
+        onPurchased?.();
+        onClose();
+        setFiatStep("idle");
+      }, 2000);
+    } catch (err: unknown) {
       setFiatStep("error");
-      setErrorMsg(err.message || "An error occurred during fiat checkout.");
+      setErrorMsg(
+        err instanceof Error
+          ? err.message
+          : "An error occurred during fiat checkout.",
+      );
     }
   };
 
@@ -156,7 +181,7 @@ export function CheckoutModal({
                 </button>
               </div>
 
-              {method === "fiat" && (
+              {method === "fiat" && fiatStep === "idle" && (
                 <div className="rounded-2xl border border-brand-100 bg-brand-50/50 p-4 mt-4">
                   <div className="flex items-start gap-3">
                     <DollarSign className="text-brand-500 mt-0.5" size={18} />
@@ -173,22 +198,99 @@ export function CheckoutModal({
                 </div>
               )}
 
+              {method === "fiat" && fiatStep === "selecting" && (
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Lock size={14} className="text-gray-400" />
+                    <p className="text-xs text-gray-500 font-inter">
+                      Payments secured via encrypted relay
+                    </p>
+                  </div>
+                  <div>
+                    <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">
+                      Card Number
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={19}
+                      placeholder="1234 5678 9012 3456"
+                      value={cardNumber}
+                      onChange={(e) =>
+                        setCardNumber(
+                          e.target.value.replace(/[^\d\s]/g, "").slice(0, 19),
+                        )
+                      }
+                      className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm font-mono focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-400"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">
+                        Expiry
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="MM / YY"
+                        maxLength={7}
+                        value={cardExpiry}
+                        onChange={(e) => setCardExpiry(e.target.value)}
+                        className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm font-mono focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-400"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">
+                        CVC
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="123"
+                        maxLength={4}
+                        value={cardCvc}
+                        onChange={(e) =>
+                          setCardCvc(
+                            e.target.value.replace(/\D/g, "").slice(0, 4),
+                          )
+                        }
+                        className="w-full rounded-2xl border border-gray-200 px-4 py-3 text-sm font-mono focus:border-brand-400 focus:outline-none focus:ring-1 focus:ring-brand-400"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {errorMsg && (
                 <p className="mt-4 text-sm text-red-500">{errorMsg}</p>
               )}
 
               <button
-                onClick={
-                  method === "crypto"
-                    ? handleCryptoPurchase
-                    : handleFiatPurchase
+                onClick={() => {
+                  if (method === "crypto") {
+                    handleCryptoPurchase();
+                  } else if (fiatStep === "idle") {
+                    setFiatStep("selecting");
+                  } else {
+                    handleFiatPurchase();
+                  }
+                }}
+                disabled={
+                  isBuyingCrypto ||
+                  fiatStep === "processing" ||
+                  (fiatStep === "selecting" &&
+                    (cardNumber.replace(/\s/g, "").length < 12 ||
+                      cardExpiry.length < 4 ||
+                      cardCvc.length < 3))
                 }
-                disabled={isBuyingCrypto || fiatStep === "processing"}
                 className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-500 py-4 font-bold text-white shadow-lg shadow-brand-500/20 hover:bg-brand-600 transition-all disabled:opacity-50"
               >
                 {isBuyingCrypto || fiatStep === "processing" ? (
                   <>
                     <Loader2 className="animate-spin" size={18} /> Processing...
+                  </>
+                ) : method === "fiat" && fiatStep === "idle" ? (
+                  <>
+                    <ArrowRight size={18} /> Enter Card Details
                   </>
                 ) : (
                   `Pay ${method === "crypto" ? `${priceXlm} XLM` : `$${estimatedFiat}`}`

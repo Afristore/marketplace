@@ -30,10 +30,18 @@ export default function SettingsPage() {
     isConnected, 
     isWrongNetwork, 
     disconnect, 
-    switchNetwork,
-    network,
+    networkPassphrase,
     status 
   } = useWalletContext();
+
+  // Derive a human-readable network name from the passphrase
+  const network = networkPassphrase?.includes('Test SDF')
+    ? 'testnet'
+    : networkPassphrase?.includes('Public Global')
+      ? 'public'
+      : networkPassphrase
+        ? 'futurenet'
+        : 'public';
 
   const [settings, setSettings] = useState({
     // Network Settings
@@ -73,12 +81,10 @@ export default function SettingsPage() {
   };
 
   const handleNetworkSwitch = async (newNetwork: string) => {
-    try {
-      await switchNetwork(newNetwork);
-      setSettings(prev => ({ ...prev, preferredNetwork: newNetwork }));
-    } catch (error) {
-      console.error('Failed to switch network:', error);
-    }
+    // Network switching is handled by the wallet extension (Freighter).
+    // Here we just update local preference state.
+    console.info('Network preference set to:', newNetwork);
+    setSettings(prev => ({ ...prev, preferredNetwork: newNetwork }));
   };
 
   const networks = [

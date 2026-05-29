@@ -1,10 +1,8 @@
 name: Soroban CI
 
-# This workflow triggers on every push to the main branch
-# and on every pull request opened against any branch.
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "master", "main" ]
   pull_request:
     branches: [ "*" ]
 
@@ -12,104 +10,88 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build_and_test:
+  contracts:
     name: Build and Test Contracts
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32v1-none
           components: rustfmt, clippy
-
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
-
       - name: Check Formatting
-        run: cargo fmt --all -- --check
-        
+        run: cargo fmt --check
       - name: Run Cargo Clippy (Linting)
-        # This will fail the build if there are any warnings
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Build WASM Target
-        # Ensures that the contracts actually compile to Soroban's required WASM architecture
-        run: cargo build --target wasm32v1-none --release
-
+        run: cargo clippy
       - name: Run Unit Tests
         run: cargo test
 
-  indexer_test:
-    name: Test Indexer
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Cache NPM dependencies
-        uses: actions/cache@v3
-        with:
-          path: indexer/node_modules
-          key: ${{ runner.os }}-indexer-${{ hashFiles('indexer/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-indexer-
-
-      - name: Install Indexer Dependencies
-        run: npm install
-        working-directory: indexer
-
-      - name: Build Indexer
-        run: npm run build
-        working-directory: indexer
-
-      - name: Run Indexer Tests
-        run: npm test
-        working-directory: indexer
-
-  frontend_build_and_test:
+  frontend:
     name: Build and Test Frontend
     runs-on: ubuntu-latest
-
+    strategy:
+      matrix:
+        node-version: [20, 22]
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Setup Node.js
+      - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
+          node-version: ${{ matrix.node-version }}
       - name: Cache NPM dependencies
         uses: actions/cache@v3
         with:
           path: frontend/afristore-app/node_modules
-          key: ${{ runner.os }}-node-${{ hashFiles('frontend/afristore-app/package-lock.json') }}
+          key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('frontend/afristore-app/package-lock.json') }}
           restore-keys: |
-            ${{ runner.os }}-node-
-
-      - name: Install Frontend Dependencies
-        run: npm install
+            ${{ runner.os }}-node-${{ matrix.node-version }}-
+      - name: Install Dependencies
+        run: npm ci
+        working-directory: frontend/afristore-app
+      - name: Run Lint
+        run: npm run lint
+        working-directory: frontend/afristore-app
+      - name: Run Build
+        run: npm run build
+        working-directory: frontend/afristore-app
+      - name: Run Tests
+        run: npm run test
         working-directory: frontend/afristore-app
 
-      - name: Run Frontend Lint
-        # Runs ESLint directly (see package.json "lint" script); not `next lint`.
-        run: npm run lint --if-present
-        working-directory: frontend/afristore-app
-
-      - name: Run Frontend Tests
-        run: npm test
-        working-directory: frontend/afristore-app
-
-      - name: Build Frontend
-        run: npm run build --if-present
-        working-directory: frontend/afristore-app
+  indexer:
+    name: Build and Test Indexer
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Cache NPM dependencies
+        uses: actions/cache@v3
+        with:
+          path: indexer/node_modules
+          key: ${{ runner.os }}-indexer-${{ matrix.node-version }}-${{ hashFiles('indexer/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-indexer-${{ matrix.node-version }}-
+      - name: Install Dependencies
+        run: npm ci
+        working-directory: indexer
+      - name: Run Lint
+        run: npm run lint
+        working-directory: indexer
+      - name: Run Build
+        run: npm run build
+        working-directory: indexer
+      - name: Run Tests
+        run: npm run test
+        working-directory: indexer

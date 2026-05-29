@@ -74,11 +74,27 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   // Add collection pages
   const collectionPages = collections.map((collection: any) => ({
-    url: `${baseUrl}/collections/${collection.contractAddress}`,
+    url: `${baseUrl}/launchpad/collections/${collection.contractAddress}`,
     lastModified: new Date(collection.createdAt),
     changeFrequency: 'weekly' as const,
     priority: 0.6,
   }))
 
-  return [...staticPages, ...listingPages, ...collectionPages]
+  // Derive unique artist addresses from active listings for profile pages (#213)
+  const artistAddresses: string[] = Array.from(
+    new Set(
+      listings
+        .map((l: any) => l.artist as string | undefined)
+        .filter((a): a is string => typeof a === 'string' && a.length > 0)
+    )
+  )
+
+  const profilePages = artistAddresses.map((address) => ({
+    url: `${baseUrl}/profile/${address}`,
+    lastModified: new Date(),
+    changeFrequency: 'weekly' as const,
+    priority: 0.8,
+  }))
+
+  return [...staticPages, ...listingPages, ...collectionPages, ...profilePages]
 }

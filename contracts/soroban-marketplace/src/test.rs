@@ -1862,3 +1862,318 @@ fn test_buy_artwork_pays_treasury_fee() {
         100_000_000_000_i128 + price - expected_fee
     );
 }
+
+// ── Pause / unpause lifecycle tests (Issue #200) ─────────────
+
+#[test]
+fn test_admin_pause_and_unpause() {
+    let (env, client, artist, _, token_id, _contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    assert!(!client.is_paused());
+    client.admin_pause(&artist);
+    assert!(client.is_paused());
+    client.admin_unpause(&artist);
+    assert!(!client.is_paused());
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #23)")]
+fn test_create_listing_while_paused_fails() {
+    let (env, client, artist, _, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    client.admin_pause(&artist);
+    client.create_listing(
+        &artist,
+        &bytes!(&env, 0x516d74657374),
+        &10_000_000,
+        &symbol_short!("XLM"),
+        &token_id,
+        &0u32,
+        &valid_recipients(&env, &artist),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #23)")]
+fn test_buy_artwork_while_paused_fails() {
+    let (env, client, artist, buyer, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    let id = create_test_listing(&env, &client, &artist, &token_id);
+    client.admin_pause(&artist);
+    client.buy_artwork(&buyer, &id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #23)")]
+fn test_cancel_listing_while_paused_fails() {
+    let (env, client, artist, _, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    let id = create_test_listing(&env, &client, &artist, &token_id);
+    client.admin_pause(&artist);
+    client.cancel_listing(&artist, &id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #23)")]
+fn test_make_offer_while_paused_fails() {
+    let (env, client, artist, buyer, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    let id = create_test_listing(&env, &client, &artist, &token_id);
+    client.admin_pause(&artist);
+    client.make_offer(&buyer, &id, &5_000_000_i128, &token_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #23)")]
+fn test_create_auction_while_paused_fails() {
+    let (env, client, artist, _, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    client.admin_pause(&artist);
+    client.create_auction(
+        &artist,
+        &bytes!(&env, 0x516d74657374),
+        &token_id,
+        &1_000_000_i128,
+        &3600_u64,
+        &0u32,
+        &valid_recipients(&env, &artist),
+    );
+}
+
+#[test]
+fn test_actions_succeed_after_unpause() {
+    let (env, client, artist, buyer, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    let id = create_test_listing(&env, &client, &artist, &token_id);
+    client.admin_pause(&artist);
+    client.admin_unpause(&artist);
+    // Should succeed after unpausing
+    assert!(client.buy_artwork(&buyer, &id));
+}
+
+// ── Offer edge cases (Issue #200) ─────────────────────────────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #19)")]
+fn test_make_offer_zero_amount_fails() {
+    let (env, client, artist, buyer, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    let id = create_test_listing(&env, &client, &artist, &token_id);
+    client.make_offer(&buyer, &id, &0_i128, &token_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #19)")]
+fn test_make_offer_negative_amount_fails() {
+    let (env, client, artist, buyer, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    let id = create_test_listing(&env, &client, &artist, &token_id);
+    client.make_offer(&buyer, &id, &-1_000_i128, &token_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #18)")]
+fn test_accept_already_accepted_offer_fails() {
+    let (env, client, artist, buyer, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    let id = create_test_listing(&env, &client, &artist, &token_id);
+    let offer_id = client.make_offer(&buyer, &id, &5_000_000_i128, &token_id);
+    client.accept_offer(&artist, &offer_id);
+    // Second accept on the same (now non-pending) offer should panic
+    client.accept_offer(&artist, &offer_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #18)")]
+fn test_reject_withdrawn_offer_fails() {
+    let (env, client, artist, buyer, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    let id = create_test_listing(&env, &client, &artist, &token_id);
+    let offer_id = client.make_offer(&buyer, &id, &5_000_000_i128, &token_id);
+    client.withdraw_offer(&buyer, &offer_id);
+    // Reject a withdrawn offer — status is no longer Pending
+    client.reject_offer(&artist, &offer_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #16)")]
+fn test_accept_nonexistent_offer_fails() {
+    let (env, client, artist, _, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    client.accept_offer(&artist, &9999_u64);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #16)")]
+fn test_reject_nonexistent_offer_fails() {
+    let (env, client, artist, _, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    client.reject_offer(&artist, &9999_u64);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #16)")]
+fn test_withdraw_nonexistent_offer_fails() {
+    let (env, client, _, buyer, token_id, _) = setup();
+    client.withdraw_offer(&buyer, &9999_u64);
+}
+
+// ── Cancel listing edge cases (Issue #200) ───────────────────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_cancel_already_cancelled_listing_fails() {
+    let (env, client, artist, _, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    let id = create_test_listing(&env, &client, &artist, &token_id);
+    client.cancel_listing(&artist, &id);
+    // Second cancel should fail: listing is no longer Active
+    client.cancel_listing(&artist, &id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_cancel_sold_listing_fails() {
+    let (env, client, artist, buyer, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    let id = create_test_listing(&env, &client, &artist, &token_id);
+    client.buy_artwork(&buyer, &id);
+    client.cancel_listing(&artist, &id);
+}
+
+// ── Auction edge cases (Issue #200) ─────────────────────────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #9)")]
+fn test_bid_on_nonexistent_auction_fails() {
+    let (_, client, _, buyer, _, _) = setup();
+    client.place_bid(&buyer, &9999_u64, &1_000_000_i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #9)")]
+fn test_finalize_nonexistent_auction_fails() {
+    let (_, client, _, caller, _, _) = setup();
+    client.finalize_auction(&caller, &9999_u64);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #14)")]
+fn test_finalize_already_finalized_auction_fails() {
+    let (env, client, artist, bidder, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    let auction_id = client.create_auction(
+        &artist,
+        &bytes!(&env, 0x516d74657374),
+        &token_id,
+        &1_000_000_i128,
+        &3600_u64,
+        &0u32,
+        &valid_recipients(&env, &artist),
+    );
+    client.place_bid(&bidder, &auction_id, &2_000_000_i128);
+    env.ledger().with_mut(|l| { l.timestamp += 7200; });
+    client.finalize_auction(&bidder, &auction_id);
+    // Second finalize should fail
+    client.finalize_auction(&bidder, &auction_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_bid_on_finalized_auction_fails() {
+    let (env, client, artist, bidder, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    let auction_id = client.create_auction(
+        &artist,
+        &bytes!(&env, 0x516d74657374),
+        &token_id,
+        &1_000_000_i128,
+        &3600_u64,
+        &0u32,
+        &valid_recipients(&env, &artist),
+    );
+    client.place_bid(&bidder, &auction_id, &2_000_000_i128);
+    env.ledger().with_mut(|l| { l.timestamp += 7200; });
+    client.finalize_auction(&bidder, &auction_id);
+    // Bid after finalization: auction status is no longer Active
+    let new_bidder = Address::generate(&env);
+    StellarAssetClient::new(&env, &token_id).mint(&new_bidder, &100_000_000_000_i128);
+    client.place_bid(&new_bidder, &auction_id, &3_000_000_i128);
+}
+
+// ── Admin transfer edge cases (Issue #200) ──────────────────
+
+#[test]
+#[should_panic]
+fn test_accept_admin_with_no_pending_transfer_panics() {
+    let (env, client, admin, _, _token_id, _) = setup();
+    let impostor = Address::generate(&env);
+    client.set_admin(&admin);
+    // accept_admin when no transfer has been initiated — should panic
+    client.accept_admin(&impostor);
+}
+
+// ── Revoke / reinstate standalone tests (Issue #200) ────────
+
+#[test]
+fn test_revoke_and_reinstate_artist() {
+    let (env, client, admin, artist2, token_id, _) = setup();
+    client.set_admin(&admin);
+    client.add_token_to_whitelist(&token_id);
+
+    assert!(!client.is_artist_revoked(&artist2));
+    client.revoke_artist(&artist2);
+    assert!(client.is_artist_revoked(&artist2));
+    client.reinstate_artist(&artist2);
+    assert!(!client.is_artist_revoked(&artist2));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #15)")]
+fn test_revoked_artist_cannot_create_listing() {
+    let (env, client, admin, artist2, token_id, _) = setup();
+    client.set_admin(&admin);
+    client.add_token_to_whitelist(&token_id);
+    client.revoke_artist(&artist2);
+    client.create_listing(
+        &artist2,
+        &bytes!(&env, 0x516d74657374),
+        &10_000_000,
+        &symbol_short!("XLM"),
+        &token_id,
+        &0u32,
+        &valid_recipients(&env, &artist2),
+    );
+}
+
+// ── Token whitelist edge cases (Issue #200) ─────────────────
+
+#[test]
+fn test_get_token_whitelist_after_removal() {
+    let (env, client, admin, _, token_id, _) = setup();
+    client.set_admin(&admin);
+    client.add_token_to_whitelist(&token_id);
+    let list = client.get_token_whitelist();
+    assert!(list.iter().any(|t| t == token_id));
+    client.remove_token_from_whitelist(&token_id);
+    let list_after = client.get_token_whitelist();
+    assert!(!list_after.iter().any(|t| t == token_id));
+}

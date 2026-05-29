@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import rateLimit from 'express-rate-limit';
 import routes from './api/routes.js';
 import { startPolling } from './poller.js';
 import { rateLimiter } from './api/rate-limit-middleware.js';
@@ -11,31 +12,17 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Restrict CORS when ALLOWED_ORIGINS is set; otherwise allow all origins (dev default).
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
-    : [];
-if (allowedOrigins.length === 0 && process.env.NODE_ENV === 'production') {
-    console.warn('WARNING: ALLOWED_ORIGINS is not set in production — CORS is fully open.');
-}
-app.use(
-    cors(
-        allowedOrigins.length > 0
-            ? {
-                  origin: (origin, cb) => {
-                      // Allow server-to-server requests (no origin header) and listed origins.
-                      if (!origin || allowedOrigins.includes(origin)) {
-                          cb(null, true);
-                      } else {
-                          cb(new Error(`CORS: origin ${origin} not allowed`));
-                      }
-                  },
-                  credentials: true,
-              }
-            : undefined // permissive when no allowlist is configured
-    )
-);
+const limiter = rateLimit({
+    windowMs: 60 * 1000,
+    limit: 100,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { error: 'Too many requests, please try again after a minute.' },
+});
+
+app.use(cors());
 app.use(express.json());
+app.use(limiter);
 
 // Track response time metrics for all routes
 app.use(metricsMiddleware);
