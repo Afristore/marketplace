@@ -84,6 +84,34 @@ jest.mock('@/components/WalletGuard', () => ({
   ),
 }));
 
+// CheckoutModal — call onCryptoPurchase immediately when opened so tests
+// that click "Buy Now" can still assert buy() was invoked without rendering
+// the full modal UI.
+jest.mock('@/components/CheckoutModal', () => ({
+  CheckoutModal: ({
+    isOpen,
+    onCryptoPurchase,
+  }: {
+    isOpen: boolean;
+    onCryptoPurchase: () => Promise<boolean>;
+    onClose: () => void;
+    onPurchased?: () => void;
+    isBuyingCrypto: boolean;
+    listing: unknown;
+  }) => {
+    if (!isOpen) return null;
+    // Render a confirm button so the test can trigger the purchase
+    return (
+      <button
+        data-testid="checkout-confirm"
+        onClick={() => onCryptoPurchase()}
+      >
+        Confirm Purchase
+      </button>
+    );
+  },
+}));
+
 import { ListingCard } from '@/components/ListingCard';
 import type { Listing } from '@/lib/contract';
 
@@ -189,15 +217,23 @@ describe('ListingCard', () => {
     });
   });
 
-  it('calls buy with the listing id when Buy Now is clicked', async () => {
+  it('calls buy with the listing id when Buy Now is clicked through checkout modal', async () => {
     const user = userEvent.setup();
     render(<ListingCard listing={makeListing({ listing_id: 7 })} />);
     await waitFor(() =>
       expect(screen.queryByRole('button', { name: /buy now/i })).toBeInTheDocument()
     );
 
+    // Click "Buy Now" — this opens the CheckoutModal
     await user.click(screen.getByRole('button', { name: /buy now/i }));
-    expect(mockBuy).toHaveBeenCalledWith(7);
+
+    // Confirm purchase through the mocked modal
+    await waitFor(() =>
+      expect(screen.getByTestId('checkout-confirm')).toBeInTheDocument()
+    );
+    await user.click(screen.getByTestId('checkout-confirm'));
+
+    await waitFor(() => expect(mockBuy).toHaveBeenCalledWith(7));
   });
 
   it('links the image to the listing detail page', async () => {
