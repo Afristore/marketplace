@@ -13,6 +13,7 @@ import {
   logoutFromMagic,
   MagicAccount,
 } from "@/lib/magic";
+import { trackEvent } from "@/providers/PostHogProvider";
 
 export type MagicWalletStatus =
   | "NOT_INITIALIZED"
@@ -82,9 +83,14 @@ export function useMagicWallet(): MagicWalletState {
       const account = await loginWithMagicLink(emailAddress);
       setEmail(account.email);
       setPublicAddress(account.publicAddress);
+
+      // Track successful Magic wallet connection
+      trackEvent.walletConnected("magic", account.publicAddress);
     } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to login with email";
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to login with email";
       setError(errorMessage);
+      trackEvent.walletConnectionDropOff("connection_failed", "magic");
       throw err;
     } finally {
       setIsConnecting(false);
@@ -98,9 +104,14 @@ export function useMagicWallet(): MagicWalletState {
       const account = await loginWithPasskey();
       setEmail(account.email);
       setPublicAddress(account.publicAddress);
+
+      // Track successful Magic wallet connection
+      trackEvent.walletConnected("magic", account.publicAddress);
     } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to login with passkey";
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to login with passkey";
       setError(errorMessage);
+      trackEvent.walletConnectionDropOff("connection_failed", "magic");
       throw err;
     } finally {
       setIsConnecting(false);
@@ -114,7 +125,8 @@ export function useMagicWallet(): MagicWalletState {
       setPublicAddress(null);
       setError(null);
     } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to logout";
+      const errorMessage =
+        err instanceof Error ? err.message : "Failed to logout";
       setError(errorMessage);
       throw err;
     }
