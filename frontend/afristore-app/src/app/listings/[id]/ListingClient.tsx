@@ -19,7 +19,7 @@ import {
 import { fetchMetadata, cidToGatewayUrl, ArtworkMetadata } from "@/lib/ipfs";
 import { useWalletContext } from "@/context/WalletContext";
 import { useBuyArtwork, usePlaceBid } from "@/hooks/useMarketplace";
-import { useListingOffers } from "@/hooks/useOffers";
+import { useListingOffers, useMakeOffer } from "@/hooks/useOffers";
 import { useListingActivity } from "@/hooks/useUserActivity";
 import { GuardButton } from "@/components/WalletGuard";
 import {
@@ -62,6 +62,11 @@ export default function ListingDetailPage({ id }: ListingClientProps) {
     const { bid, isBidding, error: bidError } = usePlaceBid(publicKey);
     const { offers, isLoading: isLoadingOffers, refresh: refreshOffers } = useListingOffers(id ? Number(id) : null);
     const { activities, isLoading: isLoadingActivity } = useListingActivity(id ? Number(id) : null);
+    
+    // Make Offer Hook and States
+    const { make: makeOffer, isOffering, error: offerError } = useMakeOffer(publicKey);
+    const [offerAmount, setOfferAmount] = useState("");
+    const [offerSuccess, setOfferSuccess] = useState(false);
 
     useEffect(() => {
         const loadData = async () => {
@@ -161,6 +166,17 @@ export default function ListingDetailPage({ id }: ListingClientProps) {
             const updated = await getAuction(auction.auction_id);
             setAuction(updated);
             setBidAmount("");
+        }
+    };
+
+    const handleMakeOffer = async () => {
+        if (!listing || !offerAmount) return;
+        const success = await makeOffer(listing.listing_id, Number(offerAmount), listing.token);
+        if (success) {
+            setOfferSuccess(true);
+            setOfferAmount("");
+            refreshOffers();
+            setTimeout(() => setOfferSuccess(false), 3000);
         }
     };
 
@@ -492,10 +508,40 @@ export default function ListingDetailPage({ id }: ListingClientProps) {
                                 )}
 
                                 {isActive && !isOwn && (
-                                    <button className="w-full h-14 rounded-2xl border border-white/10 text-white/80 font-bold hover:bg-white/5 transition-all text-sm uppercase tracking-widest flex items-center justify-center gap-2 group">
-                                        <TrendingUp size={16} className="group-hover:translate-y-[-2px] transition-transform" />
-                                        Make an Offer
-                                    </button>
+                                    <div className="space-y-4">
+                                        <div className="flex gap-4">
+                                            <input
+                                                type="number"
+                                                placeholder="Offer amount (XLM)..."
+                                                value={offerAmount}
+                                                onChange={(e) => {
+                                                    setOfferAmount(e.target.value);
+                                                    setOfferSuccess(false);
+                                                }}
+                                                className="flex-1 rounded-2xl bg-white/5 border border-white/10 px-6 text-white text-lg font-bold focus:outline-none focus:border-brand-500 transition-all"
+                                            />
+                                            <GuardButton
+                                                onAction={handleMakeOffer}
+                                                disabled={isOffering || !offerAmount}
+                                                actionName="To make an offer"
+                                                className="rounded-2xl bg-brand-500 text-white px-8 py-5 text-sm uppercase font-black hover:bg-brand-600 transition-all active:scale-95 disabled:opacity-50"
+                                            >
+                                                {isOffering ? "Offering..." : "Make Offer"}
+                                            </GuardButton>
+                                        </div>
+                                        {offerSuccess && (
+                                            <div className="p-3 rounded-xl bg-mint-500/10 border border-mint-500/20 text-mint-400 text-xs flex items-center gap-2">
+                                                <CheckCircle2 size={16} />
+                                                Offer placed successfully!
+                                            </div>
+                                        )}
+                                        {offerError && (
+                                            <div className="p-3 rounded-xl bg-terracotta-500/10 border border-terracotta-500/20 text-terracotta-400 text-xs flex items-center gap-2">
+                                                <AlertCircle size={16} />
+                                                {offerError}
+                                            </div>
+                                        )}
+                                    </div>
                                 )}
 
                                 {isOwn && (

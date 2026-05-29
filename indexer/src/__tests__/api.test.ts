@@ -12,9 +12,21 @@ const mockPrisma = vi.hoisted(() => ({
     findMany: vi.fn(),
     findFirst: vi.fn(),
   },
+  collection: {
+    findMany: vi.fn(),
+  },
+}));
+
+const mockRedis = vi.hoisted(() => ({
+  isOpen: false,
+  get: vi.fn(),
+  setEx: vi.fn().mockResolvedValue(undefined),
+  on: vi.fn(),
+  connect: vi.fn().mockRejectedValue(new Error('No Redis')),
 }));
 
 vi.mock('../db', () => ({ default: mockPrisma }));
+vi.mock('../redis.js', () => ({ default: mockRedis }));
 
 import router from '../api/routes';
 
@@ -195,6 +207,66 @@ describe('GET /activity/recent', () => {
 
     const res = await request(app).get('/activity/recent');
     expect(res.status).toBe(500);
+  });
+});
+
+// ── GET /collections ─────────────────────────────────────────────────────────
+
+describe('GET /collections', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('returns all collections', async () => {
+    const sample = [{ contractAddress: 'CA', kind: 'normal_721', creator: 'GC', deployedAtLedger: 100 }];
+    mockPrisma.collection.findMany.mockResolvedValue(sample);
+
+    const res = await request(app).get('/collections');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+
+  it('filters by kind query param', async () => {
+    mockPrisma.collection.findMany.mockResolvedValue([]);
+    await request(app).get('/collections?kind=normal_721');
+    expect(mockPrisma.collection.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { kind: 'normal_721' } })
+    );
+  });
+
+  it('filters by creator query param', async () => {
+    mockPrisma.collection.findMany.mockResolvedValue([]);
+    await request(app).get('/collections?creator=GCREATOR');
+    expect(mockPrisma.collection.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { creator: 'GCREATOR' } })
+    );
+  });
+
+  it('returns 500 on db error', async () => {
+    mockPrisma.collection.findMany.mockRejectedValue(new Error('DB down'));
+    const res = await request(app).get('/collections');
+    expect(res.status).toBe(500);
+  });
+});
+
+// ── GET /creators/:address/collections ───────────────────────────────────────
+
+describe('GET /creators/:address/collections', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('returns collections for a specific creator', async () => {
+    const sample = [{ contractAddress: 'CA', kind: 'lazy_1155', creator: 'GCREATOR', deployedAtLedger: 200 }];
+    mockPrisma.collection.findMany.mockResolvedValue(sample);
+
+    const res = await request(app).get('/creators/GCREATOR/collections');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+
+  it('filters by creator address', async () => {
+    mockPrisma.collection.findMany.mockResolvedValue([]);
+    await request(app).get('/creators/OTHER/collections');
+    expect(mockPrisma.collection.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { creator: 'OTHER' } })
+    );
   });
 });
 

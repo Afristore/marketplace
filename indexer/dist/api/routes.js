@@ -31,7 +31,10 @@ router.get('/listings', async (req, res) => {
 });
 // GET /listings/:id/history — full event timeline for a single listing
 router.get('/listings/:id/history', async (req, res) => {
-    const { id } = req.params;
+    const id = req.params.id;
+    if (!/^\d+$/.test(id)) {
+        return res.status(400).json({ error: 'Invalid ID format' });
+    }
     try {
         const results = await db_js_1.default.marketplaceEvent.findMany({
             where: { listingId: BigInt(id) },
@@ -41,6 +44,65 @@ router.get('/listings/:id/history', async (req, res) => {
     }
     catch (err) {
         res.status(500).json({ error: 'Failed to fetch listing history' });
+    }
+});
+// GET /auctions — all active or finished auctions
+router.get('/auctions', async (req, res) => {
+    const { creator, status } = req.query;
+    try {
+        const where = {};
+        if (creator)
+            where.creator = creator;
+        if (status)
+            where.status = status;
+        const results = await db_js_1.default.auction.findMany({
+            where,
+            orderBy: { updatedAtLedger: 'desc' },
+        });
+        res.json(serialize(results));
+    }
+    catch (err) {
+        res.status(500).json({ error: 'Failed to fetch auctions' });
+    }
+});
+// GET /auctions/:id — a single auction by ID
+router.get('/auctions/:id', async (req, res) => {
+    const id = req.params.id;
+    if (!/^\d+$/.test(id)) {
+        return res.status(400).json({ error: 'Invalid ID format' });
+    }
+    try {
+        const result = await db_js_1.default.auction.findUnique({
+            where: { auctionId: BigInt(id) },
+        });
+        if (!result) {
+            return res.status(404).json({ error: 'Auction not found' });
+        }
+        res.json(serialize(result));
+    }
+    catch (err) {
+        res.status(500).json({ error: 'Failed to fetch auction' });
+    }
+});
+// GET /offers — all offers for a listing
+router.get('/offers', async (req, res) => {
+    const { listing_id } = req.query;
+    try {
+        const where = {};
+        if (listing_id) {
+            if (!/^\d+$/.test(listing_id)) {
+                return res.status(400).json({ error: 'Invalid listing_id format' });
+            }
+            where.listingId = BigInt(listing_id);
+        }
+        const results = await db_js_1.default.offer.findMany({
+            where,
+            orderBy: { updatedAtLedger: 'desc' },
+        });
+        res.json(serialize(results));
+    }
+    catch (err) {
+        res.status(500).json({ error: 'Failed to fetch offers' });
     }
 });
 // GET /activity/recent — latest sales and listings across the marketplace

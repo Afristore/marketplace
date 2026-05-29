@@ -7,32 +7,30 @@
 
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
-import { useMarketplace } from "@/hooks/useMarketplace";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { Listing, stroopsToXlm } from "@/lib/contract";
 import { ListingCard } from "@/components/ListingCard";
 import {
   ChevronLeft,
   ChevronRight,
   Package,
-  Loader2,
   AlertCircle,
   RefreshCw,
 } from "lucide-react";
-import { SearchFilter, Filters, StatusFilter, SortOption } from "@/components/SearchFilter";
+import { SearchFilter, Filters, SortOption } from "@/components/SearchFilter";
 import { fetchMetadata, ArtworkMetadata } from "@/lib/ipfs";
+import { fetchListings } from "@/lib/indexer";
+import { getAllListings } from "@/lib/contract";
 
 // ── Types ────────────────────────────────────────────────────
 
 const PAGE_SIZE = 12;
 
-// ── Metadata cache for search ────────────────────────────────
+// ── Metadata cache for category / text search ────────────────
 
 const metadataCache = new Map<string, ArtworkMetadata | null>();
 
-async function getCachedMetadata(
-  cid: string
-): Promise<ArtworkMetadata | null> {
+async function getCachedMetadata(cid: string): Promise<ArtworkMetadata | null> {
   if (metadataCache.has(cid)) return metadataCache.get(cid) ?? null;
   try {
     const meta = await fetchMetadata(cid);
@@ -47,7 +45,9 @@ async function getCachedMetadata(
 // ── Page Component ───────────────────────────────────────────
 
 export default function ExplorePage() {
-  const { listings, isLoading, error, refresh } = useMarketplace();
+  const [allListings, setAllListings] = useState<Listing[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [filters, setFilters] = useState<Filters>({
     search: "",
@@ -61,79 +61,82 @@ export default function ExplorePage() {
   const [page, setPage] = useState(1);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Metadata map for search matching (resolved asynchronously)
-  const [metadataMap, setMetadataMap] = useState<
-    Map<string, ArtworkMetadata | null>
-  >(new Map());
+  const [metadataMap, setMetadataMap] = useState<Map<string, ArtworkMetadata | null>>(new Map());
 
-  // Resolve metadata for all listings so search can match on title/artist
+  // Debounce search so we don't fire on every keystroke
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (listings.length === 0) return;
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => setDebouncedSearch(filters.search), 350);
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
+  }, [filters.search]);
 
+  // Fetch from indexer whenever database-filterable params change
+  const load = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const opts: Parameters<typeof fetchListings>[0] = { limit: 1000 };
+      if (filters.status !== "All") opts.status = filters.status;
+      if (filters.minPrice) opts.minPrice = filters.minPrice;
+      if (filters.maxPrice) opts.maxPrice = filters.maxPrice;
+      if (debouncedSearch.trim()) opts.search = debouncedSearch.trim();
+
+      const res = await fetchListings(opts);
+      const rows = Array.isArray(res.listings) ? (res.listings as Listing[]) : [];
+      if (rows.length > 0) {
+        setAllListings(rows);
+      } else {
+        // Fallback to on-chain scan when indexer returns nothing
+        const all = await getAllListings();
+        setAllListings(all);
+      }
+    } catch {
+      try {
+        const all = await getAllListings();
+        setAllListings(all);
+      } catch (e: unknown) {
+        setError(e instanceof Error ? e.message : "Failed to load listings");
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }, [filters.status, filters.minPrice, filters.maxPrice, debouncedSearch]);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Reset page when filters change
+  useEffect(() => { setPage(1); }, [filters]);
+
+  // Resolve metadata for category / full-text search (client-side only)
+  useEffect(() => {
+    if (allListings.length === 0) return;
     let cancelled = false;
     const resolveAll = async () => {
       const entries: [string, ArtworkMetadata | null][] = [];
       await Promise.all(
-        listings.map(async (l) => {
+        allListings.map(async (l) => {
           const meta = await getCachedMetadata(l.metadata_cid);
           entries.push([l.metadata_cid, meta]);
         })
       );
-      if (!cancelled) {
-        setMetadataMap(new Map(entries));
-      }
+      if (!cancelled) setMetadataMap(new Map(entries));
     };
     resolveAll();
-    return () => {
-      cancelled = true;
-    };
-  }, [listings]);
+    return () => { cancelled = true; };
+  }, [allListings]);
 
-  // Reset page when filters change
-  useEffect(() => {
-    setPage(1);
-  }, [filters]);
-
-  // ── Filtering + Sorting ──────────────────────────────────
+  // ── Client-side post-filter for category + sort ───────────
 
   const filtered = useMemo(() => {
-    let result = [...listings];
+    let result = [...allListings];
 
-    // Status filter
-    if (filters.status !== "All") {
-      result = result.filter((l) => l.status === filters.status);
-    }
-
-    // Category filter
+    // Category filter (IPFS metadata — client-side only)
     if (filters.category !== "All") {
       result = result.filter((l) => {
         const meta = metadataMap.get(l.metadata_cid);
         return meta?.category === filters.category;
-      });
-    }
-
-    // Price range filter
-    if (filters.minPrice !== "") {
-      const min = parseFloat(filters.minPrice);
-      result = result.filter((l) => parseFloat(stroopsToXlm(l.price)) >= min);
-    }
-    if (filters.maxPrice !== "") {
-      const max = parseFloat(filters.maxPrice);
-      result = result.filter((l) => parseFloat(stroopsToXlm(l.price)) <= max);
-    }
-
-    // Search (matches title, artist address, or metadata artist name)
-    if (filters.search.trim()) {
-      const q = filters.search.toLowerCase().trim();
-      result = result.filter((l) => {
-        if (l.artist.toLowerCase().includes(q)) return true;
-        if (l.metadata_cid.toLowerCase().includes(q)) return true;
-        const meta = metadataMap.get(l.metadata_cid);
-        if (meta?.title?.toLowerCase().includes(q)) return true;
-        if (meta?.artist?.toLowerCase().includes(q)) return true;
-        if (meta?.description?.toLowerCase().includes(q)) return true;
-        if (meta?.category?.toLowerCase().includes(q)) return true;
-        return false;
       });
     }
 
@@ -154,7 +157,7 @@ export default function ExplorePage() {
     }
 
     return result;
-  }, [listings, filters, metadataMap]);
+  }, [allListings, filters.category, filters.sort, metadataMap]);
 
   // ── Pagination ───────────────────────────────────────────
 
@@ -174,8 +177,8 @@ export default function ExplorePage() {
 
   // ── Stats ────────────────────────────────────────────────
 
-  const activeCnt = listings.filter((l) => l.status === "Active").length;
-  const soldCnt = listings.filter((l) => l.status === "Sold").length;
+  const activeCnt = allListings.filter((l) => l.status === "Active").length;
+  const soldCnt = allListings.filter((l) => l.status === "Sold").length;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -195,7 +198,7 @@ export default function ExplorePage() {
             {/* Stats */}
             <div className="flex flex-wrap gap-8 md:gap-12">
               {[
-                { label: "Total Art", value: listings.length },
+                { label: "Total Art", value: allListings.length },
                 { label: "Active", value: activeCnt },
                 { label: "Sold", value: soldCnt },
               ].map(({ label, value }) => (
@@ -216,7 +219,7 @@ export default function ExplorePage() {
       {/* Controls */}
       <SearchFilter
         filters={filters}
-        onFilterChange={(newFilters) => setFilters(prev => ({ ...prev, ...newFilters }))}
+        onFilterChange={(newFilters) => setFilters((prev) => ({ ...prev, ...newFilters }))}
         showFilters={showFilters}
         setShowFilters={setShowFilters}
         totalResults={filtered.length}
@@ -262,7 +265,7 @@ export default function ExplorePage() {
               {error}
             </p>
             <button
-              onClick={refresh}
+              onClick={load}
               className="mt-6 flex items-center gap-2 rounded-xl bg-brand-500 px-6 py-2.5 text-sm font-bold text-white hover:bg-brand-600 transition-all"
             >
               <RefreshCw size={14} />
@@ -332,7 +335,7 @@ export default function ExplorePage() {
                 <ListingCard
                   key={listing.listing_id}
                   listing={listing}
-                  onPurchased={refresh}
+                  onPurchased={load}
                 />
               ))}
             </div>

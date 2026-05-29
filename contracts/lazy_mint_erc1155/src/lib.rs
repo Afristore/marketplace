@@ -73,17 +73,14 @@ pub enum DataKey {
 pub struct LazyMint1155;
 
 impl LazyMint1155 {
-    /// Helper function to verify signature and convert panic to proper error
+    /// Helper function to verify signature — panics on invalid signatures
+    /// (ed25519_verify host function aborts on bad sig)
     fn verify_signature_or_panic(
         env: &Env,
         pubkey: &BytesN<32>,
         digest: &Bytes,
         signature: &BytesN<64>,
     ) {
-        // The ed25519_verify function panics on invalid signatures
-        // For now, we call it directly - the transaction system will handle the panic
-        // In a production environment, this would be handled by the frontend
-        // which can catch the panic and display a proper error message
         env.crypto().ed25519_verify(pubkey, digest, signature);
     }
 }

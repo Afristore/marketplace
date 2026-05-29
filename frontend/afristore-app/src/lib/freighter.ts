@@ -44,6 +44,8 @@ export async function isFreighterInstalled(): Promise<boolean> {
  */
 export async function connectFreighter(): Promise<FreighterAccount> {
   const allowed = await setAllowed();
+  
+  // Handle both boolean and { isAllowed: boolean }
   const isAllowed = typeof allowed === "boolean" ? allowed : (allowed as any)?.isAllowed;
 
   if (!isAllowed) {
@@ -58,13 +60,7 @@ export async function connectFreighter(): Promise<FreighterAccount> {
 
   const networkResult = await getNetworkDetails();
   if (!networkResult || (networkResult as any).error) {
-    const err = (networkResult as any)?.error;
-    throw new Error(err ? `Freighter network error: ${err}` : "Could not retrieve network details from Freighter.");
-  }
-
-  const networkPassphrase = (networkResult as any)?.networkPassphrase;
-  if (!networkPassphrase || typeof networkPassphrase !== "string") {
-    throw new Error("Invalid network passphrase from Freighter.");
+    throw new Error(`Freighter network error: ${(networkResult as any)?.error || "Unknown error"}`);
   }
 
   return {
@@ -83,10 +79,6 @@ export async function signWithFreighter(
   networkPassphrase: string
 ): Promise<string> {
   const result = await signTransaction(txXdr, { networkPassphrase });
-
-  if (!result) {
-    throw new Error("Freighter sign error: result was empty.");
-  }
 
   if (typeof result === "string") return result;
 

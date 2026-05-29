@@ -160,32 +160,15 @@ export async function logoutFromMagic(): Promise<void> {
 
 /**
  * Sign a transaction with Magic (Stellar XDR)
+ *
+ * Magic SDK does not natively support Stellar transaction signing.
+ * This is a placeholder that throws a clear error until Stellar
+ * support is added (e.g. via Stellar Turrets, custodial relay, or
+ * Magic's Stellar extension).
  */
-export async function signWithMagic(txXdr: string): Promise<string> {
-  try {
-    const magic = getMagicInstance();
-    
-    // Magic provides a way to sign transactions through the user's account
-    // For Stellar, we need to use the underlying Ethereum-like signing capability
-    // and map it to Stellar's signing requirements
-    
-    const userMetadata = await magic.user.getInfo();
-    const publicAddress = (userMetadata as any).publicAddress || 
-                         (userMetadata as any).walletAddress || 
-                         (userMetadata as any).address;
-    
-    const signature = await magic.rpcProvider?.request({
-      method: "personal_sign",
-      params: [txXdr, publicAddress],
-    });
-
-    if (!signature || typeof signature !== "string") {
-      throw new Error("Failed to sign transaction with Magic");
-    }
-
-    return signature;
-  } catch (err) {
-    console.error("Error signing with Magic:", err);
-    throw err;
-  }
+export async function signWithMagic(_txXdr: string): Promise<string> {
+  throw new Error(
+    "Magic wallet does not support Stellar transaction signing yet. " +
+    "Please use Freighter wallet. Stellar support for Magic is coming soon."
+  );
 }

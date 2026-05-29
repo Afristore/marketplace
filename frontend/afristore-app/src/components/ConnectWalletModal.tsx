@@ -183,17 +183,19 @@ export function ConnectWalletModal({ isOpen, onClose }: ConnectWalletModalProps)
                                     </button>
 
                                     <button
-                                        onClick={() => setShowMagicModal(true)}
-                                        className="group relative flex w-full items-center gap-4 rounded-2xl border-2 border-gray-100 p-4 hover:border-brand-300 hover:bg-brand-50/30 transition-all duration-300"
+                                        disabled
+                                        className="group relative flex w-full items-center gap-4 rounded-2xl border-2 border-gray-100 p-4 opacity-60 cursor-not-allowed transition-all duration-300"
                                     >
-                                        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-100 text-brand-600 group-hover:bg-brand-500 group-hover:text-white transition-colors">
+                                        <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gray-200 text-gray-400">
                                             <Mail size={24} />
                                         </div>
                                         <div className="text-left">
                                             <p className="font-bold text-midnight-900">Magic Wallet</p>
                                             <p className="text-xs text-gray-500">Email or Passkey</p>
                                         </div>
-                                        <ArrowRight size={18} className="absolute right-4 text-gray-300 group-hover:text-brand-500 group-hover:translate-x-1 transition-all" />
+                                        <span className="absolute right-4 text-[10px] font-bold uppercase tracking-wider text-brand-600 bg-brand-100 px-2 py-0.5 rounded-full">
+                                            Coming Soon
+                                        </span>
                                     </button>
 
                                     <div className="relative py-2">

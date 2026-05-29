@@ -97,16 +97,14 @@ pub enum DataKey {
 pub struct LazyMint721;
 
 impl LazyMint721 {
-    /// Helper function to verify signature and convert panic to proper error
+    /// Helper function to verify signature — panics on invalid signatures
+    /// (ed25519_verify host function aborts on bad sig)
     fn verify_signature_or_panic(
         env: &Env,
         pubkey: &BytesN<32>,
         digest: &Bytes,
         signature: &BytesN<64>,
     ) {
-        // The ed25519_verify function panics on invalid signatures
-        // We catch this and convert it to a proper contract error
-        // This provides better UX and debugging information
         env.crypto().ed25519_verify(pubkey, digest, signature);
     }
 }
@@ -193,14 +191,13 @@ impl LazyMint721 {
         }
 
         // 4. Signature verification
-        //    Panics (fails the tx) if the signature does not match.
+        //    Panics on invalid signature (caught by try_redeem as host abort).
         let pubkey: BytesN<32> = env
             .storage()
             .instance()
             .get(&DataKey::CreatorPubkey)
             .ok_or(Error::NotInitialized)?;
         let digest = Self::_voucher_digest(&env, &voucher);
-        // Signature verification with proper error handling
         Self::verify_signature_or_panic(&env, &pubkey, &digest, &signature);
 
         // 5. Payment  (skip when price == 0)

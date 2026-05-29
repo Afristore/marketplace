@@ -15,7 +15,10 @@ import {
   updateListing,
   Listing,
 } from "@/lib/contract";
+import { fetchListings } from "@/lib/indexer";
 import { uploadImageToIPFS, uploadMetadataToIPFS, ArtworkMetadata } from "@/lib/ipfs";
+import { getReadableErrorMessage } from "@/lib/errors";
+import { useTransientErrorToast } from "./useTransientErrorToast";
 import { assertSupportedTokenAddress } from "@/lib/token-support";
 
 // ── Listing with resolved metadata ───────────────────────────
@@ -26,21 +29,45 @@ export interface EnrichedListing extends Listing {
 
 // ── useMarketplace ────────────────────────────────────────────
 
-export function useMarketplace() {
+export function useMarketplace(opts?: { page?: number; limit?: number }) {
   const [listings, setListings] = useState<Listing[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const all = await getAllListings();
-      // Show active listings first.
-      const sorted = [...all].sort((a, b) => b.created_at - a.created_at);
-      setListings(sorted);
+      // Prefer indexer results when available
+      try {
+        if (opts && (opts.page || opts.limit)) {
+          const limit = opts.limit || 50;
+          const offset = opts.page ? (opts.page - 1) * limit : 0;
+          const res = await fetchListings({ status: "Active", limit, offset });
+          const rows = Array.isArray(res.listings) ? res.listings as any[] : [];
+          const sorted = [...rows].sort((a, b) => b.created_at - a.created_at);
+          setListings(sorted as Listing[]);
+        } else {
+          const res = await fetchListings({ status: "Active", limit: 1000 });
+          if (Array.isArray(res.listings) && res.listings.length > 0) {
+            const sorted = [...res.listings].sort((a: any, b: any) => b.created_at - a.created_at);
+            setListings(sorted as Listing[]);
+          } else {
+            // Fallback to on-chain scan
+            const all = await getAllListings();
+            const sorted = [...all].sort((a, b) => b.created_at - a.created_at);
+            setListings(sorted);
+          }
+        }
+      } catch (e) {
+        // If indexer fails, fallback to on-chain
+        const all = await getAllListings();
+        const sorted = [...all].sort((a, b) => b.created_at - a.created_at);
+        setListings(sorted);
+      }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to load listings");
+      setError(getReadableErrorMessage(err, "Failed to load listings"));
     } finally {
       setIsLoading(false);
     }
@@ -59,6 +86,7 @@ export function useArtistListings(artistPublicKey: string | null) {
   const [listings, setListings] = useState<Listing[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
 
   const refresh = useCallback(async () => {
     if (!artistPublicKey) return;
@@ -69,7 +97,7 @@ export function useArtistListings(artistPublicKey: string | null) {
       const resolved = await Promise.all(ids.map((id) => getListing(id)));
       setListings(resolved.sort((a, b) => b.created_at - a.created_at));
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to load artist listings");
+      setError(getReadableErrorMessage(err, "Failed to load artist listings"));
     } finally {
       setIsLoading(false);
     }
@@ -100,6 +128,7 @@ export function useCreateListing(artistPublicKey: string | null) {
   const [isCreating, setIsCreating] = useState(false);
   const [progress, setProgress] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
 
   const create = useCallback(
     async (input: CreateListingInput): Promise<number | null> => {
@@ -146,7 +175,7 @@ export function useCreateListing(artistPublicKey: string | null) {
         setProgress("Listing created successfully!");
         return listingId;
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Failed to create listing");
+        setError(getReadableErrorMessage(err, "Failed to create listing"));
         return null;
       } finally {
         setIsCreating(false);
@@ -163,6 +192,7 @@ export function useCreateListing(artistPublicKey: string | null) {
 export function useBuyArtwork(buyerPublicKey: string | null) {
   const [isBuying, setIsBuying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
 
   const buy = useCallback(
     async (listingId: number): Promise<boolean> => {
@@ -176,7 +206,7 @@ export function useBuyArtwork(buyerPublicKey: string | null) {
         await buyArtwork(buyerPublicKey, listingId);
         return true;
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Purchase failed");
+        setError(getReadableErrorMessage(err, "Purchase failed"));
         return false;
       } finally {
         setIsBuying(false);
@@ -193,6 +223,7 @@ export function useBuyArtwork(buyerPublicKey: string | null) {
 export function useCancelListing(artistPublicKey: string | null) {
   const [isCancelling, setIsCancelling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
 
   const cancel = useCallback(
     async (listingId: number): Promise<boolean> => {
@@ -206,7 +237,7 @@ export function useCancelListing(artistPublicKey: string | null) {
         await cancelListing(artistPublicKey, listingId);
         return true;
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Cancel failed");
+        setError(getReadableErrorMessage(err, "Cancel failed"));
         return false;
       } finally {
         setIsCancelling(false);
@@ -238,6 +269,7 @@ export function useUpdateListing(artistPublicKey: string | null) {
   const [isUpdating, setIsUpdating] = useState(false);
   const [progress, setProgress] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
 
   const update = useCallback(
     async (input: UpdateListingInput): Promise<boolean> => {
@@ -293,7 +325,7 @@ export function useUpdateListing(artistPublicKey: string | null) {
         setProgress("Listing updated successfully!");
         return success;
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Failed to update listing");
+        setError(getReadableErrorMessage(err, "Failed to update listing"));
         return false;
       } finally {
         setIsUpdating(false);
@@ -313,6 +345,7 @@ export function useAuction(auctionId: number | null) {
   const [auction, setAuction] = useState<Auction | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
 
   const refresh = useCallback(async () => {
     if (auctionId === null) return;
@@ -322,7 +355,7 @@ export function useAuction(auctionId: number | null) {
       const a = await getAuction(auctionId);
       setAuction(a);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to load auction");
+      setError(getReadableErrorMessage(err, "Failed to load auction"));
     } finally {
       setIsLoading(false);
     }
@@ -340,6 +373,7 @@ export function useAuction(auctionId: number | null) {
 export function usePlaceBid(bidderPublicKey: string | null) {
   const [isBidding, setIsBidding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
 
   const bid = useCallback(
     async (auctionId: number, amountXlm: number): Promise<boolean> => {
@@ -353,7 +387,7 @@ export function usePlaceBid(bidderPublicKey: string | null) {
         await placeBid(bidderPublicKey, auctionId, amountXlm);
         return true;
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Bid failed");
+        setError(getReadableErrorMessage(err, "Bid failed"));
         return false;
       } finally {
         setIsBidding(false);

@@ -18,6 +18,7 @@ import {
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
 import { signWithFreighter } from "./freighter";
+import { mapSorobanErrorMessage } from "./errors";
 import {
   DEFAULT_TOKEN,
   TokenConfig,
@@ -103,6 +104,11 @@ export async function invokeContract(
   readonly = false,
   contractId: string = config.contractId
 ): Promise<xdr.ScVal> {
+  const readableError = (raw: string, fallback: string): Error => {
+    const mapped = mapSorobanErrorMessage(raw);
+    return new Error(mapped ?? fallback);
+  };
+
   const rpc = getRpc();
   const contract = getContract(contractId);
 
@@ -121,7 +127,8 @@ export async function invokeContract(
   const simResult = await rpc.simulateTransaction(tx);
 
   if (SorobanRpc.Api.isSimulationError(simResult)) {
-    throw new Error(`Simulation failed: ${simResult.error}`);
+    const raw = String(simResult.error ?? "");
+    throw readableError(raw, "Unable to simulate this transaction.");
   }
 
   if (readonly) {
@@ -145,7 +152,8 @@ export async function invokeContract(
   );
 
   if (submitted.status === "ERROR") {
-    throw new Error(`Transaction submission failed: ${submitted.errorResult}`);
+    const raw = String(submitted.errorResult ?? "");
+    throw readableError(raw, "Transaction submission failed.");
   }
 
   // Poll for completion.
@@ -158,7 +166,8 @@ export async function invokeContract(
   }
 
   if (getResult.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
-    throw new Error("Transaction failed on-chain.");
+    const raw = JSON.stringify(getResult);
+    throw readableError(raw, "Transaction failed on-chain. Please try again.");
   }
 
   const successResult =
@@ -395,14 +404,15 @@ function parseOfferFromScVal(raw: unknown): Offer {
 export async function makeOffer(
   offererPublicKey: string,
   listingId: number,
-  amountXlm: number
+  amountXlm: number,
+  tokenAddress: string
 ): Promise<number> {
   const amountStroops = BigInt(Math.round(amountXlm * 10_000_000));
   const args = [
     new Address(offererPublicKey).toScVal(),
     nativeToScVal(BigInt(listingId), { type: "u64" }),
     nativeToScVal(amountStroops, { type: "i128" }),
-    nativeToScVal("XLM", { type: "symbol" }),
+    new Address(tokenAddress).toScVal(),
   ];
   const retVal = await invokeContract(offererPublicKey, "make_offer", args);
   return Number(scValToNative(retVal));
@@ -464,25 +474,28 @@ export async function createAuction(
   creatorPublicKey: string,
   metadataCid: string,
   reservePriceXlm: number,
-  durationSeconds: number
+  durationSeconds: number,
+  royaltyBps: number = 0,
+  recipients: Array<{ address: string; percentage: number }> = []
 ): Promise<number> {
   const reserveStroops = BigInt(Math.round(reservePriceXlm * 10_000_000));
   const nativeToken = getNativeTokenConfig();
 
+  const finalRecipients = recipients.length > 0
+    ? recipients
+    : [{ address: creatorPublicKey, percentage: 100 }];
+
   const args: xdr.ScVal[] = [
-    // creator: Address
     new Address(creatorPublicKey).toScVal(),
-    // metadata_cid: Bytes
     nativeToScVal(Buffer.from(metadataCid, "utf-8"), { type: "bytes" }),
     new Address(nativeToken.address).toScVal(),
-    // reserve_price: i128
     nativeToScVal(reserveStroops, { type: "i128" }),
-    // duration: u64
     nativeToScVal(BigInt(durationSeconds), { type: "u64" }),
-    // royalty_bps: u32
-    nativeToScVal(0, { type: "u32" }),
-    // recipients: Vec<Recipient> (empty for MVP)
-    nativeToScVal([], { type: "vec" }),
+    nativeToScVal(royaltyBps, { type: "u32" }),
+    nativeToScVal(finalRecipients.map(r => ({
+        address: new Address(r.address),
+        percentage: r.percentage
+    })), { type: "vec" }),
   ];
 
   const retVal = await invokeContract(
@@ -521,6 +534,7 @@ export async function finalizeAuction(
   auctionId: number
 ): Promise<boolean> {
   const args: xdr.ScVal[] = [
+    new Address(callerPublicKey).toScVal(),
     nativeToScVal(BigInt(auctionId), { type: "u64" }),
   ];
 
@@ -589,8 +603,16 @@ export async function getAllAuctions(): Promise<Auction[]> {
 // ── Utils ───────────────────────────────────────────────────
 
 export function stroopsToXlm(stroops: bigint): string {
-  const xlm = Number(stroops) / 10_000_000;
-  return xlm.toFixed(7).replace(/\.?0+$/, "");
+  const whole = stroops / 10_000_000n;
+  const frac = stroops % 10_000_000n;
+
+  // Convert components to absolute values for formatting
+  const absWhole = whole < 0n ? -whole : whole;
+  const absFrac = frac < 0n ? -frac : frac;
+  const sign = (whole < 0n || frac < 0n) ? "-" : "";
+
+  let fracStr = absFrac.toString().padStart(7, '0').replace(/0+$/, "");
+  return fracStr ? `${sign}${absWhole}.${fracStr}` : `${sign}${absWhole}`;
 }
 
 /**

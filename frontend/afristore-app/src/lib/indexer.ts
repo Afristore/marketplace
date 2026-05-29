@@ -365,3 +365,52 @@ export async function fetchArtistListings(
     return [];
   }
 }
+
+/**
+ * Fetch listings from the indexer with optional filters and pagination.
+ */
+export async function fetchListings(options: {
+  status?: string;
+  limit?: number;
+  offset?: number;
+  minPrice?: string;
+  maxPrice?: string;
+  search?: string;
+} = {}): Promise<{ listings: unknown[]; total?: number }> {
+  const params = new URLSearchParams();
+  if (options.status) params.set('status', options.status);
+  if (options.limit != null) params.set('limit', String(options.limit));
+  if (options.offset != null) params.set('offset', String(options.offset));
+  if (options.minPrice) params.set('minPrice', options.minPrice);
+  if (options.maxPrice) params.set('maxPrice', options.maxPrice);
+  if (options.search) params.set('search', options.search);
+  const q = params.toString();
+  try {
+    const raw = await fetchWithRetry<unknown>(`/listings${q ? `?${q}` : ''}`);
+    if (raw == null) return { listings: [] };
+    // If paginated, indexer returns { listings, total }
+    if (typeof raw === 'object' && (raw as any).listings) {
+      const r = raw as any;
+      return { listings: Array.isArray(r.listings) ? r.listings : [], total: r.total };
+    }
+    if (Array.isArray(raw)) return { listings: raw };
+    return { listings: [] };
+  } catch (e) {
+    console.warn('[indexer] fetchListings:', e instanceof Error ? e.message : e);
+    return { listings: [] };
+  }
+}
+
+/**
+ * Fetch a single listing (with optional metadata) from the indexer.
+ */
+export async function fetchListingById(id: number): Promise<any | null> {
+  if (!Number.isFinite(id)) return null;
+  try {
+    const raw = await fetchWithRetry<unknown>(`/listings/${id}`);
+    return raw as any;
+  } catch (e) {
+    console.warn('[indexer] fetchListingById:', e instanceof Error ? e.message : e);
+    return null;
+  }
+}

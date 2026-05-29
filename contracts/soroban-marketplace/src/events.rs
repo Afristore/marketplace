@@ -14,6 +14,8 @@ pub const OFFER_ACCEPTED: Symbol = symbol_short!("ofr_accp");
 pub const OFFER_REJECTED: Symbol = symbol_short!("ofr_rjct");
 pub const OFFER_WITHDRAWN: Symbol = symbol_short!("ofr_wdrn");
 pub const ROYALTY_PAID: Symbol = symbol_short!("roy_paid");
+pub const ADMIN_TRANSFER_PROPOSED: Symbol = symbol_short!("adm_prop");
+pub const ADMIN_TRANSFERRED: Symbol = symbol_short!("adm_xfrd");
 pub const ARTIST_REVOKED: Symbol = symbol_short!("art_rvkd");
 pub const ARTIST_REINSTATED: Symbol = symbol_short!("art_rnst");
 pub const CONTRACT_PAUSED: Symbol = symbol_short!("ctr_psd");
@@ -223,6 +225,34 @@ impl ArtistReinstatedEvent {
     #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
         env.events().publish((ARTIST_REINSTATED,), self);
+    }
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferProposedEvent {
+    pub current_admin: Address,
+    pub proposed_admin: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferredEvent {
+    pub old_admin: Address,
+    pub new_admin: Address,
+}
+
+impl AdminTransferProposedEvent {
+    #[allow(deprecated)]
+    pub fn publish(self, env: &Env) {
+        env.events().publish((ADMIN_TRANSFER_PROPOSED,), self);
+    }
+}
+
+impl AdminTransferredEvent {
+    #[allow(deprecated)]
+    pub fn publish(self, env: &Env) {
+        env.events().publish((ADMIN_TRANSFERRED,), self);
     }
 }
 

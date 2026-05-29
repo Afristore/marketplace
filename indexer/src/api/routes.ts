@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import prisma from '../db.js';
 import { cacheMiddleware } from './cache-middleware.js';
 import { strictRateLimiter } from './rate-limit-middleware.js';
+import axios from 'axios';
 
 const router = Router();
 
@@ -11,35 +12,156 @@ const serialize = (obj: any) =>
         typeof value === 'bigint' ? value.toString() : value
     ));
 
-// GET /listings?artist= — all listings created by an artist
+// GET /listings?artist=&status=&minPrice=&maxPrice=&search=&limit=&offset=
 router.get('/listings', async (req: Request, res: Response) => {
-    const { artist, owner } = req.query;
+    const { artist, owner, status, limit, offset, minPrice, maxPrice, search } = req.query;
     try {
         const where: any = {};
         if (artist) where.artist = artist as string;
         if (owner) where.owner = owner as string;
+        if (status) where.status = status as string;
+
+        if (minPrice || maxPrice) {
+            where.price = {};
+            if (minPrice) where.price.gte = minPrice as string;
+            if (maxPrice) where.price.lte = maxPrice as string;
+        }
+
+        // Search against artist address or metadataCid
+        if (search) {
+            const q = search as string;
+            where.OR = [
+                { artist: { contains: q, mode: 'insensitive' } },
+                { metadataCid: { contains: q, mode: 'insensitive' } },
+            ];
+        }
+
+        const take = Math.max(0, Math.min(Number(limit || 0), 1000)) || undefined;
+        const skip = Number(offset || 0) || undefined;
 
         const results = await prisma.listing.findMany({
             where,
             orderBy: { updatedAtLedger: 'desc' },
+            take,
+            skip,
         });
+
+        // If pagination requested, also return total count
+        if (take !== undefined || skip !== undefined) {
+            const total = await prisma.listing.count({ where });
+            return res.json({ listings: serialize(results), total });
+        }
+
         res.json(serialize(results));
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch listings' });
     }
 });
 
-// GET /listings/:id/history — full event timeline for a single listing
-router.get('/listings/:id/history', async (req: Request, res: Response) => {
+// GET /listings/:id — single listing with metadata (if available)
+router.get('/listings/:id', async (req: Request, res: Response) => {
     const { id } = req.params;
     try {
-        const results = await prisma.marketplaceEvent.findMany({
+        const listing = await prisma.listing.findUnique({
             where: { listingId: BigInt(id as string) },
+        });
+        if (!listing) return res.status(404).json({ error: 'Listing not found' });
+
+        const out: any = serialize(listing);
+        // Try to fetch metadata from IPFS gateway if available
+        const gateway = process.env.IPFS_GATEWAY || 'https://ipfs.io/ipfs/';
+        try {
+            const cid = listing.metadataCid || listing.metadata_cid || null;
+            if (cid) {
+                const url = cid.startsWith('ipfs://') ? `${gateway}${cid.replace(/^ipfs:\/\//, '')}` : `${gateway}${cid}`;
+                const r = await axios.get(url, { timeout: 5000 });
+                out.metadata = r.data;
+            } else {
+                out.metadata = null;
+            }
+        } catch (e) {
+            out.metadata = null;
+        }
+
+        res.json(out);
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch listing' });
+    }
+});
+
+// GET /listings/:id/history — full event timeline for a single listing
+router.get('/listings/:id/history', async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    if (!/^\d+$/.test(id)) {
+        return res.status(400).json({ error: 'Invalid ID format' });
+    }
+    try {
+        const results = await prisma.marketplaceEvent.findMany({
+            where: { listingId: BigInt(id) },
             orderBy: { ledgerSequence: 'asc' },
         });
         res.json(serialize(results));
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch listing history' });
+    }
+});
+
+// GET /auctions — all active or finished auctions
+router.get('/auctions', async (req: Request, res: Response) => {
+    const { creator, status } = req.query;
+    try {
+        const where: any = {};
+        if (creator) where.creator = creator as string;
+        if (status) where.status = status as string;
+
+        const results = await prisma.auction.findMany({
+            where,
+            orderBy: { updatedAtLedger: 'desc' },
+        });
+        res.json(serialize(results));
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch auctions' });
+    }
+});
+
+// GET /auctions/:id — a single auction by ID
+router.get('/auctions/:id', async (req: Request, res: Response) => {
+    const id = req.params.id as string;
+    if (!/^\d+$/.test(id)) {
+        return res.status(400).json({ error: 'Invalid ID format' });
+    }
+    try {
+        const result = await prisma.auction.findUnique({
+            where: { auctionId: BigInt(id) },
+        });
+        if (!result) {
+            return res.status(404).json({ error: 'Auction not found' });
+        }
+        res.json(serialize(result));
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch auction' });
+    }
+});
+
+// GET /offers — all offers for a listing
+router.get('/offers', async (req: Request, res: Response) => {
+    const { listing_id } = req.query;
+    try {
+        const where: any = {};
+        if (listing_id) {
+            if (!/^\d+$/.test(listing_id as string)) {
+                return res.status(400).json({ error: 'Invalid listing_id format' });
+            }
+            where.listingId = BigInt(listing_id as string);
+        }
+
+        const results = await prisma.offer.findMany({
+            where,
+            orderBy: { updatedAtLedger: 'desc' },
+        });
+        res.json(serialize(results));
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to fetch offers' });
     }
 });
 
