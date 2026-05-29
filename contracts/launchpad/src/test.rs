@@ -108,9 +108,9 @@ fn deploys_normal_721_twice_with_unique_addresses() {
     );
 
     assert_ne!(deployed_a, deployed_b);
-    assert_eq!(client.collection_count(), 2u64);
+    assert_eq!(client.get_collection_count(), 2u64);
 
-    let all = client.all_collections();
+    let all = client.get_all_collections();
     assert_eq!(all.len(), 2);
     assert!(matches!(
         all.get(0).unwrap().kind,
@@ -152,9 +152,9 @@ fn deploys_normal_1155_twice_with_unique_addresses() {
     );
 
     assert_ne!(deployed_a, deployed_b);
-    assert_eq!(client.collection_count(), 2u64);
+    assert_eq!(client.get_collection_count(), 2u64);
 
-    let all = client.all_collections();
+    let all = client.get_all_collections();
     assert_eq!(all.len(), 2);
     assert!(matches!(
         all.get(0).unwrap().kind,
@@ -203,9 +203,9 @@ fn deploys_lazy_721_twice_with_unique_addresses() {
     );
 
     assert_ne!(deployed_a, deployed_b);
-    assert_eq!(client.collection_count(), 2u64);
+    assert_eq!(client.get_collection_count(), 2u64);
 
-    let all = client.all_collections();
+    let all = client.get_all_collections();
     assert_eq!(all.len(), 2);
     assert!(matches!(
         all.get(0).unwrap().kind,
@@ -250,9 +250,9 @@ fn deploys_lazy_1155_twice_with_unique_addresses() {
     );
 
     assert_ne!(deployed_a, deployed_b);
-    assert_eq!(client.collection_count(), 2u64);
+    assert_eq!(client.get_collection_count(), 2u64);
 
-    let all = client.all_collections();
+    let all = client.get_all_collections();
     assert_eq!(all.len(), 2);
     assert!(matches!(
         all.get(0).unwrap().kind,
@@ -304,7 +304,7 @@ fn deploy_calls_extend_instance_ttl() {
         &salt_b,
     );
 
-    assert_eq!(client.collection_count(), 2u64);
+    assert_eq!(client.get_collection_count(), 2u64);
 }
 
 #[test]
@@ -373,7 +373,7 @@ fn same_salt_different_creators_normal_721_yields_different_addresses() {
         addr_alice, addr_bob,
         "same raw salt must not collide across creators"
     );
-    assert_eq!(client.collection_count(), 2u64);
+    assert_eq!(client.get_collection_count(), 2u64);
 }
 
 /// deploy_normal_1155: same raw salt, different creators ⟹ different addresses.
@@ -407,7 +407,7 @@ fn same_salt_different_creators_normal_1155_yields_different_addresses() {
     );
 
     assert_ne!(addr_alice, addr_bob);
-    assert_eq!(client.collection_count(), 2u64);
+    assert_eq!(client.get_collection_count(), 2u64);
 }
 
 /// deploy_lazy_721: same raw salt, different creators ⟹ different addresses.
@@ -448,7 +448,7 @@ fn same_salt_different_creators_lazy_721_yields_different_addresses() {
     );
 
     assert_ne!(addr_alice, addr_bob);
-    assert_eq!(client.collection_count(), 2u64);
+    assert_eq!(client.get_collection_count(), 2u64);
 }
 
 /// deploy_lazy_1155: same raw salt, different creators ⟹ different addresses.
@@ -485,7 +485,7 @@ fn same_salt_different_creators_lazy_1155_yields_different_addresses() {
     );
 
     assert_ne!(addr_alice, addr_bob);
-    assert_eq!(client.collection_count(), 2u64);
+    assert_eq!(client.get_collection_count(), 2u64);
 }
 
 // ── Category B: Front-runner cannot block the victim ─────────────────────────
@@ -534,7 +534,7 @@ fn front_runner_cannot_grief_normal_721() {
         addr_alice, addr_bob,
         "front-runner must not occupy Alice's slot"
     );
-    assert_eq!(client.collection_count(), 2u64);
+    assert_eq!(client.get_collection_count(), 2u64);
 }
 
 /// deploy_normal_1155: front-runner copies Alice's salt → Alice still succeeds.
@@ -568,7 +568,7 @@ fn front_runner_cannot_grief_normal_1155() {
     );
 
     assert_ne!(addr_alice, addr_bob);
-    assert_eq!(client.collection_count(), 2u64);
+    assert_eq!(client.get_collection_count(), 2u64);
 }
 
 /// deploy_lazy_721: front-runner copies Alice's salt → Alice still succeeds.
@@ -609,7 +609,7 @@ fn front_runner_cannot_grief_lazy_721() {
     );
 
     assert_ne!(addr_alice, addr_bob);
-    assert_eq!(client.collection_count(), 2u64);
+    assert_eq!(client.get_collection_count(), 2u64);
 }
 
 /// deploy_lazy_1155: front-runner copies Alice's salt → Alice still succeeds.
@@ -646,7 +646,7 @@ fn front_runner_cannot_grief_lazy_1155() {
     );
 
     assert_ne!(addr_alice, addr_bob);
-    assert_eq!(client.collection_count(), 2u64);
+    assert_eq!(client.get_collection_count(), 2u64);
 }
 
 // ── Initialisation error tests ──────────────────────────────────
@@ -781,13 +781,88 @@ fn collections_by_creator_returns_correct_collections() {
         &salt,
     );
 
-    let creator_colls = client.collections_by_creator(&creator);
+    let creator_colls = client.get_creator_collections(&creator);
     assert_eq!(creator_colls.len(), 1);
     assert!(matches!(
         creator_colls.get(0).unwrap().kind,
         CollectionKind::Normal721
     ));
 
-    let other_colls = client.collections_by_creator(&other);
+    let other_colls = client.get_creator_collections(&other);
     assert_eq!(other_colls.len(), 0);
+}
+
+/// #76 — `get_collection_by_id` returns the record for a deployed address
+/// and `None` for an address never deployed through this launchpad.
+#[test]
+fn get_collection_by_id_returns_record_or_none() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let salt = BytesN::from_array(&env, &[0x56u8; 32]);
+    let currency = Address::generate(&env);
+    let royalty_receiver = Address::generate(&env);
+
+    let deployed = client.deploy_normal_1155(
+        &creator,
+        &currency,
+        &String::from_str(&env, "Lookup Coll"),
+        &500u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    let found = client.get_collection_by_id(&deployed).unwrap();
+    assert_eq!(found.address, deployed);
+    assert_eq!(found.creator, creator);
+    assert!(matches!(found.kind, CollectionKind::Normal1155));
+
+    // An address that was never deployed through the launchpad → None.
+    let unknown = Address::generate(&env);
+    assert_eq!(client.get_collection_by_id(&unknown), None);
+}
+
+/// #76 — every deploy method emits a deploy event carrying
+/// `(creator, collection_address, kind)` so the indexer can record it.
+#[test]
+fn deploy_emits_event_with_creator_address_kind() {
+    use soroban_sdk::{symbol_short, testutils::Events as _, vec, IntoVal, Val, Vec as SVec};
+
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let salt = BytesN::from_array(&env, &[0x57u8; 32]);
+    let currency = Address::generate(&env);
+    let royalty_receiver = Address::generate(&env);
+
+    let deployed = client.deploy_normal_721(
+        &creator,
+        &currency,
+        &String::from_str(&env, "Evented"),
+        &String::from_str(&env, "EVT"),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    // Restrict to the launchpad's own events (cross-contract `initialize`
+    // events are attributed to the collection, not the launchpad). With a
+    // zero platform fee no token-transfer event fires, so this is exactly
+    // one event: the deploy event.
+    let launchpad_events = env.events().all().filter_by_contract(&client.address);
+
+    // Topic is the single symbol `dep_n721` matching the indexer TOPIC_MAP;
+    // value is the tuple (creator, collection_address, kind).
+    let expected: SVec<(Address, SVec<Val>, Val)> = vec![
+        &env,
+        (
+            client.address.clone(),
+            (symbol_short!("dep_n721"),).into_val(&env),
+            (creator.clone(), deployed.clone(), CollectionKind::Normal721).into_val(&env),
+        ),
+    ];
+    assert_eq!(launchpad_events, expected);
 }

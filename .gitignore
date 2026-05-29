@@ -29,3 +29,23 @@ Thumbs.db
 
 # Generated test snapshots
 **/test_snapshots/
+
+# AI assistant / agent artifacts — keep out of the repo so commits & PRs
+# aren't attributed to an AI bot
+.claude/
+.claude.json
+CLAUDE.md
+.codex/
+.codex
+.cursor/
+.cursorrules
+.cursorignore
+.aider*
+.continue/
+.windsurf/
+.windsurfrules
+.gemini/
+GEMINI.md
+.cline/
+.roo/
+.github/copilot-instructions.md

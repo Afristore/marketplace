@@ -176,7 +176,7 @@ export async function deployLazy1155(
 }
 
 /**
- * collections_by_creator
+ * get_creator_collections
  */
 export async function getCollectionsByCreator(
   creatorPublicKey: string
@@ -185,7 +185,7 @@ export async function getCollectionsByCreator(
   const args = [toAddressScVal(creatorPublicKey)];
   const retVal = await invokeContract(
     DUMMY_KEY,
-    "collections_by_creator",
+    "get_creator_collections",
     args,
     true,
     config.launchpadContractId
@@ -195,13 +195,13 @@ export async function getCollectionsByCreator(
 }
 
 /**
- * all_collections
+ * get_all_collections
  */
 export async function getAllCollections(): Promise<CollectionRecord[]> {
   const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
   const retVal = await invokeContract(
     DUMMY_KEY,
-    "all_collections",
+    "get_all_collections",
     [],
     true,
     config.launchpadContractId
@@ -210,21 +210,36 @@ export async function getAllCollections(): Promise<CollectionRecord[]> {
   return native.map(parseCollectionRecord);
 }
 
+/**
+ * get_collection_by_id — O(1) on-chain lookup by collection address.
+ * Returns `null` when the address was not deployed through this launchpad.
+ */
 export async function getCollectionRecordByAddress(
   collectionAddress: string
 ): Promise<CollectionRecord | null> {
-  const all = await getAllCollections();
-  return all.find((c) => c.address === collectionAddress) ?? null;
+  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+  const args = [toAddressScVal(collectionAddress)];
+  const retVal = await invokeContract(
+    DUMMY_KEY,
+    "get_collection_by_id",
+    args,
+    true,
+    config.launchpadContractId
+  );
+  const native = scValToNative(retVal);
+  // `Option<CollectionRecord>` decodes to the record or `null`/`undefined`.
+  if (native == null) return null;
+  return parseCollectionRecord(native);
 }
 
 /**
- * collection_count
+ * get_collection_count
  */
 export async function getCollectionCount(): Promise<number> {
   const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
   const retVal = await invokeContract(
     DUMMY_KEY,
-    "collection_count",
+    "get_collection_count",
     [],
     true,
     config.launchpadContractId

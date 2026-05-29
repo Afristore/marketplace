@@ -135,6 +135,16 @@ pub fn record_collection(env: &Env, creator: &Address, address: &Address, kind: 
         creator: creator.clone(),
     };
 
+    // Address-keyed storage (#76) — O(1) lookup by collection address
+    env.storage()
+        .persistent()
+        .set(&DataKey::CollectionByAddress(address.clone()), &rec);
+    env.storage().persistent().extend_ttl(
+        &DataKey::CollectionByAddress(address.clone()),
+        TTL_THRESHOLD,
+        TTL_BUMP,
+    );
+
     // Global indexed storage (#51) — each record in its own key, no Vec bloat
     let global_idx = collection_count(env);
     env.storage()
@@ -178,6 +188,13 @@ pub fn collection_by_index(env: &Env, index: u64) -> Option<CollectionRecord> {
     env.storage()
         .persistent()
         .get(&DataKey::CollectionByIndex(index))
+}
+
+/// Get a collection record by its deployed address (#76).
+pub fn collection_by_address(env: &Env, address: &Address) -> Option<CollectionRecord> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CollectionByAddress(address.clone()))
 }
 
 /// Get per-creator collection count.

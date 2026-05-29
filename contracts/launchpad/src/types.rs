@@ -12,7 +12,7 @@ pub enum Error {
 
 /// Which of the four collection types was deployed.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CollectionKind {
     Normal721,
     Normal1155,
@@ -22,7 +22,7 @@ pub enum CollectionKind {
 
 /// A record stored for every deployed collection.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CollectionRecord {
     pub address: Address,
     pub kind: CollectionKind,
@@ -49,4 +49,6 @@ pub enum DataKey {
     CreatorCollectionCount(Address),
     /// Per-creator indexed collection (#51)
     CreatorCollectionByIndex(Address, u64),
+    /// Collection record keyed by its deployed address (#76) — O(1) lookup
+    CollectionByAddress(Address),
 }
