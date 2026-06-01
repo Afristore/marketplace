@@ -13,13 +13,13 @@ use crate::events::*;
 use crate::{
     storage::{
         acquire_auction_lock, acquire_listing_lock, add_artist_auction_id, add_artist_listing_id,
-        clear_pending_admin_storage, get_artist_listing_ids, get_listing_count,
-        get_pending_admin_storage, increment_auction_count, increment_listing_count,
-        increment_offer_count, is_artist_revoked_storage, load_auction, load_listing,
-        load_listing_offers, load_offer, load_offerer_offers, release_auction_lock,
+        clear_pending_admin_storage, get_artist_auction_ids, get_artist_listing_ids,
+        get_listing_count, get_pending_admin_storage, increment_auction_count,
+        increment_listing_count, increment_offer_count, is_artist_revoked_storage, load_auction,
+        load_listing, load_listing_offers, load_offer, load_offerer_offers, release_auction_lock,
         release_listing_lock, remove_artist_revocation_storage, save_auction, save_listing,
         save_listing_offers, save_offer, save_offerer_offers, set_artist_revocation_storage,
-        set_pending_admin_storage,
+        set_pending_admin_storage, get_auction_count,
     },
     types::{
         Auction, AuctionStatus, Listing, ListingStatus, MarketplaceError, Offer, OfferStatus,
@@ -837,6 +837,14 @@ impl MarketplaceContract {
     }
     pub fn get_artist_listings(env: Env, artist: Address) -> Vec<u64> {
         get_artist_listing_ids(&env, &artist)
+    }
+
+    pub fn get_total_auctions(env: Env) -> u64 {
+        get_auction_count(&env)
+    }
+
+    pub fn get_artist_auctions(env: Env, artist: Address) -> Vec<u64> {
+        get_artist_auction_ids(&env, &artist)
     }
 
     pub fn get_active_listings(env: Env, limit: u32, offset: u32) -> Vec<u64> {

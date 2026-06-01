@@ -219,7 +219,7 @@ export function useCreateListing(artistPublicKey: string | null) {
         trackEvent.listingCreated(
           listingId,
           input.price.toString(),
-          token.code || "XLM",
+          token.symbol || "XLM",
         );
 
         setProgress("Listing created successfully!");
