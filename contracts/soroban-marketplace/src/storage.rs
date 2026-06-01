@@ -24,6 +24,9 @@ pub enum DataKey {
     AuctionLock(u64),
     IsPaused,
     PendingAdmin,
+    ActiveListingCount,
+    ActiveListingIndex(u32),
+    ListingPosition(u64),
 }
 
 pub const LEDGER_TTL_BUMP: u32 = 432_000;
@@ -245,6 +248,103 @@ pub fn is_artist_revoked_storage(env: &Env, artist: &Address) -> bool {
             .extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
     }
     revoked
+}
+
+pub fn get_active_listing_count(env: &Env) -> u32 {
+    env.storage()
+        .persistent()
+        .get::<DataKey, u32>(&DataKey::ActiveListingCount)
+        .unwrap_or(0)
+}
+
+pub fn add_active_listing(env: &Env, listing_id: u64) {
+    let count = get_active_listing_count(env);
+    let index = count;
+
+    let index_key = DataKey::ActiveListingIndex(index);
+    let pos_key = DataKey::ListingPosition(listing_id);
+    let count_key = DataKey::ActiveListingCount;
+
+    env.storage().persistent().set(&index_key, &listing_id);
+    env.storage().persistent().set(&pos_key, &index);
+    env.storage().persistent().set(&count_key, &(count + 1));
+
+    env.storage()
+        .persistent()
+        .extend_ttl(&index_key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
+    env.storage()
+        .persistent()
+        .extend_ttl(&pos_key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
+    env.storage()
+        .persistent()
+        .extend_ttl(&count_key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
+}
+
+pub fn remove_active_listing(env: &Env, listing_id: u64) {
+    let pos_key = DataKey::ListingPosition(listing_id);
+    let pos = env.storage().persistent().get::<DataKey, u32>(&pos_key);
+    if let Some(index_to_remove) = pos {
+        let count = get_active_listing_count(env);
+        if count == 0 {
+            return;
+        }
+        let last_index = count - 1;
+
+        if index_to_remove != last_index {
+            // Swap with last
+            let last_index_key = DataKey::ActiveListingIndex(last_index);
+            let last_listing_id = env
+                .storage()
+                .persistent()
+                .get::<DataKey, u64>(&last_index_key)
+                .unwrap();
+
+            let target_index_key = DataKey::ActiveListingIndex(index_to_remove);
+            let last_pos_key = DataKey::ListingPosition(last_listing_id);
+
+            env.storage()
+                .persistent()
+                .set(&target_index_key, &last_listing_id);
+            env.storage()
+                .persistent()
+                .set(&last_pos_key, &index_to_remove);
+
+            env.storage().persistent().extend_ttl(
+                &target_index_key,
+                LEDGER_TTL_THRESHOLD,
+                LEDGER_TTL_BUMP,
+            );
+            env.storage().persistent().extend_ttl(
+                &last_pos_key,
+                LEDGER_TTL_THRESHOLD,
+                LEDGER_TTL_BUMP,
+            );
+        }
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::ActiveListingIndex(last_index));
+        env.storage().persistent().remove(&pos_key);
+        env.storage()
+            .persistent()
+            .set(&DataKey::ActiveListingCount, &last_index);
+        env.storage().persistent().extend_ttl(
+            &DataKey::ActiveListingCount,
+            LEDGER_TTL_THRESHOLD,
+            LEDGER_TTL_BUMP,
+        );
+    }
+}
+
+pub fn get_active_listing_at(env: &Env, index: u32) -> Option<u64> {
+    let key = DataKey::ActiveListingIndex(index);
+    let res = env.storage().persistent().get::<DataKey, u64>(&key);
+    if res.is_some() {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
+    }
+    res
 }
 
 pub fn set_treasury_storage(env: &Env, addr: &Address) {

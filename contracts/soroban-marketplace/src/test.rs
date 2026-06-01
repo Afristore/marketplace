@@ -703,6 +703,46 @@ fn test_create_listing_with_whitelisted_token_succeeds() {
 }
 
 #[test]
+fn test_get_active_listings_page_returns_indexed_page() {
+    let (env, client, artist, _, token_id, _contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let first = create_test_listing(&env, &client, &artist, &token_id);
+    let second = create_test_listing(&env, &client, &artist, &token_id);
+    let third = create_test_listing(&env, &client, &artist, &token_id);
+
+    let page = client.get_active_listings_page(&1u32, &2u32);
+
+    assert_eq!(page.len(), 2);
+    assert_eq!(page.get(0).unwrap(), second);
+    assert_eq!(page.get(1).unwrap(), third);
+    assert_eq!(
+        client.get_active_listings(&2u32, &0u32).get(0).unwrap(),
+        first
+    );
+}
+
+#[test]
+fn test_get_active_listings_page_excludes_sold_and_cancelled() {
+    let (env, client, artist, buyer, token_id, _contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let sold = create_test_listing(&env, &client, &artist, &token_id);
+    let cancelled = create_test_listing(&env, &client, &artist, &token_id);
+    let active = create_test_listing(&env, &client, &artist, &token_id);
+
+    client.buy_artwork(&buyer, &sold);
+    client.cancel_listing(&artist, &cancelled);
+
+    let page = client.get_active_listings_page(&0u32, &10u32);
+
+    assert_eq!(page.len(), 1);
+    assert_eq!(page.get(0).unwrap(), active);
+}
+
+#[test]
 fn test_buy_artwork_fee_greater_than_price() {
     let (env, client, artist, buyer, token_id, _contract_id) = setup();
     client.set_admin(&artist);

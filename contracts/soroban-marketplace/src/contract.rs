@@ -13,13 +13,13 @@ use crate::events::*;
 use crate::{
     storage::{
         acquire_auction_lock, acquire_listing_lock, add_artist_auction_id, add_artist_listing_id,
-        clear_pending_admin_storage, get_artist_listing_ids, get_listing_count,
-        get_pending_admin_storage, increment_auction_count, increment_listing_count,
-        increment_offer_count, is_artist_revoked_storage, load_auction, load_listing,
-        load_listing_offers, load_offer, load_offerer_offers, release_auction_lock,
-        release_listing_lock, remove_artist_revocation_storage, save_auction, save_listing,
-        save_listing_offers, save_offer, save_offerer_offers, set_artist_revocation_storage,
-        set_pending_admin_storage,
+        clear_pending_admin_storage, get_active_listing_at, get_active_listing_count,
+        get_artist_listing_ids, get_listing_count, get_pending_admin_storage,
+        increment_auction_count, increment_listing_count, increment_offer_count,
+        is_artist_revoked_storage, load_auction, load_listing, load_listing_offers, load_offer,
+        load_offerer_offers, release_auction_lock, release_listing_lock,
+        remove_artist_revocation_storage, save_auction, save_listing, save_listing_offers,
+        save_offer, save_offerer_offers, set_artist_revocation_storage, set_pending_admin_storage,
     },
     types::{
         Auction, AuctionStatus, Listing, ListingStatus, MarketplaceError, Offer, OfferStatus,
@@ -238,19 +238,19 @@ impl MarketplaceContract {
             panic_with_error!(&env, MarketplaceError::InvalidPrice);
         }
 
-                // Validate royalty bps — must not exceed 10000 (100%). Reject explicitly.
-                if royalty_bps > 10_000 {
-                    panic_with_error!(&env, MarketplaceError::InvalidRoyalty);
+        // Validate royalty bps — must not exceed 10000 (100%). Reject explicitly.
+        if royalty_bps > 10_000 {
+            panic_with_error!(&env, MarketplaceError::InvalidRoyalty);
         }
 
-                let recipients_len = recipients.len();
-                // Empty recipient arrays are an invalid split configuration; reject with InvalidSplit.
-                if recipients_len == 0 {
-                    panic_with_error!(&env, MarketplaceError::InvalidSplit);
-                }
-                if recipients_len > 4 {
-                    panic_with_error!(&env, MarketplaceError::TooManyRecipients);
-                }
+        let recipients_len = recipients.len();
+        // Empty recipient arrays are an invalid split configuration; reject with InvalidSplit.
+        if recipients_len == 0 {
+            panic_with_error!(&env, MarketplaceError::InvalidSplit);
+        }
+        if recipients_len > 4 {
+            panic_with_error!(&env, MarketplaceError::TooManyRecipients);
+        }
 
         let mut total_percentage = 0;
         for i in 0..recipients_len {
@@ -282,6 +282,7 @@ impl MarketplaceContract {
         };
         save_listing(&env, &listing);
         add_artist_listing_id(&env, &artist, listing_id);
+        add_active_listing(&env, listing_id);
 
         ListingCreatedEvent {
             listing_id,
@@ -334,13 +335,13 @@ impl MarketplaceContract {
         }
 
         let new_recipients_len = new_recipients.len();
-                if new_recipients_len == 0 {
-                    panic_with_error!(&env, MarketplaceError::InvalidSplit);
+        if new_recipients_len == 0 {
+            panic_with_error!(&env, MarketplaceError::InvalidSplit);
         }
-                if new_recipients_len > 4 {
-                    panic_with_error!(&env, MarketplaceError::TooManyRecipients);
-                }
-                let mut total_pct = 0u32;
+        if new_recipients_len > 4 {
+            panic_with_error!(&env, MarketplaceError::TooManyRecipients);
+        }
+        let mut total_pct = 0u32;
         for i in 0..new_recipients_len {
             total_pct += new_recipients.get(i).unwrap().percentage;
         }
@@ -405,26 +406,27 @@ impl MarketplaceContract {
         }
 
         // Ensure token is still whitelisted at purchase time. If it was removed after listing creation, block the purchase.
-                if !Self::is_token_whitelisted(&env, &listing.token) {
-                    release_listing_lock(&env, listing_id);
-                    panic_with_error!(&env, MarketplaceError::TokenNotWhitelisted);
-                }
+        if !Self::is_token_whitelisted(&env, &listing.token) {
+            release_listing_lock(&env, listing_id);
+            panic_with_error!(&env, MarketplaceError::TokenNotWhitelisted);
+        }
 
-                Self::distribute_payout(
-                    &env,
-                    &listing.token,
-                    listing.price,
-                    &listing.original_creator,
-                    listing.royalty_bps,
-                    &listing.artist,
-                    &listing.recipients,
-                    &buyer,
-                    true,
-                );
+        Self::distribute_payout(
+            &env,
+            &listing.token,
+            listing.price,
+            &listing.original_creator,
+            listing.royalty_bps,
+            &listing.artist,
+            &listing.recipients,
+            &buyer,
+            true,
+        );
 
         listing.status = ListingStatus::Sold;
         listing.owner = Some(buyer.clone());
         save_listing(&env, &listing);
+        crate::storage::remove_active_listing(&env, listing_id);
 
         ArtworkSoldEvent {
             listing_id,
@@ -487,6 +489,7 @@ impl MarketplaceContract {
 
         listing.status = ListingStatus::Cancelled;
         save_listing(&env, &listing);
+        crate::storage::remove_active_listing(&env, listing_id);
 
         ListingCancelledEvent {
             listing_id,
@@ -522,11 +525,11 @@ impl MarketplaceContract {
         if !Self::is_token_whitelisted(&env, &token) {
             panic_with_error!(&env, MarketplaceError::Unauthorized);
         }
-                // Validate royalty bps — must not exceed 10000 (100%). Reject explicitly.
-                if royalty_bps > 10_000 {
-                    panic_with_error!(&env, MarketplaceError::InvalidRoyalty);
-                }
-                let auction_id = increment_auction_count(&env);
+        // Validate royalty bps — must not exceed 10000 (100%). Reject explicitly.
+        if royalty_bps > 10_000 {
+            panic_with_error!(&env, MarketplaceError::InvalidRoyalty);
+        }
+        let auction_id = increment_auction_count(&env);
         let end_time = env.ledger().timestamp() + duration;
         let auction = Auction {
             auction_id,
@@ -840,16 +843,17 @@ impl MarketplaceContract {
     }
 
     pub fn get_active_listings(env: Env, limit: u32, offset: u32) -> Vec<u64> {
-        let total = get_listing_count(&env);
+        Self::get_active_listings_page(env, offset, limit)
+    }
+
+    pub fn get_active_listings_page(env: Env, start: u32, limit: u32) -> Vec<u64> {
+        let total = get_active_listing_count(&env);
         let mut active_ids = Vec::new(&env);
-        let start = offset as u64;
-        let end = (offset as u64 + limit as u64).min(total);
+        let end = start.saturating_add(limit).min(total);
 
         for i in start..end {
-            if let Some(listing) = load_listing(&env, i + 1) {
-                if listing.status == ListingStatus::Active {
-                    active_ids.push_back(i + 1);
-                }
+            if let Some(listing_id) = get_active_listing_at(&env, i) {
+                active_ids.push_back(listing_id);
             }
         }
         active_ids
