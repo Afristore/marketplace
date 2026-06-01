@@ -592,6 +592,9 @@ impl MarketplaceContract {
     }
 
     pub fn finalize_auction(env: Env, caller: Address, auction_id: u64) {
+        if crate::storage::is_paused(&env) {
+            panic_with_error!(&env, MarketplaceError::ContractPaused);
+        }
         caller.require_auth();
 
         // Reentrancy guard

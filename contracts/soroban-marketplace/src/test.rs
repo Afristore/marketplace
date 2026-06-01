@@ -1983,6 +1983,28 @@ fn test_create_auction_while_paused_fails() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #23)")]
+fn test_finalize_auction_while_paused_fails() {
+    let (env, client, artist, _, token_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    let auction_id = client.create_auction(
+        &artist,
+        &bytes!(&env, 0x516d74657374),
+        &token_id,
+        &1_000_000_i128,
+        &3600_u64,
+        &0u32,
+        &valid_recipients(&env, &artist),
+    );
+    env.ledger().with_mut(|l| {
+        l.timestamp += 7200;
+    });
+    client.admin_pause(&artist);
+    client.finalize_auction(&artist, &auction_id);
+}
+
+#[test]
 fn test_actions_succeed_after_unpause() {
     let (env, client, artist, buyer, token_id, _) = setup();
     client.set_admin(&artist);
