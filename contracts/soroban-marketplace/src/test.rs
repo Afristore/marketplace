@@ -2312,3 +2312,177 @@ fn test_buy_artwork_fails_if_token_delisted() {
     client.remove_token_from_whitelist(&token_id);
     client.buy_artwork(&buyer, &id);
 }
+// ═══════════════════════════════════════════════════════════════════════════
+// admin_pause / admin_unpause mechanism
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_is_paused_default_false() {
+    let (env, client, artist, _buyer, token_id, _contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    // Freshly deployed — must not be paused
+    assert!(!client.is_paused());
+}
+
+#[test]
+fn test_admin_pause_and_unpause_state_transitions() {
+    let (env, client, artist, _buyer, token_id, _contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    assert!(!client.is_paused(), "contract should start unpaused");
+
+    client.admin_pause(&artist);
+    assert!(client.is_paused(), "contract should be paused after admin_pause");
+
+    client.admin_unpause(&artist);
+    assert!(!client.is_paused(), "contract should be unpaused after admin_unpause");
+}
+
+#[test]
+fn test_admin_pause_emits_event() {
+    let (env, client, artist, _buyer, token_id, _contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    client.admin_pause(&artist);
+
+    let events = env.events().all();
+    let has_pause_event = events.iter().any(|e| {
+        format!("{:?}", e.1).contains("contract_paused")
+    });
+    assert!(has_pause_event, "admin_pause must emit a CONTRACT_PAUSED event");
+}
+
+#[test]
+fn test_admin_unpause_emits_event() {
+    let (env, client, artist, _buyer, token_id, _contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    client.admin_pause(&artist);
+    client.admin_unpause(&artist);
+
+    let events = env.events().all();
+    let has_unpause_event = events.iter().any(|e| {
+        format!("{:?}", e.1).contains("contract_unpaused")
+    });
+    assert!(has_unpause_event, "admin_unpause must emit a CONTRACT_UNPAUSED event");
+}
+
+#[test]
+#[should_panic]
+fn test_admin_pause_rejects_non_admin() {
+    let (env, client, artist, buyer, token_id, _contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    // `buyer` is not the admin — must panic with Unauthorized
+    client.admin_pause(&buyer);
+}
+
+#[test]
+#[should_panic]
+fn test_admin_unpause_rejects_non_admin() {
+    let (env, client, artist, buyer, token_id, _contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    client.admin_pause(&artist);
+    // `buyer` is not the admin — must panic with Unauthorized
+    client.admin_unpause(&buyer);
+}
+
+#[test]
+#[should_panic]
+fn test_create_listing_blocked_when_paused() {
+    let (env, client, artist, _buyer, token_id, _contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    client.admin_pause(&artist);
+
+    let cid = bytes!(&env, 0x516d74657374);
+    // Any create_listing call must panic while the contract is paused
+    client.create_listing(
+        &artist,
+        &cid,
+        &10_000_000_i128,
+        &token_id,
+        &valid_recipients(&env, &artist),
+        &500u32,
+        &artist,
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_create_auction_blocked_when_paused() {
+    let (env, client, artist, _buyer, token_id, _contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    client.admin_pause(&artist);
+
+    let cid = bytes!(&env, 0x516d74657374);
+    let end_time = env.ledger().timestamp() + 3600;
+    // Any create_auction call must panic while the contract is paused
+    client.create_auction(
+        &artist,
+        &cid,
+        &5_000_000_i128,
+        &token_id,
+        &end_time,
+        &valid_recipients(&env, &artist),
+        &500u32,
+        &artist,
+    );
+}
+
+#[test]
+fn test_create_listing_succeeds_after_unpause() {
+    let (env, client, artist, _buyer, token_id, _contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    // Pause then immediately unpause
+    client.admin_pause(&artist);
+    client.admin_unpause(&artist);
+
+    // Now create_listing must work again
+    let cid = bytes!(&env, 0x516d74657374);
+    let listing_id = client.create_listing(
+        &artist,
+        &cid,
+        &10_000_000_i128,
+        &token_id,
+        &valid_recipients(&env, &artist),
+        &500u32,
+        &artist,
+    );
+    assert!(listing_id > 0, "listing must be created after unpause");
+}
+
+#[test]
+#[should_panic]
+fn test_buy_artwork_blocked_when_paused() {
+    let (env, client, artist, buyer, token_id, _contract_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let cid = bytes!(&env, 0x516d74657374);
+    let listing_id = client.create_listing(
+        &artist,
+        &cid,
+        &10_000_000_i128,
+        &token_id,
+        &valid_recipients(&env, &artist),
+        &500u32,
+        &artist,
+    );
+
+    client.admin_pause(&artist);
+
+    // buy_artwork must panic while paused
+    client.buy_artwork(&buyer, &listing_id, &token_id);
+}
