@@ -322,7 +322,7 @@ impl NormalNFT721 {
             .storage()
             .persistent()
             .get(&DataKey::BalanceOf(owner.clone()))
-            .unwrap_or(1);
+            .unwrap_or(0);
         env.storage()
             .persistent()
             .set(&DataKey::BalanceOf(owner.clone()), &(bal.saturating_sub(1)));
@@ -344,7 +344,7 @@ impl NormalNFT721 {
             .storage()
             .instance()
             .get(&DataKey::TotalSupply)
-            .unwrap_or(1);
+            .unwrap_or(0);
         env.storage()
             .instance()
             .set(&DataKey::TotalSupply, &(supply.saturating_sub(1)));
@@ -530,7 +530,7 @@ impl NormalNFT721 {
             .storage()
             .persistent()
             .get(&DataKey::BalanceOf(from.clone()))
-            .unwrap_or(1);
+            .unwrap_or(0);
         env.storage().persistent().set(
             &DataKey::BalanceOf(from.clone()),
             &(from_bal.saturating_sub(1)),

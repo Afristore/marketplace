@@ -583,3 +583,41 @@ fn test_voucher_expired_returns_proper_error() {
 
     assert_eq!(result, Err(Ok(Error::VoucherExpired)));
 }
+
+#[test]
+fn burn_with_missing_total_supply_key_returns_zero_not_amount() {
+    // Regression test for #273: unwrap_or(amount) masked state corruption.
+    // If TotalSupply key is absent, burn must treat supply as 0, not `amount`.
+    let (env, client, contract_id, _creator, _creator_pubkey) = setup_env();
+    env.mock_all_auths();
+
+    let token_id = 1u64;
+    client.register_edition(&token_id, &100u128);
+
+    let buyer = Address::generate(&env);
+    let voucher = MintVoucher1155 {
+        token_id,
+        buyer_quota: 10,
+        price_per_unit: 0,
+        currency: Address::generate(&env),
+        uri: String::from_str(&env, "ipfs://uri"),
+        uri_hash: BytesN::from_array(&env, &[1u8; 32]),
+        valid_until: 0,
+    };
+    let sig = sign_voucher(&env, &contract_id, &voucher);
+    client.redeem(&buyer, &voucher, &5u128, &sig);
+    assert_eq!(client.total_supply(&token_id), 5u128);
+
+    // Manually remove the TotalSupply key to simulate a missing/expired entry.
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .remove(&crate::DataKey::TotalSupply(token_id));
+    });
+
+    // Burn should succeed and write supply = 0, not amount (3).
+    client.burn(&buyer, &buyer, &token_id, &3u128);
+
+    // total_supply must be 0, not 3 (the old unwrap_or(amount) result).
+    assert_eq!(client.total_supply(&token_id), 0u128);
+}

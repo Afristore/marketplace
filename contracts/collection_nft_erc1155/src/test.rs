@@ -245,3 +245,31 @@ fn test_erc1155_events_emit_successfully() {
     assert_eq!(client.balance_of(&alice, &token_id), 70u128);
     assert_eq!(client.balance_of(&bob, &token_id), 20u128);
 }
+
+#[test]
+fn burn_with_missing_total_supply_key_returns_zero_not_amount() {
+    // Regression test for #273: unwrap_or(amount) masked state corruption.
+    // If TotalSupply key is absent, burn must treat supply as 0, not `amount`.
+    // With the old bug, supply.saturating_sub(amount) == 0 silently;
+    // with the fix, supply (0).saturating_sub(amount) == 0 too, but the
+    // key is now written as 0 rather than being set to a phantom non-zero value
+    // that would make total_supply() lie about the real on-chain state.
+    let (env, client, contract_id, _creator) = setup();
+    let alice = Address::generate(&env);
+
+    let token_id = client.mint_new(&alice, &5u128, &String::from_str(&env, "uri"));
+    assert_eq!(client.total_supply(&token_id), 5u128);
+
+    // Manually remove the TotalSupply key to simulate a missing/expired entry.
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .remove(&DataKey::TotalSupply(token_id));
+    });
+
+    // Burn should succeed (balance check passes) and write supply = 0, not amount.
+    client.burn(&alice, &alice, &token_id, &3u128);
+
+    // total_supply must be 0, not 3 (the old unwrap_or(amount) result).
+    assert_eq!(client.total_supply(&token_id), 0u128);
+}
