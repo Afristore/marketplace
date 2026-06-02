@@ -104,8 +104,13 @@ export default function ListingDetailPage({ id }: ListingClientProps) {
 
                 const cid = l?.metadata_cid || a?.metadata_cid;
                 if (cid) {
-                    const m = await fetchMetadata(cid);
-                    setMetadata(m);
+                    try {
+                        const m = await fetchMetadata(cid);
+                        setMetadata(m);
+                    } catch (e) {
+                        // Metadata is off-chain (IPFS) and may be slow or unavailable.
+                        // The on-chain listing still exists, so render it without metadata.
+                    }
                 }
             } catch (err: any) {
                 setError(err.message || "Failed to load artwork details");
