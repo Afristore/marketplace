@@ -918,14 +918,6 @@ impl MarketplaceContract {
         load_offerer_offers(&env, &offerer)
     }
 
-    pub fn get_total_auctions(env: Env) -> u64 {
-        crate::storage::get_auction_count(&env)
-    }
-
-    pub fn get_artist_auctions(env: Env, artist: Address) -> Vec<u64> {
-        crate::storage::get_artist_auction_ids(&env, &artist)
-    }
-
     fn require_admin(env: &Env) {
         let key = crate::storage::DataKey::Admin;
         let admin = env
