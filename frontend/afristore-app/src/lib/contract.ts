@@ -376,7 +376,8 @@ export async function getArtistListings(artistPublicKey: string): Promise<number
 }
 
 /**
- * getAllListings — Fetch every listing from ID 1 → total in parallel.
+ * getAllListings — Fetch every listing from ID 1 up to total.
+ * Uses batching to avoid excessive parallel RPC calls.
  */
 export async function getAllListings(): Promise<Listing[]> {
   if (isE2eMockChain()) {
@@ -384,12 +385,27 @@ export async function getAllListings(): Promise<Listing[]> {
     return getE2eMockListings();
   }
 
-  const total = await getTotalListings();
-  const ids = Array.from({ length: total }, (_, i) => i + 1);
-  const results = await Promise.all(
-    ids.map((id) => getListing(id).catch(() => null))
-  );
-  return results.filter((l): l is Listing => l !== null);
+  const totalRaw = await getTotalListings();
+  const total = Math.min(totalRaw, 1000); // Safety limit
+  if (total <= 0) return [];
+
+  const listings: Listing[] = [];
+  const BATCH_SIZE = 10;
+
+  for (let offset = 1; offset <= total; offset += BATCH_SIZE) {
+    const batchIds = Array.from(
+      { length: Math.min(BATCH_SIZE, total - offset + 1) },
+      (_, i) => offset + i
+    );
+
+    const results = await Promise.all(
+      batchIds.map((id) => getListing(id).catch(() => null))
+    );
+
+    listings.push(...results.filter((l): l is Listing => l !== null));
+  }
+
+  return listings;
 }
 
 // ── Offer types mirrored from the Rust contract ──────────────
@@ -601,21 +617,39 @@ export async function getArtistAuctions(
 }
 
 /**
- * getAllAuctions — Fetch auctions by probing IDs in parallel batches.
- * Stops after a batch where every fetch fails (no more auctions exist).
+ * get_total_auctions — Read the total auction count.
+ */
+export async function getTotalAuctions(): Promise<number> {
+  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+  const retVal = await invokeContract(DUMMY_KEY, "get_total_auctions", [], true);
+  return Number(scValToNative(retVal));
+}
+
+/**
+ * getAllAuctions — Fetch all auctions from ID 1 up to total.
+ * Uses batching to avoid overwhelming the RPC server.
  */
 export async function getAllAuctions(): Promise<Auction[]> {
+  const totalRaw = await getTotalAuctions();
+  const total = Math.min(totalRaw, 1000); // Safety limit
+  if (total <= 0) return [];
+
   const auctions: Auction[] = [];
-  const BATCH = 10;
-  let offset = 1;
-  while (true) {
-    const ids = Array.from({ length: BATCH }, (_, i) => offset + i);
-    const results = await Promise.all(ids.map((id) => getAuction(id).catch(() => null)));
-    const found = results.filter((a): a is Auction => a !== null);
-    auctions.push(...found);
-    if (found.length === 0) break;
-    offset += BATCH;
+  const BATCH_SIZE = 10;
+  
+  for (let offset = 1; offset <= total; offset += BATCH_SIZE) {
+    const batchIds = Array.from(
+      { length: Math.min(BATCH_SIZE, total - offset + 1) },
+      (_, i) => offset + i
+    );
+    
+    const results = await Promise.all(
+      batchIds.map((id) => getAuction(id).catch(() => null))
+    );
+    
+    auctions.push(...results.filter((a): a is Auction => a !== null));
   }
+  
   return auctions;
 }
 

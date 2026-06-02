@@ -926,6 +926,11 @@ fn test_create_auction_success() {
     assert_eq!(auction.reserve_price, reserve_price);
     assert_eq!(auction.status, crate::types::AuctionStatus::Active);
     assert_eq!(auction.end_time, env.ledger().timestamp() + duration);
+
+    assert_eq!(client.get_total_auctions(), 1);
+    let artist_auctions = client.get_artist_auctions(&artist);
+    assert_eq!(artist_auctions.len(), 1);
+    assert_eq!(artist_auctions.get(0).unwrap(), 1);
 }
 
 #[test]
