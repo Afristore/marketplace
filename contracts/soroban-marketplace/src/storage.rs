@@ -24,6 +24,7 @@ pub enum DataKey {
     AuctionLock(u64),
     IsPaused,
     PendingAdmin,
+    ActiveListings,
 }
 
 pub const LEDGER_TTL_BUMP: u32 = 432_000;
@@ -169,6 +170,48 @@ pub fn get_artist_listing_ids(env: &Env, artist: &Address) -> Vec<u64> {
     env.storage()
         .persistent()
         .get::<_, Vec<u64>>(&DataKey::ArtistListings(artist.clone()))
+        .unwrap_or_else(|| Vec::new(env))
+}
+
+// ── Active listings index ────────────────────────────────────
+
+pub fn add_to_active_listings(env: &Env, listing_id: u64) {
+    let key = DataKey::ActiveListings;
+    let mut ids = env
+        .storage()
+        .persistent()
+        .get::<_, Vec<u64>>(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    ids.push_back(listing_id);
+    env.storage().persistent().set(&key, &ids);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
+}
+
+pub fn remove_from_active_listings(env: &Env, listing_id: u64) {
+    let key = DataKey::ActiveListings;
+    let ids = env
+        .storage()
+        .persistent()
+        .get::<_, Vec<u64>>(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    let mut updated = Vec::new(env);
+    for id in ids.iter() {
+        if id != listing_id {
+            updated.push_back(id);
+        }
+    }
+    env.storage().persistent().set(&key, &updated);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
+}
+
+pub fn get_active_listing_ids(env: &Env) -> Vec<u64> {
+    env.storage()
+        .persistent()
+        .get::<_, Vec<u64>>(&DataKey::ActiveListings)
         .unwrap_or_else(|| Vec::new(env))
 }
 

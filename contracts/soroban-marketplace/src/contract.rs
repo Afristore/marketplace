@@ -282,6 +282,7 @@ impl MarketplaceContract {
         };
         save_listing(&env, &listing);
         add_artist_listing_id(&env, &artist, listing_id);
+        add_to_active_listings(&env, listing_id);
 
         ListingCreatedEvent {
             listing_id,
@@ -428,6 +429,7 @@ impl MarketplaceContract {
         listing.status = ListingStatus::Sold;
         listing.owner = Some(buyer.clone());
         save_listing(&env, &listing);
+        remove_from_active_listings(&env, listing_id);
 
         ArtworkSoldEvent {
             listing_id,
@@ -490,6 +492,7 @@ impl MarketplaceContract {
 
         listing.status = ListingStatus::Cancelled;
         save_listing(&env, &listing);
+        remove_from_active_listings(&env, listing_id);
 
         ListingCancelledEvent {
             listing_id,
@@ -821,6 +824,7 @@ impl MarketplaceContract {
         listing.status = ListingStatus::Sold;
         listing.owner = Some(accepted_offerer.clone());
         save_listing(&env, &listing);
+        remove_from_active_listings(&env, accepted_listing_id);
 
         OfferAcceptedEvent {
             offer_id,
@@ -870,19 +874,18 @@ impl MarketplaceContract {
     }
 
     pub fn get_active_listings(env: Env, limit: u32, offset: u32) -> Vec<u64> {
-        let total = get_listing_count(&env);
-        let mut active_ids = Vec::new(&env);
-        let start = offset as u64;
-        let end = (offset as u64 + limit as u64).min(total);
-
+        let ids = get_active_listing_ids(&env);
+        let start = offset as usize;
+        let end = (start + limit as usize).min(ids.len() as usize);
+        let mut page = Vec::new(&env);
         for i in start..end {
-            if let Some(listing) = load_listing(&env, i + 1) {
-                if listing.status == ListingStatus::Active {
-                    active_ids.push_back(i + 1);
-                }
-            }
+            page.push_back(ids.get(i as u32).unwrap());
         }
-        active_ids
+        page
+    }
+
+    pub fn get_active_listings_page(env: Env, start: u32, limit: u32) -> Vec<u64> {
+        Self::get_active_listings(env, limit, start)
     }
 
     pub fn get_offers_by_listing(env: Env, listing_id: u64) -> Vec<Offer> {
