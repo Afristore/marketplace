@@ -36,12 +36,12 @@ describe('collectMarketplaceEvents', () => {
     expect(getEvents).toHaveBeenNthCalledWith(1, expect.objectContaining({
       startLedger: 1,
       endLedger: 10,
-      pagination: { limit: EVENT_PAGE_LIMIT },
+      limit: EVENT_PAGE_LIMIT,
     }));
     expect(getEvents).toHaveBeenNthCalledWith(2, expect.objectContaining({
       startLedger: 1,
       endLedger: 10,
-      pagination: { limit: EVENT_PAGE_LIMIT, cursor: 'page-2' },
+      limit: EVENT_PAGE_LIMIT, cursor: 'page-2',
     }));
   });
 
@@ -56,10 +56,10 @@ describe('collectMarketplaceEvents', () => {
     expect(events).toHaveLength(3);
     expect(getEvents).toHaveBeenCalledTimes(3);
     expect(getEvents).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      pagination: expect.objectContaining({ cursor: 'tok1' }),
+      cursor: 'tok1',
     }));
     expect(getEvents).toHaveBeenNthCalledWith(3, expect.objectContaining({
-      pagination: expect.objectContaining({ cursor: 'tok2' }),
+      cursor: 'tok2',
     }));
   });
 

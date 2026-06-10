@@ -124,7 +124,7 @@ describe('processEvent — always logs to MarketplaceEvent', () => {
   });
 
   it('stores the decoded data in the event record', async () => {
-    const data = { price: '1000000', currency: 'XLM' };
+    const data = { price: '1000000', currency: 'XLM', collection: 'CCOLLECTION', token_id: 1 };
     const event = makeEvent('LISTING_CREATED', 1n, 'GA_ARTIST', data);
     await processEvent(event);
 
@@ -144,9 +144,9 @@ describe('processEvent — LISTING_CREATED', () => {
       artist: 'GA_ARTIST',
       price: '10000000',
       currency: 'XLM',
-      metadata_cid: 'QmTest123',
+      collection: 'CCOLLECTION',
+      token_id: 1,
       token: 'CTOKEN',
-      royalty_bps: '500',
     };
     await processEvent(makeEvent('LISTING_CREATED', 42n, 'GA_ARTIST', data, 200));
 
@@ -156,14 +156,13 @@ describe('processEvent — LISTING_CREATED', () => {
     expect(call.create).toMatchObject({
       listingId: 42n,
       artist: 'GA_ARTIST',
-      originalCreator: 'GA_ARTIST',
       status: 'Active',
       createdAtLedger: 200,
     });
   });
 
   it('does not call listing.updateMany for LISTING_CREATED', async () => {
-    await processEvent(makeEvent('LISTING_CREATED', 1n, 'GA', { artist: 'GA' }, 1));
+    await processEvent(makeEvent('LISTING_CREATED', 1n, 'GA', { artist: 'GA', collection: 'C', token_id: 1 }, 1));
     expect(mockPrisma.listing.updateMany).not.toHaveBeenCalled();
   });
 });
@@ -174,7 +173,7 @@ describe('processEvent — LISTING_UPDATED', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('updates price and metadataCid', async () => {
-    const data = { new_price: '20000000', metadata_cid: 'QmNewCid' };
+    const data = { new_price: '20000000', collection: 'CCOLLECTION', token_id: 1 };
     await processEvent(makeEvent('LISTING_UPDATED', 5n, '', data, 300));
 
     expect(mockPrisma.listing.updateMany).toHaveBeenCalledOnce();
@@ -182,7 +181,8 @@ describe('processEvent — LISTING_UPDATED', () => {
       where: { listingId: 5n },
       data: expect.objectContaining({
         price: '20000000',
-        metadataCid: 'QmNewCid',
+        collection: 'CCOLLECTION',
+        nftTokenId: 1n,
         updatedAtLedger: 300,
       }),
     });
@@ -517,7 +517,7 @@ describe('processEvent — out-of-order events do not throw', () => {
 
   it('LISTING_UPDATED with no prior listing resolves without throwing', async () => {
     mockPrisma.listing.updateMany.mockResolvedValueOnce({ count: 0 });
-    const data = { new_price: '999', metadata_cid: 'Qm' };
+    const data = { new_price: '999', collection: 'CCOLLECTION', token_id: 1 };
     await expect(
       processEvent(makeEvent('LISTING_UPDATED', 99n, '', data, 500))
     ).resolves.not.toThrow();

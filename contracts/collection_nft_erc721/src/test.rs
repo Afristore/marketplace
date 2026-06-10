@@ -532,14 +532,14 @@ fn transfer_from_zero_balance_fails_correctly() {
     let (env, client, _, _) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
-    
+
     // Alice has no tokens, balance should be 0
     assert_eq!(client.balance_of(&alice), 0u64);
-    
+
     // Mint a token to bob
     client.mint(&bob, &String::from_str(&env, "uri-0"));
     assert_eq!(client.balance_of(&bob), 1u64);
-    
+
     // Try to transfer token 0 from alice (who doesn't own it) to bob
     // This should fail with NotApproved since Alice is not approved to transfer Bob's token
     let result = client.try_transfer_from(&alice, &alice, &bob, &0u64);
