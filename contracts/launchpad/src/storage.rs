@@ -128,6 +128,13 @@ pub fn require_admin(env: &Env) -> Result<Address, Error> {
     admin.require_auth();
     Ok(admin)
 }
+/// Get a collection record by its deployed contract address.
+pub fn collection_by_address(env: &Env, address: &Address) -> Option<CollectionRecord> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::CollectionByAddress(address.clone()))
+}
+
 pub fn record_collection(env: &Env, creator: &Address, address: &Address, kind: CollectionKind) {
     let rec = CollectionRecord {
         address: address.clone(),
@@ -171,6 +178,16 @@ pub fn record_collection(env: &Env, creator: &Address, address: &Address, kind: 
     env.storage()
         .persistent()
         .set(&DataKey::CollectionCount, &next);
+
+    // Address-based lookup — allows get_collection_by_id queries
+    env.storage()
+        .persistent()
+        .set(&DataKey::CollectionByAddress(address.clone()), &rec);
+    env.storage().persistent().extend_ttl(
+        &DataKey::CollectionByAddress(address.clone()),
+        TTL_THRESHOLD,
+        TTL_BUMP,
+    );
 }
 
 /// Get a collection by global index.

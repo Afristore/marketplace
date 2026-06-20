@@ -49,4 +49,6 @@ pub enum DataKey {
     CreatorCollectionCount(Address),
     /// Per-creator indexed collection (#51)
     CreatorCollectionByIndex(Address, u64),
+    /// Lookup a collection record by its deployed address
+    CollectionByAddress(Address),
 }
