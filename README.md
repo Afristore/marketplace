@@ -79,7 +79,7 @@ afristore/
     └── workflows/ci.yml          # CI pipeline (Rust/cargo + frontend + indexer tests)
 ```
 
-## Quick Start
+## Getting Started
 
 ### 1. Deploy Soroban contracts (Testnet)
 
@@ -92,10 +92,12 @@ cd scripts/deploy
 
 ### 2. Start the Local Environment
 
-Instead of starting the indexer and frontend in separate terminals, we use a unified startup script at the root:
+The monorepo uses [`concurrently`](https://www.npmjs.com/package/concurrently) to start all services — the Next.js frontend, the indexer API, and the keep-alive crank bot — with a single command from the repository root.
+
+> **Important:** Run `npm install` at the **repository root** before `npm run dev`. This installs the root-level `concurrently` dev dependency. If you skip this step, `npm run dev` will fail with `sh: concurrently: command not found`.
 
 ```bash
-# 1. Ensure you have copied the environment files:
+# 1. Copy environment files:
 cd indexer && cp .env.example .env
 cd ../frontend/afristore-app && cp .env.example .env.local
 cd ../..
@@ -103,14 +105,17 @@ cd ../..
 # 2. Run the database migrations for the indexer:
 cd indexer && npx prisma migrate deploy && cd ..
 
-# 3. Install dependencies and start all services concurrently:
+# 3. Install root dependencies (required for concurrently):
 npm install
+
+# 4. Start all services concurrently:
 npm run dev
 ```
 
-This will concurrently start the frontend (Next.js), the indexer backend, and a Keep-Alive bot (`crank`) to ensure testnet contracts are not archived.
-
-Open [http://localhost:3000](http://localhost:3000)
+This will concurrently start:
+- **Frontend** — Next.js on [http://localhost:3000](http://localhost:3000)
+- **Indexer** — Express API + PostgreSQL event poller
+- **Crank** — Keep-alive bot (see [Crank Bot](#crank-keep-alive-bot) below)
 
 ## Features
 
@@ -146,6 +151,80 @@ Open [http://localhost:3000](http://localhost:3000)
 - REST API: listings, auctions, offers, collections, wallet activity, royalty stats
 - Stores all events, listings, auctions, offers, and collections in PostgreSQL
 - Includes a background **Keep-Alive Bot (`crank.ts`)** that periodically simulates reads on active contracts to bump their Time-To-Live (TTL) and prevent state archival on testnet.
+
+### Royalty Splitter
+
+The `royalty-splitter` contract (`contracts/royalty-splitter/`) is a standalone Soroban contract that splits royalty token flows between multiple beneficiaries according to fixed BPS (basis point) shares.
+
+**How it works:**
+1. **Deploy** — An artist or the Launchpad factory deploys a fresh `RoyaltySplitter` instance for each collection.
+2. **Initialize** — Call `initialize(token, beneficiaries, shares)` once to lock in the payment token, beneficiary addresses, and their BPS shares (must sum to exactly 10 000). This call is irreversible.
+3. **Distribute** — Anyone may call `distribute()` at any time. The contract reads its current token balance and transfers each beneficiary's proportional share. The final beneficiary absorbs any rounding remainder so no dust is ever trapped.
+
+**Deploying a splitter via the Launchpad (artist flow):**
+
+```bash
+# 1. Build and upload the royalty-splitter WASM
+cd contracts/royalty-splitter
+cargo build --target wasm32-unknown-unknown --release
+SPLITTER_HASH=$(stellar contract upload \
+  --wasm target/wasm32-unknown-unknown/release/royalty_splitter.wasm \
+  --network testnet --source deployer)
+
+# 2. Deploy a splitter instance for a collection
+SPLITTER=$(stellar contract deploy \
+  --wasm-hash $SPLITTER_HASH --network testnet --source creator)
+
+# 3. Initialize with up to 10 beneficiaries (shares must sum to 10 000)
+stellar contract invoke --id $SPLITTER --network testnet --source creator \
+  --fn initialize -- \
+  --token USDC_CONTRACT_ID \
+  --beneficiaries '["GCREATOR...", "GCOLLABORATOR..."]' \
+  --shares '[7500, 2500]'
+
+# 4. Anyone can now trigger a payout at any time
+stellar contract invoke --id $SPLITTER --network testnet --source anyone \
+  --fn distribute
+```
+
+**Key constraints:**
+- Maximum 10 beneficiaries per splitter.
+- Shares are immutable after `initialize` — deploy a new splitter to change splits.
+- `distribute()` requires no authentication; this makes it safe to automate or call from a keeper.
+
+## Crank (Keep-Alive Bot)
+
+Soroban contracts on testnet are subject to state archival: if a contract's ledger entries are not accessed within a certain number of ledgers, they are evicted and the contract stops responding. The **Crank bot** (`indexer/src/crank.ts`) prevents this by periodically simulating cheap read operations against each active contract, which refreshes their Time-To-Live (TTL) without requiring any real transaction fees or signatures.
+
+### What it does
+
+On each tick, the crank:
+1. Calls `get_protocol_fee` on the main marketplace contract (a read-only function).
+2. Queries the 20 most recently deployed collections from the indexer's database and calls `name` on each — keeping the freshest contracts alive.
+
+Failed simulations are logged but do not halt the bot, so a temporarily unavailable contract does not interrupt the keep-alive cycle for others.
+
+### Configuration
+
+All configuration is via environment variables in `indexer/.env`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `CRANK_INTERVAL_MS` | `300000` (5 min) | Milliseconds between keep-alive ticks |
+| `STELLAR_RPC_URL` | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint |
+| `STELLAR_NETWORK_PASSPHRASE` | Test SDF passphrase | Network passphrase |
+| `MARKETPLACE_CONTRACT_ID` | _(required)_ | Contract ID to keep alive |
+
+The bot is started automatically as part of `npm run dev` via the root `concurrently` script. It can also be run standalone:
+
+```bash
+cd indexer
+npm run crank
+```
+
+### Graceful shutdown
+
+The crank handles `SIGINT` / `SIGTERM` signals: it stops the keep-alive loop and cleanly disconnects the Prisma database client before exiting.
 
 ## Indexer API Endpoints
 
