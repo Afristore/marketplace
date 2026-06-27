@@ -147,7 +147,5 @@ pub fn set_reward_config(env: &Env, config: &crate::types::RewardConfig) {
 }
 
 pub fn get_reward_config(env: &Env) -> Option<crate::types::RewardConfig> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::RewardConfig)
+    env.storage().persistent().get(&DataKey::RewardConfig)
 }

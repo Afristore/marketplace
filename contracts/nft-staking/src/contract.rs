@@ -53,11 +53,13 @@ impl NftStaking {
     }
 
     pub fn get_nft_address(env: Env) -> Address {
-        get_nft_address(&env).unwrap_or_else(|| panic_with_error!(&env, StakingError::NotInitialized))
+        get_nft_address(&env)
+            .unwrap_or_else(|| panic_with_error!(&env, StakingError::NotInitialized))
     }
 
     pub fn get_reward_token(env: Env) -> Address {
-        get_reward_token(&env).unwrap_or_else(|| panic_with_error!(&env, StakingError::NotInitialized))
+        get_reward_token(&env)
+            .unwrap_or_else(|| panic_with_error!(&env, StakingError::NotInitialized))
     }
 
     pub fn get_reward_rate(env: Env) -> i128 {

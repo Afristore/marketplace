@@ -99,7 +99,7 @@ mod iface {
     }
 }
 
-use iface::{Lazy1155Client, Lazy721Client, Normal1155Client, Normal721Client, NftStakingClient};
+use iface::{Lazy1155Client, Lazy721Client, NftStakingClient, Normal1155Client, Normal721Client};
 
 // ─── Salt hardening (fix #53) ─────────────────────────────────────────────────
 /// Bind `raw_salt` to the caller so that two different creators can never
