@@ -114,7 +114,7 @@ export async function generateMetadata({
       };
       listing = {
         price: BigInt(m.price) * BigInt(10_000_000),
-        artist: m.artist,
+        collection: m.artist,
       } as typeof listing;
     }
 
@@ -130,7 +130,7 @@ export async function generateMetadata({
     const description =
       metadata.description || "Unique African art on Stellar blockchain";
     const artist =
-      listing?.artist || auction?.creator || "Unknown Artist";
+      listing?.collection || auction?.creator || "Unknown Artist";
     const price =
       listing?.price || auction?.highest_bid || auction?.reserve_price;
     const priceDisplay = price
@@ -185,7 +185,8 @@ export default async function ListingPage({ params }: PageProps) {
       const m = MOCK_DATA[Number(id) - 1];
       listing = {
         listing_id: Number(id),
-        artist: m.artist,
+        collection: m.artist,
+        token_id: Number(id),
         metadata_cid: `mock_cid_${id}`,
         price: BigInt(m.price) * BigInt(10_000_000),
         currency: "XLM",
@@ -194,8 +195,6 @@ export default async function ListingPage({ params }: PageProps) {
         status: "Active" as const,
         owner: null,
         created_at: Math.floor(Date.now() / 1000),
-        original_creator: m.artist,
-        royalty_bps: 500,
       };
       metadata = {
         title: m.title,

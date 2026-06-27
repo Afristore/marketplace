@@ -79,11 +79,13 @@ export default function ListingInteractiveArea({
   const [offerAmount, setOfferAmount] = useState("");
   const [offerSuccess, setOfferSuccess] = useState(false);
 
-  const artist = listing?.artist || auction?.creator;
+  const artist = listing?.collection || auction?.creator;
   const isOwn = publicKey === artist;
   const status = listing?.status || auction?.status;
   const isActive = status === "Active";
-  const royaltyBps = listing?.royalty_bps || auction?.royalty_bps || 0;
+  const royaltyBps = (listing as Record<string, unknown>)?.royalty_bps as number | undefined
+    ?? (auction as Record<string, unknown>)?.royalty_bps as number | undefined
+    ?? 0;
   const royaltyPercent = (royaltyBps / 100).toFixed(1);
   const priceDisplay = listing
     ? stroopsToXlm(listing.price)
