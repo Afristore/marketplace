@@ -72,16 +72,18 @@ describe('GET /listings', () => {
 
   it('returns all listings as JSON', async () => {
     mockPrisma.listing.findMany.mockResolvedValue([sampleListing]);
+    mockPrisma.listing.count.mockResolvedValue(1);
 
     const res = await request(app).get('/listings');
 
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
-    expect(res.body).toHaveLength(1);
+    expect(Array.isArray(res.body.listings)).toBe(true);
+    expect(res.body.listings).toHaveLength(1);
     // BigInt was serialised to string
-    expect(res.body[0].listingId).toBe('1');
-    expect(res.body[0].artist).toBe('GABC123');
-    expect(res.body[0].status).toBe('Active');
+    expect(res.body.listings[0].listingId).toBe('1');
+    expect(res.body.listings[0].artist).toBe('GABC123');
+    expect(res.body.listings[0].status).toBe('Active');
+    expect(res.body.total).toBe(1);
   });
 
   it('filters by artist query param', async () => {
@@ -116,10 +118,11 @@ describe('GET /listings', () => {
 
   it('returns empty array when no listings match', async () => {
     mockPrisma.listing.findMany.mockResolvedValue([]);
+    mockPrisma.listing.count.mockResolvedValue(0);
 
     const res = await request(app).get('/listings');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([]);
+    expect(res.body).toEqual({ listings: [], total: 0 });
   });
 
   it('returns 500 when Prisma throws', async () => {

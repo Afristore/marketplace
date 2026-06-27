@@ -660,17 +660,22 @@ describe('startPolling — hash fetch failure', () => {
   });
 
   it('advances lastLedger without clearing lastLedgerHash when hash fetch fails', async () => {
-    const networkLatest = 60;
+    // Use a networkLatest well above any lastLedger that background pollers from
+    // previous tests might have set, so that effectiveLatestLedger always exceeds
+    // syncState.lastLedger and the lag-skip guard never triggers.
+    const networkLatest = 500;
+    // LEDGER_LAG_BUFFER = 2: poller targets effectiveLatestLedger = networkLatest - 2
+    const effectiveLatest = networkLatest - 2;
     const priorHash = 'prev_hash';
 
-    mockPrisma.syncState.upsert.mockResolvedValueOnce({
+    mockPrisma.syncState.upsert.mockResolvedValue({
       id: 1,
       lastLedger: 50,
       lastLedgerHash: priorHash,
     });
     mockPrisma.syncState.update.mockResolvedValue({
       id: 1,
-      lastLedger: networkLatest,
+      lastLedger: effectiveLatest,
       lastLedgerHash: priorHash,
     });
 
@@ -684,13 +689,11 @@ describe('startPolling — hash fetch failure', () => {
       .mockResolvedValue({ events: [], latestLedger: networkLatest } as any);
     vi.spyOn(sdkMod.rpc.Server.prototype, 'getLedgers')
       .mockImplementation(({ startLedger }: { startLedger: number }) => {
-        if (startLedger === 50) {
-          return Promise.resolve({ ledgers: [{ hash: priorHash, sequence: 50 }] });
-        }
-        if (startLedger === networkLatest) {
+        if (startLedger === effectiveLatest) {
           return Promise.reject(new Error('network error'));
         }
-        return Promise.resolve({ ledgers: [] });
+        // default: return matching hash so hash-continuity passes
+        return Promise.resolve({ ledgers: [{ hash: priorHash, sequence: startLedger }] });
       });
 
     freshStart().catch(() => {});
@@ -698,13 +701,13 @@ describe('startPolling — hash fetch failure', () => {
     await vi.waitFor(() => {
       expect(mockPrisma.syncState.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: { lastLedger: networkLatest },
+          data: { lastLedger: effectiveLatest },
         })
       );
     }, { timeout: 3000 });
 
     const hashAdvanceUpdate = mockPrisma.syncState.update.mock.calls.find(
-      ([arg]) => arg.data?.lastLedger === networkLatest
+      ([arg]) => arg.data?.lastLedger === effectiveLatest
     );
     expect(hashAdvanceUpdate?.[0].data).not.toHaveProperty('lastLedgerHash');
   }, 8000);

@@ -349,6 +349,9 @@ export async function fetchArtistListings(publicKey: string): Promise<any[]> {
       `/listings?artist=${encodeURIComponent(publicKey)}`,
     );
     if (Array.isArray(data)) return data;
+    if (typeof data === "object" && Array.isArray((data as any).listings)) {
+      return (data as any).listings;
+    }
     return [];
   } catch (e) {
     console.warn(

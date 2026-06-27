@@ -95,7 +95,7 @@ router.get('/listings', async (req: Request, res: Response) => {
             ];
         }
 
-        const take = Math.max(0, Math.min(Number(limit || 0), 1000)) || undefined;
+        const take = Number(limit) > 0 ? Math.min(Number(limit), 1000) : 50;
         const rawOffset = Number(offset || 0);
         const skip = Number.isFinite(rawOffset) && rawOffset > 0
             ? Math.min(rawOffset, 10_000)
@@ -108,12 +108,8 @@ router.get('/listings', async (req: Request, res: Response) => {
             skip,
         });
 
-        if (take !== undefined || skip !== undefined) {
-            const total = await prisma.listing.count({ where });
-            return res.json({ listings: serialize(results.map(mapListing)), total });
-        }
-
-        res.json(serialize(results.map(mapListing)));
+        const total = await prisma.listing.count({ where });
+        return res.json({ listings: serialize(results.map(mapListing)), total });
     } catch (err) {
         console.error('Error details:', err);
         res.status(500).json({ error: 'Failed to fetch listings' });

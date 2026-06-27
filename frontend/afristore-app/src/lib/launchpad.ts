@@ -195,14 +195,21 @@ export async function getCollectionsByCreator(
 }
 
 /**
- * all_collections
+ * get_collections — paginated
  */
-export async function getAllCollections(): Promise<CollectionRecord[]> {
+export async function getCollections(
+  startIndex: number,
+  limit: number,
+): Promise<CollectionRecord[]> {
   const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+  const args: xdr.ScVal[] = [
+    nativeToScVal(startIndex, { type: "u32" }),
+    nativeToScVal(limit, { type: "u32" }),
+  ];
   const retVal = await invokeContract(
     DUMMY_KEY,
-    "all_collections",
-    [],
+    "get_collections",
+    args,
     true,
     config.launchpadContractId,
   );
@@ -213,8 +220,22 @@ export async function getAllCollections(): Promise<CollectionRecord[]> {
 export async function getCollectionRecordByAddress(
   collectionAddress: string,
 ): Promise<CollectionRecord | null> {
-  const all = await getAllCollections();
-  return all.find((c) => c.address === collectionAddress) ?? null;
+  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+  const args = [toAddressScVal(collectionAddress)];
+  try {
+    const retVal = await invokeContract(
+      DUMMY_KEY,
+      "get_collection_by_id",
+      args,
+      true,
+      config.launchpadContractId,
+    );
+    const native = scValToNative(retVal);
+    if (!native) return null;
+    return parseCollectionRecord(native);
+  } catch {
+    return null;
+  }
 }
 
 /**

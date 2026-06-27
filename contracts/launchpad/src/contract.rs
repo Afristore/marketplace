@@ -433,10 +433,11 @@ impl Launchpad {
         storage::collection_by_address(&env, &address)
     }
 
-    /// Global registry of every collection ever deployed through this launchpad.
+    /// Paginated registry of collections deployed through this launchpad.
+    /// Returns up to `limit` records starting at `start_index`.
     /// Callable from frontend and CLI.
-    pub fn get_all_collections(env: Env) -> Vec<CollectionRecord> {
-        storage::all_collections(&env)
+    pub fn get_collections(env: Env, start_index: u32, limit: u32) -> Vec<CollectionRecord> {
+        storage::collections_paginated(&env, start_index as u64, limit as u64)
     }
 
     /// Total number of collections deployed through this launchpad.

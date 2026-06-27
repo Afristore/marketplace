@@ -113,6 +113,22 @@ pub fn all_collections(env: &Env) -> Vec<CollectionRecord> {
     result
 }
 
+pub fn collections_paginated(env: &Env, start: u64, limit: u64) -> Vec<CollectionRecord> {
+    let count = collection_count(env);
+    let mut result = Vec::new(env);
+    let end = (start + limit).min(count);
+    let mut i = start;
+
+    while i < end {
+        if let Some(collection) = collection_by_index(env, i) {
+            result.push_back(collection);
+        }
+        i += 1;
+    }
+
+    result
+}
+
 // Counter for total collections ever deployed through this launchpad.
 pub fn collection_count(env: &Env) -> u64 {
     env.storage()

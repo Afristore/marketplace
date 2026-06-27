@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  getAllCollections,
+  getCollections,
   getCollectionsByCreator,
   getCollectionMetadata,
   deployNormal721,
@@ -15,10 +15,14 @@ import {
 } from "@/lib/launchpad";
 import { assertSupportedTokenAddress } from "@/lib/token-support";
 
+const COLLECTIONS_PAGE_SIZE = 50;
+
 // ── useLaunchpadCollections ───────────────────────────────────
 
 export function useLaunchpadCollections() {
   const [collections, setCollections] = useState<CollectionRecord[]>([]);
+  const [startIndex, setStartIndex] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,8 +30,10 @@ export function useLaunchpadCollections() {
     setIsLoading(true);
     setError(null);
     try {
-      const all = await getAllCollections();
-      setCollections(all);
+      const page = await getCollections(0, COLLECTIONS_PAGE_SIZE);
+      setCollections(page);
+      setStartIndex(COLLECTIONS_PAGE_SIZE);
+      setHasMore(page.length >= COLLECTIONS_PAGE_SIZE);
     } catch (err: unknown) {
       setError(
         err instanceof Error ? err.message : "Failed to load collections",
@@ -37,11 +43,28 @@ export function useLaunchpadCollections() {
     }
   }, []);
 
+  const loadMore = useCallback(async () => {
+    if (!hasMore || isLoading) return;
+    setIsLoading(true);
+    try {
+      const page = await getCollections(startIndex, COLLECTIONS_PAGE_SIZE);
+      setCollections((prev) => [...prev, ...page]);
+      setStartIndex((prev) => prev + COLLECTIONS_PAGE_SIZE);
+      setHasMore(page.length >= COLLECTIONS_PAGE_SIZE);
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error ? err.message : "Failed to load more collections",
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [startIndex, hasMore, isLoading]);
+
   useEffect(() => {
     refresh();
   }, [refresh]);
 
-  return { collections, isLoading, error, refresh };
+  return { collections, isLoading, error, refresh, loadMore, hasMore };
 }
 
 // ── useCreatorCollections ─────────────────────────────────────

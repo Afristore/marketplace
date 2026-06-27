@@ -18,6 +18,10 @@ const LAUNCHPAD_CONTRACT_ID = process.env.LAUNCHPAD_CONTRACT_ID || '';
 const STAKING_CONTRACT_ID = process.env.STAKING_CONTRACT_ID || '';
 const POLL_INTERVAL = parseInt(process.env.POLL_INTERVAL_MS || '5000');
 
+// Stay this many ledgers behind the network tip to avoid requesting ledgers that
+// are not yet available on every Soroban RPC load balancer node.
+const LEDGER_LAG_BUFFER = 2;
+
 // Retry back-off base in ms; doubles on each consecutive failure up to MAX_BACKOFF_MS.
 const BASE_BACKOFF_MS = 2_000;
 const MAX_BACKOFF_MS = 60_000;
@@ -76,6 +80,21 @@ async function gracefulShutdown() {
 
 // Register handlers immediately so any external SIGTERM/SIGINT will be caught
 setupSignalHandlers();
+
+/**
+ * Returns true when the Soroban RPC signals that the requested ledger range is
+ * outside the node's available window (JSON-RPC error code -32600).  This
+ * happens under load-balancer lag and must NOT trigger a database rollback.
+ */
+function isRpcOutOfBoundsError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as Record<string, unknown>;
+  return (
+    e['code'] === -32600 ||
+    (typeof e['message'] === 'string' &&
+      (e['message'] as string).includes('start ledger must be between'))
+  );
+}
 
 const server = new rpc.Server(RPC_URL);
 
@@ -191,13 +210,21 @@ export async function startPolling() {
 
       networkLatestLedgerGauge.set(networkLatestLedger);
 
-      if (syncState.lastLedger > 0 && networkLatestLedger < syncState.lastLedger) {
+      // Stay a few ledgers behind the tip so all load-balancer nodes have
+      // fully committed these ledgers before we request them.
+      const effectiveLatestLedger = Math.max(0, networkLatestLedger - LEDGER_LAG_BUFFER);
+
+      if (syncState.lastLedger > 0 && effectiveLatestLedger < syncState.lastLedger) {
+        // The RPC appears to be lagging behind our indexed state.  This is a
+        // transient load-balancer condition, NOT a chain re-org — real re-orgs
+        // are detected below via hash comparison.  Skip this poll iteration.
         console.warn({
-          msg: 'Network latest ledger moved behind indexed state',
+          msg: 'Effective latest ledger behind indexed state — possible RPC lag, skipping poll',
           indexedLedger: syncState.lastLedger,
           networkLatestLedger,
+          effectiveLatestLedger,
         });
-        await revertLedgers(networkLatestLedger);
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
         continue;
       }
 
@@ -221,7 +248,7 @@ export async function startPolling() {
 
         syncState = resetState;
       }
-      const decodedEvents = await collectMarketplaceEvents(server, contractIds, startLedger, networkLatestLedger);
+      const decodedEvents = await collectMarketplaceEvents(server, contractIds, startLedger, effectiveLatestLedger);
 
       let latestHash: string | null = null;
       if (decodedEvents.length > 0) {
@@ -251,22 +278,22 @@ export async function startPolling() {
         updateSyncMetrics(updatedState.lastLedger, networkLatestLedger);
 
         for (const ev of newEvents) emitSSEEvent(ev);
-      } else if (networkLatestLedger > syncState.lastLedger) {
+      } else if (effectiveLatestLedger > syncState.lastLedger) {
         try {
           const ledgersRes = await server.getLedgers({
-            startLedger: networkLatestLedger,
+            startLedger: effectiveLatestLedger,
             pagination: { limit: 1 },
           });
           if (ledgersRes.ledgers && ledgersRes.ledgers.length > 0) {
             latestHash = ledgersRes.ledgers[0].hash;
           }
         } catch (err) {
-          console.error(`Failed to fetch hash for latest network ledger ${networkLatestLedger}:`, err);
+          console.error(`Failed to fetch hash for latest network ledger ${effectiveLatestLedger}:`, err);
         }
 
         const updatedState = await prisma.syncState.update({
           where: { id: 1 },
-          data: buildSyncStateLedgerData(networkLatestLedger, latestHash),
+          data: buildSyncStateLedgerData(effectiveLatestLedger, latestHash),
         });
 
         updateSyncMetrics(updatedState.lastLedger, networkLatestLedger);
@@ -276,6 +303,18 @@ export async function startPolling() {
 
       consecutiveErrors = 0;
     } catch (error) {
+      // RPC out-of-bounds (-32600): the requested ledger is outside the node's
+      // available window.  This is transient load-balancer lag — skip the poll
+      // cycle without touching the database.
+      if (isRpcOutOfBoundsError(error)) {
+        console.warn({
+          msg: 'RPC out-of-bounds error (-32600) — skipping poll cycle, no DB rollback',
+          error: error instanceof Error ? error.message : String(error),
+        });
+        await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+        continue;
+      }
+
       consecutiveErrors += 1;
       const backoff = Math.min(
         BASE_BACKOFF_MS * Math.pow(2, consecutiveErrors - 1),

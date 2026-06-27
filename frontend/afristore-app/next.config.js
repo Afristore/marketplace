@@ -4,6 +4,7 @@ const { withSentryConfig } = require("@sentry/nextjs");
 const nextConfig = {
   experimental: {
     outputFileTracingRoot: require("path").resolve(__dirname, "../../"),
+    serverComponentsExternalPackages: ['@stellar/stellar-sdk', 'sodium-native'],
   },
   reactStrictMode: true,
   images: {

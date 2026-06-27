@@ -10,7 +10,6 @@ import {
   transferLaunchpadAdmin,
   updatePlatformFee,
   getPlatformFee,
-  getAllCollections,
   getCollectionCount,
 } from "@/lib/launchpad";
 
