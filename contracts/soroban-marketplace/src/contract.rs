@@ -589,8 +589,17 @@ impl MarketplaceContract {
         if env.ledger().timestamp() >= auction.end_time {
             panic_with_error!(&env, MarketplaceError::AuctionExpired);
         }
-        if amount <= auction.highest_bid || amount < auction.reserve_price {
-            panic_with_error!(&env, MarketplaceError::BidTooLow);
+
+        // Enforce minimum bid increment to prevent griefing.
+        // If there's an existing bid, the new bid must be at least 5% higher.
+        // Otherwise, it must meet the reserve price.
+        let min_bid = if auction.highest_bid > 0 {
+            auction.highest_bid + (auction.highest_bid * 5 / 100)
+        } else {
+            auction.reserve_price
+        };
+        if amount < min_bid {
+            panic_with_error!(&env, MarketplaceError::BidTooLow)
         }
 
         let token_client = TokenClient::new(&env, &auction.token);
