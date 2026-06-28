@@ -82,16 +82,40 @@ export async function generateMetadata({
     let auction = null;
     let metadata = null;
 
+    // Primary path: Try indexer API first
     try {
-      listing = await getListing(Number(id));
+      const { fetchListingById } = await import("@/lib/indexer");
+      listing = await fetchListingById(Number(id));
     } catch (_e) {
-      // may be an auction
+      // Indexer unavailable, continue to fallback
     }
 
-    try {
-      auction = await getAuction(Number(id));
-    } catch (_e) {
-      // may be a listing
+    // Fallback to on-chain if indexer didn't return a listing
+    if (!listing) {
+      try {
+        listing = await getListing(Number(id));
+      } catch (_e) {
+        // may be an auction
+      }
+    }
+
+    // Try auction from indexer or on-chain
+    if (!listing) {
+      try {
+        const { fetchAuctions } = await import("@/lib/indexer");
+        const auctions = await fetchAuctions({ status: "Active" });
+        auction = auctions.find((a) => a.auction_id === Number(id)) || null;
+      } catch (_e) {
+        // Indexer unavailable
+      }
+
+      if (!auction) {
+        try {
+          auction = await getAuction(Number(id));
+        } catch (_e) {
+          // may be a listing
+        }
+      }
     }
 
     const cid = listing?.metadata_cid || auction?.metadata_cid;
@@ -208,16 +232,40 @@ export default async function ListingPage({ params }: PageProps) {
         category: m.category,
       };
     } else {
+      // Primary path: Try indexer API first
       try {
-        listing = await getListing(Number(id));
-      } catch (_e) {
-        // may be an auction
+        const { fetchListingById } = await import("@/lib/indexer");
+        listing = await fetchListingById(Number(id));
+      } catch (indexerError) {
+        console.warn("[page] Indexer unavailable, falling back to on-chain:", indexerError);
       }
 
-      try {
-        auction = await getAuction(Number(id));
-      } catch (_e) {
-        // may be a listing
+      // Fallback: If indexer didn't return a listing, try on-chain
+      if (!listing) {
+        try {
+          listing = await getListing(Number(id));
+        } catch (_e) {
+          // may be an auction
+        }
+      }
+
+      // Try auction from indexer or on-chain
+      if (!listing) {
+        try {
+          const { fetchAuctions } = await import("@/lib/indexer");
+          const auctions = await fetchAuctions({ status: "Active" });
+          auction = auctions.find((a) => a.auction_id === Number(id)) || null;
+        } catch (_e) {
+          console.warn("[page] Indexer auction fetch failed");
+        }
+
+        if (!auction) {
+          try {
+            auction = await getAuction(Number(id));
+          } catch (_e) {
+            // not an auction either
+          }
+        }
       }
 
       if (!listing && !auction) {
