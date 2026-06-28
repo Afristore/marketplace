@@ -34,7 +34,7 @@ use crate::{
 // can call `initialize` on freshly deployed contracts in the same transaction.
 
 mod iface {
-    use soroban_sdk::{contractclient, Address, BytesN, Env, String};
+    use soroban_sdk::{contractclient, Address, BytesN, Env, String, Vec};
 
     #[contractclient(name = "Normal721Client")]
     pub trait INormal721 {
@@ -86,9 +86,14 @@ mod iface {
             royalty_receiver: Address,
         );
     }
+
+    #[contractclient(name = "SplitterClient")]
+    pub trait ISplitter {
+        fn initialize(env: Env, token: Address, beneficiaries: Vec<Address>, shares: Vec<u32>);
+    }
 }
 
-use iface::{Lazy1155Client, Lazy721Client, Normal1155Client, Normal721Client};
+use iface::{Lazy1155Client, Lazy721Client, Normal1155Client, Normal721Client, SplitterClient};
 
 // ─── Salt hardening (fix #53) ─────────────────────────────────────────────────
 /// Bind `raw_salt` to the caller so that two different creators can never
@@ -152,6 +157,15 @@ impl Launchpad {
             &wasm_lazy_721,
             &wasm_lazy_1155,
         );
+        Ok(())
+    }
+
+    /// Register the royalty-splitter WASM hash so `deploy_splitter` can clone it.
+    /// Must be called by admin after uploading the splitter WASM to the network.
+    pub fn set_splitter_wasm_hash(env: Env, wasm: BytesN<32>) -> Result<(), Error> {
+        storage::extend_instance_ttl(&env);
+        storage::require_admin(&env)?;
+        storage::set_splitter_wasm_hash(&env, &wasm);
         Ok(())
     }
 
@@ -375,6 +389,42 @@ impl Launchpad {
             &addr,
             &CollectionKind::LazyMint1155,
         );
+        Ok(addr)
+    }
+
+    // ── Deploy: Royalty Splitter ──────────────────────────────────────────
+
+    /// Deploy a royalty-splitter clone that splits the given `token` among
+    /// the `beneficiaries` according to `shares` (BPS, must sum to 10 000).
+    ///
+    /// Uses the clone factory pattern (`deployer().with_current_contract(salt)`)
+    /// so the deploy cost is minimal — the splitter WASM is stored once and
+    /// every `deploy_splitter` call creates a lightweight clone sharing it.
+    ///
+    /// The freshly deployed clone is initialized in the same transaction so
+    /// no second call is required.
+    pub fn deploy_splitter(
+        env: Env,
+        creator: Address,
+        token: Address,
+        beneficiaries: Vec<Address>,
+        shares: Vec<u32>,
+        salt: BytesN<32>,
+    ) -> Result<Address, Error> {
+        storage::extend_instance_ttl(&env);
+        creator.require_auth();
+
+        let wasm = storage::get_splitter_wasm_hash(&env).ok_or(Error::WasmHashNotSet)?;
+
+        // Use a creator-bound salt to prevent front-running (fix #53).
+        let secure_salt = make_secure_salt(&env, &creator, &salt);
+        let addr = env
+            .deployer()
+            .with_current_contract(secure_salt)
+            .deploy_v2(wasm, ());
+
+        SplitterClient::new(&env, &addr).initialize(&token, &beneficiaries, &shares);
+
         Ok(addr)
     }
 

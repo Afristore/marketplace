@@ -1,6 +1,6 @@
 extern crate std;
 
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, BytesN, Env, String};
+use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, BytesN, Env, String, Vec};
 
 use crate::{CollectionKind, Error, Launchpad, LaunchpadClient};
 
@@ -70,6 +70,12 @@ fn setup_launchpad(env: &Env) -> (LaunchpadClient<'_>, Address, Address, Address
         &wasm_lazy_721,
         &wasm_lazy_1155,
     );
+
+    let wasm_splitter_bytes = wasm_bytes("royalty_splitter");
+    let wasm_splitter = env
+        .deployer()
+        .upload_contract_wasm(wasm_splitter_bytes.as_slice());
+    client.set_splitter_wasm_hash(&wasm_splitter);
 
     (client, admin, fee_receiver, creator)
 }
@@ -1083,6 +1089,128 @@ fn get_collection_count_increments_per_deploy() {
         &BytesN::from_array(&env, &[0xE2u8; 32]),
     );
     assert_eq!(client.get_collection_count(), 2u64);
+}
+
+// ── Royalty Splitter deployment tests ─────────────────────────────────────
+
+#[test]
+fn deploy_splitter_twice_with_unique_addresses() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let salt_a = BytesN::from_array(&env, &[0xA1u8; 32]);
+    let salt_b = BytesN::from_array(&env, &[0xA2u8; 32]);
+    let token = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    let addr_a = client.deploy_splitter(
+        &creator,
+        &token,
+        &Vec::from_array(&env, [alice.clone(), bob.clone()]),
+        &Vec::from_array(&env, [6_000u32, 4_000u32]),
+        &salt_a,
+    );
+
+    let addr_b = client.deploy_splitter(
+        &creator,
+        &token,
+        &Vec::from_array(&env, [alice, bob]),
+        &Vec::from_array(&env, [6_000u32, 4_000u32]),
+        &salt_b,
+    );
+
+    assert_ne!(addr_a, addr_b);
+}
+
+#[test]
+fn deploy_splitter_initializes_correctly() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let salt = BytesN::from_array(&env, &[0xB1u8; 32]);
+    let token = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    let addr = client.deploy_splitter(
+        &creator,
+        &token,
+        &Vec::from_array(&env, [alice.clone(), bob.clone()]),
+        &Vec::from_array(&env, [6_000u32, 4_000u32]),
+        &salt,
+    );
+
+    let splitter = royalty_splitter::RoyaltySplitterClient::new(&env, &addr);
+    let stored_token = splitter.get_token();
+    assert_eq!(stored_token, token);
+
+    let stored_beneficiaries = splitter.get_beneficiaries();
+    assert_eq!(stored_beneficiaries.len(), 2);
+    assert_eq!(stored_beneficiaries.get(0).unwrap(), alice);
+    assert_eq!(stored_beneficiaries.get(1).unwrap(), bob);
+
+    let stored_shares = splitter.get_shares();
+    assert_eq!(stored_shares.len(), 2);
+    assert_eq!(stored_shares.get(0).unwrap(), 6_000);
+    assert_eq!(stored_shares.get(1).unwrap(), 4_000);
+}
+
+#[test]
+fn deploy_splitter_without_wasm_hash_fails() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    env.mock_all_auths();
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    client.initialize(&admin, &fee_receiver, &0u32);
+
+    let salt = BytesN::from_array(&env, &[0x99u8; 32]);
+    let token = Address::generate(&env);
+
+    let result = client.try_deploy_splitter(
+        &Address::generate(&env),
+        &token,
+        &Vec::from_array(&env, [Address::generate(&env)]),
+        &Vec::from_array(&env, [10_000u32]),
+        &salt,
+    );
+    assert_eq!(result, Err(Ok(Error::WasmHashNotSet)));
+}
+
+#[test]
+fn same_salt_different_creators_splitter_yields_different_addresses() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, alice) = setup_launchpad(&env);
+    let bob = Address::generate(&env);
+
+    let salt = BytesN::from_array(&env, &[0xCCu8; 32]);
+    let token = Address::generate(&env);
+
+    let addr_alice = client.deploy_splitter(
+        &alice,
+        &token,
+        &Vec::from_array(&env, [alice.clone()]),
+        &Vec::from_array(&env, [10_000u32]),
+        &salt,
+    );
+
+    let addr_bob = client.deploy_splitter(
+        &bob,
+        &token,
+        &Vec::from_array(&env, [bob]),
+        &Vec::from_array(&env, [10_000u32]),
+        &salt,
+    );
+
+    assert_ne!(addr_alice, addr_bob);
 }
 
 /// Deploy events carry (creator, collection_address, kind) in the data payload.

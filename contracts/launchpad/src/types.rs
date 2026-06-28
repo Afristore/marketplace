@@ -40,6 +40,7 @@ pub enum DataKey {
     WasmNormal1155,
     WasmLazy721,
     WasmLazy1155,
+    WasmSplitter,
     CollectionCount,
     ByCreator(Address), // Address → Vec<CollectionRecord> (legacy, will be removed)
     AllCollections,     // Vec<CollectionRecord> (legacy, will be removed)

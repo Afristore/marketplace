@@ -83,6 +83,16 @@ pub fn get_wasm_lazy_1155(env: &Env) -> Option<BytesN<32>> {
     env.storage().instance().get(&DataKey::WasmLazy1155)
 }
 
+pub fn set_splitter_wasm_hash(env: &Env, wasm: &BytesN<32>) {
+    env.storage()
+        .instance()
+        .set(&DataKey::WasmSplitter, wasm);
+}
+
+pub fn get_splitter_wasm_hash(env: &Env) -> Option<BytesN<32>> {
+    env.storage().instance().get(&DataKey::WasmSplitter)
+}
+
 pub fn collections_by_creator(env: &Env, creator: &Address) -> Vec<CollectionRecord> {
     let count = creator_collection_count(env, creator);
     let mut result = Vec::new(env);
