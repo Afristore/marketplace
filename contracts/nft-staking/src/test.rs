@@ -6,6 +6,7 @@ mod mock_nft {
     pub struct MockNft;
     #[contractimpl]
     impl MockNft {
+        pub fn transfer(_env: Env, _from: Address, _to: Address, _token_id: u64) {}
         pub fn transfer_from(
             _env: Env,
             _spender: Address,
