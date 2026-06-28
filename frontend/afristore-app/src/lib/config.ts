@@ -10,7 +10,8 @@ export const config = {
     process.env.NEXT_PUBLIC_SPLITTER_WASM_HASH ?? "",
   /** Base URL for the Afristore indexer HTTP API (no trailing slash). */
   indexerUrl: (
-    process.env.NEXT_PUBLIC_INDEXER_URL ?? "http://localhost:4000"
+    process.env.NEXT_PUBLIC_INDEXER_URL ??
+    (process.env.NODE_ENV === "production" ? "" : "http://localhost:4000")
   ).replace(/\/$/, ""),
   /** Base URL for the application (no trailing slash). */
   baseUrl: (

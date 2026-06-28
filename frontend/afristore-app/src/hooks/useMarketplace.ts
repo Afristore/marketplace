@@ -63,17 +63,13 @@ export function useMarketplace(opts?: { page?: number; limit?: number }) {
             );
             setListings(sorted);
           } else {
-            // Fallback to on-chain scan only when indexer response is malformed
-            const all = await getAllListings();
-            const sorted = [...all].sort((a, b) => b.created_at - a.created_at);
-            setListings(sorted);
+            // Indexer response is malformed
+            throw new Error("Indexer response is malformed");
           }
         }
       } catch (e) {
-        // If indexer fails, fallback to on-chain
-        const all = await getAllListings();
-        const sorted = [...all].sort((a, b) => b.created_at - a.created_at);
-        setListings(sorted);
+        // Indexer failed
+        throw e;
       }
     } catch (err: unknown) {
       setError(getReadableErrorMessage(err, "Failed to load listings"));

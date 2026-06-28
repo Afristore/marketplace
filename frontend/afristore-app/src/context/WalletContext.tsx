@@ -93,7 +93,13 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       error: freighter.error ?? magic.error,
       status,
       connect: freighter.connect,
-      disconnect: freighter.disconnect,
+      disconnect: () => {
+        if (walletType === "magic") {
+          magic.logout();
+        } else {
+          freighter.disconnect();
+        }
+      },
       refresh: freighter.refresh,
       switchNetwork,
       freighter,
