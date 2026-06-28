@@ -4,6 +4,7 @@
 
 import axios, { AxiosError, isAxiosError } from "axios";
 import { config } from "./config";
+import type { Listing, Auction } from "./contract";
 
 const DEFAULT_TIMEOUT_MS = 12_000;
 const MAX_RETRIES = 3;
@@ -342,16 +343,15 @@ export async function fetchRoyaltyStats(
 /**
  * Fetch artist listings from the indexer
  */
-export async function fetchArtistListings(publicKey: string): Promise<any[]> {
+export async function fetchArtistListings(
+  publicKey: string
+): Promise<Listing[]> {
   if (!isNonEmptyString(publicKey)) return [];
   try {
     const data = await fetchWithRetry<unknown>(
       `/listings?artist=${encodeURIComponent(publicKey)}`,
     );
-    if (Array.isArray(data)) return data;
-    if (typeof data === "object" && Array.isArray((data as any).listings)) {
-      return (data as any).listings;
-    }
+    if (Array.isArray(data)) return data as Listing[];
     return [];
   } catch (e) {
     console.warn(
@@ -366,16 +366,14 @@ export async function fetchArtistListings(publicKey: string): Promise<any[]> {
  * Fetch listings from the indexer with optional filters and pagination.
  * Throws if the indexer is unreachable so callers can fall back to on-chain.
  */
-export async function fetchListings(
-  options: {
-    status?: string;
-    limit?: number;
-    offset?: number;
-    minPrice?: string;
-    maxPrice?: string;
-    search?: string;
-  } = {},
-): Promise<{ listings: any[]; total?: number }> {
+export async function fetchListings(options: {
+  status?: string;
+  limit?: number;
+  offset?: number;
+  minPrice?: string;
+  maxPrice?: string;
+  search?: string;
+} = {}): Promise<{ listings: Listing[]; total?: number }> {
   const params = new URLSearchParams();
   if (options.status) params.set("status", options.status);
   if (options.limit != null) params.set("limit", String(options.limit));
@@ -384,49 +382,50 @@ export async function fetchListings(
   if (options.maxPrice) params.set("maxPrice", options.maxPrice);
   if (options.search) params.set("search", options.search);
   const q = params.toString();
-
-  const raw = await fetchWithRetry<unknown>(`/listings${q ? `?${q}` : ""}`);
-  if (raw == null) return { listings: [] };
-
-  // If paginated, indexer returns { listings, total }
-  if (typeof raw === "object" && (raw as any).listings) {
-    const r = raw as any;
-    return {
-      listings: Array.isArray(r.listings) ? r.listings : [],
-      total: r.total,
-    };
+  try {
+    const raw = await fetchWithRetry<unknown>(`/listings${q ? `?${q}` : ''}`);
+    if (raw == null) return { listings: [] };
+    // If paginated, indexer returns { listings, total }
+    if (typeof raw === 'object' && !Array.isArray(raw) && (raw as Record<string, unknown>).listings) {
+      const r = raw as { listings: unknown; total?: number };
+      return {
+        listings: Array.isArray(r.listings) ? (r.listings as Listing[]) : [],
+        total: r.total,
+      };
+    }
+    if (Array.isArray(raw)) return { listings: raw as Listing[] };
+    return { listings: [] };
+  } catch (e) {
+    console.warn('[indexer] fetchListings:', e instanceof Error ? e.message : e);
+    return { listings: [] };
   }
-  if (Array.isArray(raw)) return { listings: raw };
-  return { listings: [] };
 }
 
 /**
  * Fetch auctions from the indexer with optional filters.
  * Throws if the indexer is unreachable so callers can fall back to on-chain.
  */
-export async function fetchAuctions(
-  options: {
-    creator?: string;
-    status?: string;
-  } = {},
-): Promise<any[]> {
+export async function fetchAuctions(options: {
+  creator?: string;
+  status?: string;
+} = {}): Promise<Auction[]> {
   const params = new URLSearchParams();
   if (options.creator) params.set("creator", options.creator);
   if (options.status) params.set("status", options.status);
   const q = params.toString();
-  const raw = await fetchWithRetry<unknown>(`/auctions${q ? `?${q}` : ""}`);
-  if (Array.isArray(raw)) return raw;
+  const raw = await fetchWithRetry<unknown>(`/auctions${q ? `?${q}` : ''}`);
+  if (Array.isArray(raw)) return raw as Auction[];
   return [];
 }
 
 /**
  * Fetch a single listing (with optional metadata) from the indexer.
  */
-export async function fetchListingById(id: number): Promise<any | null> {
+export async function fetchListingById(id: number): Promise<Listing | null> {
   if (!Number.isFinite(id)) return null;
   try {
     const raw = await fetchWithRetry<unknown>(`/listings/${id}`);
-    return raw as any;
+    return raw as Listing;
   } catch (e) {
     console.warn(
       "[indexer] fetchListingById:",

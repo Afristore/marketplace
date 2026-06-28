@@ -46,15 +46,23 @@ export async function uploadImageToIPFS(
   formData.append("file", file);
   formData.append("name", name ?? file.name);
 
-  const res = await axios.post("/api/ipfs/upload-image", formData, {
-    maxBodyLength: Infinity,
-  });
+  try {
+    const res = await axios.post("/api/ipfs/upload-image", formData, {
+      maxBodyLength: Infinity,
+    });
 
-  const cid: string = res.data.cid;
-  return {
-    cid,
-    url: `${config.pinataGateway}/ipfs/${cid}`,
-  };
+    const cid: string = res.data.cid;
+    return {
+      cid,
+      url: `${config.pinataGateway}/ipfs/${cid}`,
+    };
+  } catch (e) {
+    const message =
+      e instanceof Error ? e.message : "Unknown error";
+    throw new Error(
+      `Failed to upload image to IPFS. Please try again. (${message})`
+    );
+  }
 }
 
 // ── Upload JSON metadata ──────────────────────────────────────
@@ -67,16 +75,24 @@ export async function uploadMetadataToIPFS(
   metadata: ArtworkMetadata,
   name?: string,
 ): Promise<IpfsUploadResult> {
-  const res = await axios.post("/api/ipfs/upload-metadata", {
-    metadata,
-    name: name ?? `${metadata.title}-metadata.json`,
-  });
+  try {
+    const res = await axios.post("/api/ipfs/upload-metadata", {
+      metadata,
+      name: name ?? `${metadata.title}-metadata.json`,
+    });
 
-  const cid: string = res.data.cid;
-  return {
-    cid,
-    url: `${config.pinataGateway}/ipfs/${cid}`,
-  };
+    const cid: string = res.data.cid;
+    return {
+      cid,
+      url: `${config.pinataGateway}/ipfs/${cid}`,
+    };
+  } catch (e) {
+    const message =
+      e instanceof Error ? e.message : "Unknown error";
+    throw new Error(
+      `Failed to upload metadata to IPFS. Please try again. (${message})`
+    );
+  }
 }
 
 // ── Bounded metadata cache (LRU eviction, max 100 entries) ────

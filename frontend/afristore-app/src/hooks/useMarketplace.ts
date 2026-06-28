@@ -52,18 +52,16 @@ export function useMarketplace(opts?: { page?: number; limit?: number }) {
           const limit = opts.limit || 50;
           const offset = opts.page ? (opts.page - 1) * limit : 0;
           const res = await fetchListings({ status: "Active", limit, offset });
-          const rows = Array.isArray(res.listings)
-            ? (res.listings as any[])
-            : [];
+          const rows = Array.isArray(res.listings) ? res.listings : [];
           const sorted = [...rows].sort((a, b) => b.created_at - a.created_at);
-          setListings(sorted as Listing[]);
+          setListings(sorted);
         } else {
           const res = await fetchListings({ status: "Active", limit: 1000 });
           if (Array.isArray(res.listings)) {
             const sorted = [...res.listings].sort(
-              (a: any, b: any) => b.created_at - a.created_at,
+              (a, b) => b.created_at - a.created_at,
             );
-            setListings(sorted as Listing[]);
+            setListings(sorted);
           } else {
             // Fallback to on-chain scan only when indexer response is malformed
             const all = await getAllListings();
