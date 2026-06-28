@@ -8,6 +8,7 @@
     "indexer"
   ],
   "scripts": {
+    "postinstall": "npm --workspace=indexer run prisma:generate",
     "dev": "concurrently \"npm --workspace=indexer run dev\" \"npm --workspace=frontend/afristore-app run dev\" \"npm --workspace=indexer run crank\""
   },
   "keywords": [],
