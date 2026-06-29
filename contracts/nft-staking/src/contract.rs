@@ -153,7 +153,13 @@ impl NftStaking {
         .publish(&env);
     }
 
-    pub fn stake_erc1155(env: Env, user: Address, token_address: Address, token_id: u64, amount: u64) {
+    pub fn stake_erc1155(
+        env: Env,
+        user: Address,
+        token_address: Address,
+        token_id: u64,
+        amount: u64,
+    ) {
         if Self::is_paused(env.clone()) {
             panic_with_error!(&env, StakingError::ContractPaused);
         }
@@ -254,7 +260,13 @@ impl NftStaking {
         .publish(&env);
     }
 
-    pub fn unstake_erc1155(env: Env, user: Address, token_address: Address, token_id: u64, amount: u64) {
+    pub fn unstake_erc1155(
+        env: Env,
+        user: Address,
+        token_address: Address,
+        token_id: u64,
+        amount: u64,
+    ) {
         if Self::is_paused(env.clone()) {
             panic_with_error!(&env, StakingError::ContractPaused);
         }

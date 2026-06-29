@@ -48,7 +48,7 @@ impl RoyaltySplitter {
     /// Drain the contract's full token balance to all beneficiaries
     /// proportionally. Callable by anyone; no auth required.
     /// The caller receives any rounding remainder (dust) as a gas incentive.
-    pub fn distribute(env: Env, token_address: Address) {
+    pub fn distribute(env: Env, token_address: Address, caller: Address) {
         if !is_initialized(&env) {
             panic_with_error!(&env, SplitterError::NotInitialized);
         }
@@ -77,7 +77,6 @@ impl RoyaltySplitter {
 
         let remainder = balance - distributed;
         if remainder > 0 {
-            let caller = env.current_contract_address();
             token_client.transfer(&contract_addr, &caller, &remainder);
         }
     }

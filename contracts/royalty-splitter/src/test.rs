@@ -127,6 +127,7 @@ fn test_distribute_two_parties() {
     let (env, client, token, contract_id) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
+    let caller = Address::generate(&env);
 
     client.initialize(
         &token,
@@ -137,7 +138,7 @@ fn test_distribute_two_parties() {
     let sac = StellarAssetClient::new(&env, &token);
     sac.mint(&contract_id, &10_000);
 
-    client.distribute();
+    client.distribute(&token, &caller);
 
     let tc = TokenClient::new(&env, &token);
     assert_eq!(tc.balance(&alice), 6_000);
@@ -151,6 +152,7 @@ fn test_distribute_three_parties() {
     let a = Address::generate(&env);
     let b = Address::generate(&env);
     let c = Address::generate(&env);
+    let caller = Address::generate(&env);
 
     client.initialize(
         &token,
@@ -161,11 +163,11 @@ fn test_distribute_three_parties() {
     let sac = StellarAssetClient::new(&env, &token);
     sac.mint(&contract_id, &9_000);
 
-    client.distribute();
+    client.distribute(&token, &caller);
 
     let tc = TokenClient::new(&env, &token);
     assert_eq!(
-        tc.balance(&a) + tc.balance(&b) + tc.balance(&c),
+        tc.balance(&a) + tc.balance(&b) + tc.balance(&c) + tc.balance(&caller),
         9_000,
         "all funds must be distributed"
     );
@@ -177,8 +179,9 @@ fn test_distribute_rounding_no_dust_trapped() {
     let (env, client, token, contract_id) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
+    let caller = Address::generate(&env);
 
-    // 3333 + 6667 = 10000; with balance=10 alice gets floor(3.333)=3, bob gets 7
+    // 3333 + 6667 = 10000; with balance=10 alice gets floor(3.333)=3, bob gets 6, caller gets 1
     client.initialize(
         &token,
         &vec![&env, alice.clone(), bob.clone()],
@@ -188,10 +191,13 @@ fn test_distribute_rounding_no_dust_trapped() {
     let sac = StellarAssetClient::new(&env, &token);
     sac.mint(&contract_id, &10);
 
-    client.distribute();
+    client.distribute(&token, &caller);
 
     let tc = TokenClient::new(&env, &token);
-    assert_eq!(tc.balance(&alice) + tc.balance(&bob), 10);
+    assert_eq!(
+        tc.balance(&alice) + tc.balance(&bob) + tc.balance(&caller),
+        10
+    );
     assert_eq!(tc.balance(&contract_id), 0);
 }
 
@@ -200,6 +206,7 @@ fn test_distribute_empty_balance_is_noop() {
     let (env, client, token, contract_id) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
+    let caller = Address::generate(&env);
 
     client.initialize(
         &token,
@@ -208,7 +215,7 @@ fn test_distribute_empty_balance_is_noop() {
     );
 
     // No tokens minted — should not panic
-    client.distribute();
+    client.distribute(&token, &caller);
 
     let tc = TokenClient::new(&env, &token);
     assert_eq!(tc.balance(&alice), 0);
@@ -221,6 +228,7 @@ fn test_distribute_callable_by_anyone() {
     let (env, client, token, contract_id) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
+    let caller = Address::generate(&env);
 
     client.initialize(
         &token,
@@ -232,7 +240,7 @@ fn test_distribute_callable_by_anyone() {
     sac.mint(&contract_id, &1_000);
 
     // Any address can trigger distribute — no special auth
-    client.distribute();
+    client.distribute(&token, &caller);
 
     let tc = TokenClient::new(&env, &token);
     assert_eq!(tc.balance(&alice), 700);
@@ -242,9 +250,10 @@ fn test_distribute_callable_by_anyone() {
 
 #[test]
 fn test_distribute_before_initialize_is_rejected() {
-    let (_env, client, _, _) = setup();
+    let (env, client, token, _) = setup();
+    let caller = Address::generate(&env);
 
-    let err = client.try_distribute().unwrap_err().unwrap();
+    let err = client.try_distribute(&token, &caller).unwrap_err().unwrap();
     assert_eq!(err, SplitterError::NotInitialized.into());
 }
 
@@ -252,13 +261,14 @@ fn test_distribute_before_initialize_is_rejected() {
 fn test_distribute_single_beneficiary_gets_all() {
     let (env, client, token, contract_id) = setup();
     let alice = Address::generate(&env);
+    let caller = Address::generate(&env);
 
     client.initialize(&token, &vec![&env, alice.clone()], &vec![&env, 10_000_u32]);
 
     let sac = StellarAssetClient::new(&env, &token);
     sac.mint(&contract_id, &5_000);
 
-    client.distribute();
+    client.distribute(&token, &caller);
 
     let tc = TokenClient::new(&env, &token);
     assert_eq!(tc.balance(&alice), 5_000);
@@ -270,6 +280,7 @@ fn test_distribute_can_be_called_multiple_times() {
     let (env, client, token, contract_id) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
+    let caller = Address::generate(&env);
 
     client.initialize(
         &token,
@@ -280,13 +291,38 @@ fn test_distribute_can_be_called_multiple_times() {
     let sac = StellarAssetClient::new(&env, &token);
 
     sac.mint(&contract_id, &2_000);
-    client.distribute();
+    client.distribute(&token, &caller);
 
     sac.mint(&contract_id, &4_000);
-    client.distribute();
+    client.distribute(&token, &caller);
 
     let tc = TokenClient::new(&env, &token);
     assert_eq!(tc.balance(&alice), 3_000);
     assert_eq!(tc.balance(&bob), 3_000);
+    assert_eq!(tc.balance(&contract_id), 0);
+}
+
+#[test]
+fn test_distribute_dust_goes_to_caller() {
+    let (env, client, token, contract_id) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let caller = Address::generate(&env);
+
+    client.initialize(
+        &token,
+        &vec![&env, alice.clone(), bob.clone()],
+        &vec![&env, 5_000_u32, 5_000_u32],
+    );
+
+    let sac = StellarAssetClient::new(&env, &token);
+    sac.mint(&contract_id, &10_001);
+
+    client.distribute(&token, &caller);
+
+    let tc = TokenClient::new(&env, &token);
+    assert_eq!(tc.balance(&alice), 5_000);
+    assert_eq!(tc.balance(&bob), 5_000);
+    assert_eq!(tc.balance(&caller), 1, "dust goes to caller");
     assert_eq!(tc.balance(&contract_id), 0);
 }

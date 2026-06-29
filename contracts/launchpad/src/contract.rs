@@ -109,7 +109,10 @@ mod iface {
     }
 }
 
-use iface::{Lazy1155Client, Lazy721Client, NftStakingClient, Normal1155Client, Normal721Client, RoyaltySplitterClient};
+use iface::{
+    Lazy1155Client, Lazy721Client, NftStakingClient, Normal1155Client, Normal721Client,
+    RoyaltySplitterClient,
+};
 
 // ─── Salt hardening (fix #53) ─────────────────────────────────────────────────
 /// Bind `raw_salt` to the caller so that two different creators can never
@@ -408,7 +411,10 @@ impl Launchpad {
     }
 
     /// Register the RoyaltySplitter WASM hash (upload off-chain first).
-    pub fn set_royalty_splitter_wasm_hash(env: Env, wasm_splitter: BytesN<32>) -> Result<(), Error> {
+    pub fn set_royalty_splitter_wasm_hash(
+        env: Env,
+        wasm_splitter: BytesN<32>,
+    ) -> Result<(), Error> {
         storage::extend_instance_ttl(&env);
         storage::require_admin(&env)?;
         storage::set_royalty_splitter_wasm_hash(&env, &wasm_splitter);
@@ -437,11 +443,7 @@ impl Launchpad {
             .with_current_contract(secure_salt)
             .deploy_v2(wasm, ());
 
-        RoyaltySplitterClient::new(&env, &addr).initialize(
-            &token,
-            &beneficiaries,
-            &shares,
-        );
+        RoyaltySplitterClient::new(&env, &addr).initialize(&token, &beneficiaries, &shares);
 
         events::publish_deploy(
             &env,

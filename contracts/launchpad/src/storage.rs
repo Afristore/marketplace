@@ -92,7 +92,9 @@ pub fn get_staking_wasm_hash(env: &Env) -> Option<BytesN<32>> {
 }
 
 pub fn set_royalty_splitter_wasm_hash(env: &Env, hash: &BytesN<32>) {
-    env.storage().instance().set(&DataKey::WasmRoyaltySplitter, hash);
+    env.storage()
+        .instance()
+        .set(&DataKey::WasmRoyaltySplitter, hash);
 }
 
 pub fn get_royalty_splitter_wasm_hash(env: &Env) -> Option<BytesN<32>> {
