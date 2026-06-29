@@ -27,7 +27,7 @@ async function getCached<T>(key: string, ttl: number, fetcher: () => Promise<T>)
     }
     const result = await fetcher();
     try {
-        await redis.set(key, JSON.stringify(result), { expiration: { type: 'EX', value: ttl } });
+        await redis.set(key, JSON.stringify(result), { EX: ttl });
     } catch {
         // ignore cache write failures
     }
