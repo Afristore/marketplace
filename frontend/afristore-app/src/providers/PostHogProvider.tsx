@@ -110,4 +110,44 @@ export const trackEvent = {
       });
     }
   },
+
+  stakedNFT: (
+    nftId: string,
+    collectionAddress: string,
+    amount: string,
+  ) => {
+    if (posthog.__loaded) {
+      posthog.capture("NFT Staked", {
+        nft_id: nftId,
+        collection_address: collectionAddress,
+        amount,
+      });
+    }
+  },
+
+  unstakedNFT: (
+    nftId: string,
+    collectionAddress: string,
+    amount: string,
+  ) => {
+    if (posthog.__loaded) {
+      posthog.capture("NFT Unstaked", {
+        nft_id: nftId,
+        collection_address: collectionAddress,
+        amount,
+      });
+    }
+  },
+
+  claimedRewards: (
+    collectionAddress: string,
+    rewardAmount: string,
+  ) => {
+    if (posthog.__loaded) {
+      posthog.capture("Rewards Claimed", {
+        collection_address: collectionAddress,
+        reward_amount: rewardAmount,
+      });
+    }
+  },
 };
