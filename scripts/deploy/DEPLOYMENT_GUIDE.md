@@ -107,9 +107,12 @@ stellar contract invoke \
   --network-passphrase "Test SDF Network ; September 2015" \
   -- create_listing \
   --artist $STELLAR_PUBLIC \
-  --metadata_cid "QmTestCIDabc123" \
+  --token $TOKEN_CONTRACT \
+  --collection $COLLECTION_CONTRACT \
+  --token_id 1 \
   --price 10000000 \
-  --currency XLM
+  --currency XLM \
+  --recipients "[{\"address\":\"$STELLAR_PUBLIC\",\"percentage\":100}]"
 
 # ── get_total_listings ────────────────────────────────────────
 stellar contract invoke \
