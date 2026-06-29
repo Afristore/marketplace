@@ -65,6 +65,8 @@ echo "  Launchpad ID: $LAUNCHPAD_ID"
 
 # 5. Initialize Launchpad
 echo "Step 5/6  Initializing Launchpad..."
+# Native XLM token address on Soroban testnet (override via PLATFORM_FEE_TOKEN env var)
+PLATFORM_FEE_TOKEN="${PLATFORM_FEE_TOKEN:-CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2BNROLN}"
 stellar contract invoke \
   --id "$LAUNCHPAD_ID" \
   --source "$STELLAR_SECRET" \
@@ -73,7 +75,8 @@ stellar contract invoke \
   -- initialize \
   --admin "$STELLAR_PUBLIC" \
   --platform_fee_receiver "$STELLAR_PUBLIC" \
-  --platform_fee_bps 0
+  --platform_fee_bps 0 \
+  --platform_fee_token "$PLATFORM_FEE_TOKEN"
 
 stellar contract invoke \
   --id "$LAUNCHPAD_ID" \
