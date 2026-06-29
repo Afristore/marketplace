@@ -160,16 +160,13 @@ Open [http://localhost:3000](http://localhost:3000).
 
 The app uploads to Pinata through internal API routes (`/api/ipfs/upload-image`, `/api/ipfs/upload-metadata`) so the JWT stays server-side.
 
-## Artist Flow
+## Artist Flow (V2)
 
 1. Connect Freighter wallet
-2. Navigate to **My Dashboard → New Listing**
-3. Drag-drop your artwork image
-4. Fill in title, description, artist name, year, price
-5. Click **List Artwork** — the app will:
-   - Upload the image to IPFS via Pinata
-   - Build and upload metadata JSON to IPFS
-   - Call `create_listing` on the Soroban contract (Freighter popup)
+2. Navigate to **My Dashboard → Create Collection**
+3. Deploy a new Collection contract (Freighter popup)
+4. Mint an NFT into the collection — upload artwork image + metadata to IPFS via Pinata
+5. List the minted NFT on the Marketplace contract (Freighter popup)
 
 ## Buyer Flow
 
