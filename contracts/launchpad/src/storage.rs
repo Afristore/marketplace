@@ -46,6 +46,29 @@ pub fn get_platform_fee(env: &Env) -> (Address, u32) {
     )
 }
 
+pub fn set_platform_fee_token(env: &Env, token: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::PlatformFeeToken, token);
+}
+
+pub fn get_platform_fee_token(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::PlatformFeeToken)
+}
+
+pub fn set_platform_fee_token(env: &Env, token: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::PlatformFeeToken, token);
+    extend_instance_ttl(env);
+}
+
+pub fn get_platform_fee_token(env: &Env) -> Option<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::PlatformFeeToken)
+}
+
 pub fn set_wasm_hashes(
     env: &Env,
     normal_721: &BytesN<32>,

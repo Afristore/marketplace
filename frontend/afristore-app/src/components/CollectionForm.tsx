@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   useDeployCollection,
   DeployCollectionInput,
@@ -9,9 +9,6 @@ import { useWalletContext } from "@/context/WalletContext";
 import { Loader2, Rocket, CheckCircle, ArrowRight, Info, ChevronDown } from "lucide-react";
 import { GuardButton } from "./WalletGuard";
 import { CollectionKind } from "@/lib/launchpad";
-import { DEFAULT_TOKEN } from "@/config/tokens";
-import { useSupportedTokens } from "@/hooks/useSupportedTokens";
-import { getDefaultSupportedToken } from "@/lib/token-support";
 
 const SPLITTER_TOOLTIP =
   "If you want to split royalties with multiple people, paste your deployed Royalty Splitter contract address here, or deploy one first via Launchpad → Royalty Splitter.";
@@ -48,8 +45,6 @@ function isStellarAddress(v: string) {
 export function CollectionForm() {
   const { publicKey } = useWalletContext();
   const { deploy, isDeploying, error } = useDeployCollection(publicKey);
-  const { tokens: supportedTokens } = useSupportedTokens();
-  const hasSupportedTokens = supportedTokens.length > 0;
 
   const [successAddress, setSuccessAddress] = useState<string | null>(null);
 
@@ -64,7 +59,6 @@ export function CollectionForm() {
     maxSupply: 10000,
     royaltyBps: 500, // 5%
     royaltyReceiver: publicKey || "",
-    currencyAddress: DEFAULT_TOKEN.address,
   });
 
   useEffect(() => {
@@ -101,6 +95,25 @@ export function CollectionForm() {
       ...form,
       royaltyReceiver: form.royaltyReceiver || publicKey,
     };
+
+    // If it's a lazy collection, we need the pubkey bytes
+    if (form.kind.startsWith("LazyMint")) {
+      try {
+        // Dynamically import StrKey to avoid Node deps in initial bundle
+        const sdk = await import("@stellar/stellar-sdk");
+        const decoded = sdk.StrKey.decodeEd25519PublicKey(publicKey);
+        input.creatorPubkeyBytes = Buffer.from(decoded);
+      } catch (err) {
+        console.error("Failed to decode public key", err);
+        return;
+      }
+    }
+
+    const addr = await deploy(input);
+    if (addr) {
+      setSuccessAddress(addr);
+    }
+  };
 
     // If it's a lazy collection, we need the pubkey bytes
     if (form.kind.startsWith("LazyMint")) {
@@ -399,7 +412,7 @@ export function CollectionForm() {
 
           <GuardButton
             type="submit"
-            disabled={isDeploying || !hasSupportedTokens || (!!form.royaltyReceiver && !royaltyAddressValid)}
+            disabled={isDeploying}
             actionName="to deploy your collection"
             className="w-full flex items-center justify-center gap-3 rounded-2xl bg-brand-500 py-5 text-xl font-bold text-white shadow-2xl shadow-brand-500/30 hover:bg-brand-600 hover:scale-[1.01] transition-all active:scale-[0.98] disabled:opacity-50 disabled:hover:scale-100"
           >

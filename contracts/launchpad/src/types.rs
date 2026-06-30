@@ -9,6 +9,7 @@ pub enum Error {
     NotAdmin = 3,
     WasmHashNotSet = 4,
     StakingPoolAlreadyExists = 5,
+    PlatformFeeTokenNotSet = 6,
 }
 
 /// Which of the four collection types was deployed.
@@ -37,6 +38,8 @@ pub enum DataKey {
     Admin,
     PlatformFeeReceiver,
     PlatformFeeBps,
+    PlatformFeeToken,
+    PlatformFeeToken,
     WasmNormal721,
     WasmNormal1155,
     WasmLazy721,
