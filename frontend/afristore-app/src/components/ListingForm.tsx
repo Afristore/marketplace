@@ -66,6 +66,7 @@ export function ListingForm({
     collectionAddress: prefilledCollectionAddress || "",
     nftTokenId: prefilledTokenId !== undefined ? prefilledTokenId : 0,
     price: 10,
+    amount: 1,
     tokenAddress: DEFAULT_TOKEN.address,
   });
   const [successId, setSuccessId] = useState<number | null>(null);
@@ -94,6 +95,7 @@ export function ListingForm({
             collectionAddress: listing.collection,
             nftTokenId: Number(listing.token_id),
             price: parseFloat(stroopsToXlm(listing.price)),
+            amount: 1,
             tokenAddress: listing.token,
           });
         })
@@ -174,6 +176,7 @@ export function ListingForm({
                   collectionAddress: "",
                   nftTokenId: 0,
                   price: 10,
+                  amount: 1,
                   tokenAddress: defaultToken.address,
                 });
               }}
@@ -242,6 +245,25 @@ export function ListingForm({
               />
             </div>
 
+            <div className="sm:col-span-2 space-y-2">
+              <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+                Amount (ERC-1155 Quantity)
+              </label>
+              <input
+                type="number"
+                min={1}
+                value={form.amount}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    amount: Math.max(1, parseInt(e.target.value) || 1),
+                  })
+                }
+                className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
+                placeholder="Number of copies to list (default: 1)"
+              />
+            </div>
+
             <div className="space-y-2">
               <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
                 Price ({selectedToken.symbol}) *
@@ -262,6 +284,22 @@ export function ListingForm({
                   {selectedToken.symbol}
                 </span>
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+                Amount *
+              </label>
+              <input
+                required
+                type="number"
+                min={1}
+                value={form.amount}
+                onChange={(e) =>
+                  setForm({ ...form, amount: parseInt(e.target.value) || 1 })
+                }
+                className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
+              />
             </div>
 
             <div className="space-y-2">

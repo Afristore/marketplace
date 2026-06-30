@@ -146,6 +146,7 @@ export interface CreateListingInput {
   collectionAddress: string;
   nftTokenId: number;
   price: number;
+  amount: number;
   tokenAddress?: string;
 }
 
