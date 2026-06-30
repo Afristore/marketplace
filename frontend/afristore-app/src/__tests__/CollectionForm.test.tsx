@@ -56,7 +56,7 @@ jest.mock("@/components/WalletGuard", () => ({
 
 jest.mock("lucide-react", () =>
   Object.fromEntries(
-    ["Loader2", "Rocket", "CheckCircle", "ArrowRight"].map((name) => [
+    ["Loader2", "Rocket", "CheckCircle", "ArrowRight", "Info", "ChevronDown"].map((name) => [
       name,
       () => <span />,
     ]),
