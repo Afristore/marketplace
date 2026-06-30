@@ -11,4 +11,5 @@ pub enum SplitterError {
     /// Shares must sum to exactly 10 000 BPS.
     InvalidShares = 5,
     TooManyBeneficiaries = 6,
+    BeneficiaryNotFound = 7,
 }
