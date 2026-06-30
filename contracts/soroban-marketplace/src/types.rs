@@ -32,6 +32,7 @@ pub enum MarketplaceError {
     InvalidRoyalty = 24,
     /// Token attempted at purchase time but is no longer whitelisted
     TokenNotWhitelisted = 25,
+    InvalidAuctionDuration = 26,
 }
 
 #[contracttype]

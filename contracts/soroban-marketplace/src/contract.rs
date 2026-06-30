@@ -31,6 +31,8 @@ use crate::{
 #[contract]
 pub struct MarketplaceContract;
 
+const MIN_DURATION_SECONDS: u64 = 60;
+
 #[contractimpl]
 impl MarketplaceContract {
     // ── Admin & Global Configuration ───────────────────────
@@ -544,6 +546,11 @@ impl MarketplaceContract {
         if !Self::is_token_whitelisted(&env, &token) {
             panic_with_error!(&env, MarketplaceError::Unauthorized);
         }
+        // A duration of less than a minute is not practical.
+        if duration < MIN_DURATION_SECONDS {
+            panic_with_error!(&env, MarketplaceError::InvalidAuctionDuration);
+        }
+
         let auction_id = increment_auction_count(&env);
         let end_time = env.ledger().timestamp() + duration;
         let auction = Auction {
