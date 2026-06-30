@@ -538,7 +538,6 @@ fn test_artist_revocation_and_reinstatement() {
             &1u64,
             &1_000_000_i128,
             &3600u64,
-            &1u64,
             &valid_recipients(&env, &artist_to_revoke),
         );
         assert!(r.is_err());
@@ -2383,7 +2382,6 @@ fn test_create_auction_royalty_bps_max_allowed() {
         &1u64,
         &1_000_000_i128,
         &3600u64,
-        &1u64,
         &valid_recipients(&env, &artist),
     );
     assert_eq!(auction_id, 1u64);
@@ -2404,7 +2402,6 @@ fn test_create_auction_royalty_bps_too_high() {
         &1u64,
         &1_000_000_i128,
         &3600u64,
-        &1u64,
         &valid_recipients(&env, &artist),
     );
 }
@@ -2551,7 +2548,6 @@ fn test_create_auction_blocked_when_paused() {
         &1u64,
         &5_000_000_i128,
         &3600u64,
-        &1u64,
         &valid_recipients(&env, &artist),
     );
 }
