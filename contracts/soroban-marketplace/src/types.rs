@@ -32,6 +32,7 @@ pub enum MarketplaceError {
     InvalidRoyalty = 24,
     /// Token attempted at purchase time but is no longer whitelisted
     TokenNotWhitelisted = 25,
+    InvalidAuctionDuration = 26,
 }
 
 #[contracttype]
@@ -59,6 +60,8 @@ pub struct Listing {
     pub token: Address,
     pub collection: Address,
     pub token_id: u64,
+    /// ERC-1155 quantity; always 1 for ERC-721 collections.
+    pub amount: u64,
     pub recipients: soroban_sdk::Vec<Recipient>,
     pub status: ListingStatus,
     pub owner: Option<Address>,
@@ -81,6 +84,8 @@ pub struct Auction {
     pub token: Address,
     pub collection: Address,
     pub token_id: u64,
+    /// ERC-1155 quantity; always 1 for ERC-721 collections.
+    pub amount: u64,
     pub reserve_price: i128,
     pub highest_bid: i128,
     pub highest_bidder: Option<Address>,

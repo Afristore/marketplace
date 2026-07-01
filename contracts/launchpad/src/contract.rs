@@ -97,9 +97,22 @@ mod iface {
             reward_rate: i128,
         );
     }
+
+    #[contractclient(name = "RoyaltySplitterClient")]
+    pub trait IRoyaltySplitter {
+        fn initialize(
+            env: Env,
+            token: Address,
+            beneficiaries: soroban_sdk::Vec<Address>,
+            shares: soroban_sdk::Vec<u32>,
+        );
+    }
 }
 
-use iface::{Lazy1155Client, Lazy721Client, NftStakingClient, Normal1155Client, Normal721Client};
+use iface::{
+    Lazy1155Client, Lazy721Client, NftStakingClient, Normal1155Client, Normal721Client,
+    RoyaltySplitterClient,
+};
 
 // ─── Salt hardening (fix #53) ─────────────────────────────────────────────────
 /// Bind `raw_salt` to the caller so that two different creators can never
@@ -399,6 +412,51 @@ impl Launchpad {
         storage::require_admin(&env)?;
         storage::set_staking_wasm_hash(&env, &wasm_staking);
         Ok(())
+    }
+
+    /// Register the RoyaltySplitter WASM hash (upload off-chain first).
+    pub fn set_royalty_splitter_wasm_hash(
+        env: Env,
+        wasm_splitter: BytesN<32>,
+    ) -> Result<(), Error> {
+        storage::extend_instance_ttl(&env);
+        storage::require_admin(&env)?;
+        storage::set_royalty_splitter_wasm_hash(&env, &wasm_splitter);
+        Ok(())
+    }
+
+    /// Deploy a RoyaltySplitter clone for a creator.
+    ///
+    /// `salt` — unique 32 bytes per splitter; combined with creator for front-run protection.
+    pub fn deploy_splitter(
+        env: Env,
+        creator: Address,
+        token: Address,
+        beneficiaries: soroban_sdk::Vec<Address>,
+        shares: soroban_sdk::Vec<u32>,
+        salt: BytesN<32>,
+    ) -> Result<Address, Error> {
+        storage::extend_instance_ttl(&env);
+        creator.require_auth();
+
+        let wasm = storage::get_royalty_splitter_wasm_hash(&env).ok_or(Error::WasmHashNotSet)?;
+
+        let secure_salt = make_secure_salt(&env, &creator, &salt);
+        let addr = env
+            .deployer()
+            .with_current_contract(secure_salt)
+            .deploy_v2(wasm, ());
+
+        RoyaltySplitterClient::new(&env, &addr).initialize(&token, &beneficiaries, &shares);
+
+        events::publish_deploy(
+            &env,
+            symbol_short!("split"),
+            &creator,
+            &addr,
+            &CollectionKind::Normal721,
+        );
+        Ok(addr)
     }
 
     // ── Deploy: Staking pool clone ────────────────────────────────────────

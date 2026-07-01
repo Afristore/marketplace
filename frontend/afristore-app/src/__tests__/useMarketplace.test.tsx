@@ -135,34 +135,25 @@ describe("useMarketplace", () => {
     expect(mockGetAllListings).not.toHaveBeenCalled();
   });
 
-  it("falls back to on-chain when indexer throws", async () => {
+  it("sets error and does not fall back to unbounded on-chain call when indexer throws", async () => {
     const { fetchListings } = jest.requireMock("@/lib/indexer");
     fetchListings.mockRejectedValueOnce(new Error("indexer down"));
-    mockGetAllListings.mockResolvedValueOnce([makeListing(5)]);
 
     function Comp() {
-      const { listings } = useMarketplace();
-      return <span data-testid="count">{listings.length}</span>;
+      const { listings, error } = useMarketplace();
+      return (
+        <div>
+          <span data-testid="count">{listings.length}</span>
+          <span data-testid="error">{error ?? "none"}</span>
+        </div>
+      );
     }
     render(<Comp />);
-    await waitFor(() =>
-      expect(screen.getByTestId("count").textContent).toBe("1"),
-    );
-  });
-
-  it("sets error when both indexer and on-chain fail", async () => {
-    const { fetchListings } = jest.requireMock("@/lib/indexer");
-    fetchListings.mockRejectedValueOnce(new Error("indexer down"));
-    mockGetAllListings.mockRejectedValueOnce(new Error("chain down"));
-
-    function Comp() {
-      const { error } = useMarketplace();
-      return <span data-testid="error">{error ?? "none"}</span>;
-    }
-    render(<Comp />);
-    await waitFor(() =>
-      expect(screen.getByTestId("error").textContent).not.toBe("none"),
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId("error").textContent).not.toBe("none");
+    });
+    expect(screen.getByTestId("count").textContent).toBe("0");
+    expect(mockGetAllListings).not.toHaveBeenCalled();
   });
 
   it("sorts listings by created_at descending", async () => {

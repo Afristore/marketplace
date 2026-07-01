@@ -75,10 +75,8 @@ export default function ExplorePage() {
       if (debouncedSearch.trim()) opts.search = debouncedSearch.trim();
 
       const res = await fetchListings(opts);
-      const rows = Array.isArray(res.listings)
-        ? (res.listings as Listing[])
-        : null;
-      if (rows !== null) {
+      const rows = Array.isArray(res.listings) ? res.listings : [];
+      if (rows.length > 0) {
         setAllListings(rows);
       } else {
         // Fallback to on-chain scan only when indexer response is malformed

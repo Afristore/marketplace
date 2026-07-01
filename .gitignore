@@ -30,3 +30,4 @@ Thumbs.db
 # Generated test snapshots
 **/test_snapshots/
 **/issues.md
+fix.md

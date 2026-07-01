@@ -137,6 +137,7 @@ Open [http://localhost:3000](http://localhost:3000)
 
 ### Launchpad
 - Deploy NFT collections (normal 721/1155, lazy-mint 721/1155)
+- Deploy standalone Royalty Splitter contracts for multi-party secondary sale royalties
 - Salt-based front-running protection
 - Platform fee configuration per-collection
 - Collection creation wizard in frontend

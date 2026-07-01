@@ -91,24 +91,14 @@ pub fn get_staking_wasm_hash(env: &Env) -> Option<BytesN<32>> {
     env.storage().instance().get(&DataKey::WasmStaking)
 }
 
-pub fn set_approved_currency(env: &Env, currency: &Address, approved: bool) {
+pub fn set_royalty_splitter_wasm_hash(env: &Env, hash: &BytesN<32>) {
     env.storage()
         .instance()
-        .set(&DataKey::ApprovedCurrency(currency.clone()), &approved);
+        .set(&DataKey::WasmRoyaltySplitter, hash);
 }
 
-pub fn is_approved_currency(env: &Env, currency: &Address) -> bool {
-    env.storage()
-        .instance()
-        .get::<_, bool>(&DataKey::ApprovedCurrency(currency.clone()))
-        .unwrap_or(false)
-}
-
-pub fn require_approved_currency(env: &Env, currency: &Address) -> Result<(), Error> {
-    if !is_approved_currency(env, currency) {
-        return Err(Error::InvalidCurrency);
-    }
-    Ok(())
+pub fn get_royalty_splitter_wasm_hash(env: &Env) -> Option<BytesN<32>> {
+    env.storage().instance().get(&DataKey::WasmRoyaltySplitter)
 }
 
 pub fn staking_pool_by_nft(env: &Env, nft_address: &Address) -> Option<Address> {

@@ -13,13 +13,23 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
   indexer:
     build: .
     restart: unless-stopped
     depends_on:
       - db
+      - redis
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/marketplace_indexer?schema=public
+      - REDIS_URL=redis://redis:6379
       - PORT=4000
       - STELLAR_RPC_URL=https://soroban-testnet.stellar.org
       - MARKETPLACE_CONTRACT_ID=${MARKETPLACE_CONTRACT_ID}
@@ -29,3 +39,4 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:

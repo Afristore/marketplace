@@ -43,7 +43,7 @@ export function useAuctions() {
       try {
         const raw = await fetchAuctions();
         if (raw.length >= 0) {
-          setAuctions(raw as Auction[]);
+          setAuctions(raw);
           return;
         }
       } catch {

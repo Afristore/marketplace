@@ -26,6 +26,7 @@ model Listing {
   currency        String
   collection      String
   nftTokenId      BigInt
+  amount          Int      @default(1)
   token           String
   metadataCid     String?
   status          String   // "Active", "Sold", "Cancelled", "Auction"
@@ -42,6 +43,7 @@ model Auction {
   creator         String
   collection      String
   nftTokenId      BigInt
+  amount          Int      @default(1)
   token           String
   metadataCid     String?
   reservePrice    Decimal  @db.Decimal(32, 7)
@@ -102,12 +104,13 @@ model StakedNFT {
   tokenAddress    String
   tokenId         BigInt
   collection      String
+  amount          Int      @default(1)
   stakedAt        DateTime
   status          String   // "Active", "Unstaked"
   rewardsEarned   Decimal  @default(0) @db.Decimal(32, 7)
   createdAtLedger Int
   updatedAtLedger Int
-  @@unique([owner, tokenAddress, tokenId])
   @@index([owner])
+  @@index([owner, tokenAddress, tokenId])
   @@index([status])
 }
