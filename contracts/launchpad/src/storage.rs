@@ -267,3 +267,23 @@ pub fn creator_collection_by_index(
         .persistent()
         .get(&DataKey::CreatorCollectionByIndex(creator.clone(), index))
 }
+
+pub fn set_approved_currency(env: &Env, currency: &Address, approved: bool) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ApprovedCurrency(currency.clone()), &approved);
+}
+
+pub fn is_approved_currency(env: &Env, currency: &Address) -> bool {
+    env.storage()
+        .instance()
+        .get::<DataKey, bool>(&DataKey::ApprovedCurrency(currency.clone()))
+        .unwrap_or(false)
+}
+
+pub fn require_approved_currency(env: &Env, currency: &Address) -> Result<(), crate::types::Error> {
+    if !is_approved_currency(env, currency) {
+        return Err(crate::types::Error::InvalidCurrency);
+    }
+    Ok(())
+}

@@ -188,7 +188,7 @@ impl Launchpad {
     pub fn deploy_normal_721(
         env: Env,
         creator: Address,
-        currency: Address, // [NEW] SAC address for fee payment
+        currency: Address,
         name: String,
         symbol: String,
         max_supply: u64,
@@ -198,6 +198,7 @@ impl Launchpad {
     ) -> Result<Address, Error> {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
+        storage::require_approved_currency(&env, &currency)?;
 
         // [FEE] Collect deployment fee (#54)
         let (receiver, fee) = storage::get_platform_fee(&env);
@@ -252,6 +253,7 @@ impl Launchpad {
     ) -> Result<Address, Error> {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
+        storage::require_approved_currency(&env, &currency)?;
 
         // [FEE] Collect deployment fee (#54)
         let (receiver, fee) = storage::get_platform_fee(&env);
@@ -309,6 +311,7 @@ impl Launchpad {
     ) -> Result<Address, Error> {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
+        storage::require_approved_currency(&env, &currency)?;
 
         // [FEE] Collect deployment fee (#54)
         let (receiver, fee) = storage::get_platform_fee(&env);
@@ -363,6 +366,7 @@ impl Launchpad {
     ) -> Result<Address, Error> {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
+        storage::require_approved_currency(&env, &currency)?;
 
         // [FEE] Collect deployment fee (#54)
         let (receiver, fee) = storage::get_platform_fee(&env);
@@ -471,6 +475,7 @@ impl Launchpad {
     ) -> Result<Address, Error> {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
+        storage::require_approved_currency(&env, &currency)?;
 
         // [FEE] Collect deployment fee
         let (receiver, fee) = storage::get_platform_fee(&env);
@@ -523,6 +528,27 @@ impl Launchpad {
         Ok(())
     }
 
+    /// Add a token address to the approved currency whitelist.
+    pub fn add_approved_currency(env: Env, currency: Address) -> Result<(), Error> {
+        storage::extend_instance_ttl(&env);
+        storage::require_admin(&env)?;
+        storage::set_approved_currency(&env, &currency, true);
+        Ok(())
+    }
+
+    /// Remove a token address from the approved currency whitelist.
+    pub fn remove_approved_currency(env: Env, currency: Address) -> Result<(), Error> {
+        storage::extend_instance_ttl(&env);
+        storage::require_admin(&env)?;
+        storage::set_approved_currency(&env, &currency, false);
+        Ok(())
+    }
+
+    /// Check whether a token address is on the approved currency whitelist.
+    pub fn is_approved_currency(env: Env, currency: Address) -> bool {
+        storage::is_approved_currency(&env, &currency)
+    }
+
     // ── View functions ────────────────────────────────────────────────────
 
     /// All collections deployed by a specific creator.
@@ -549,12 +575,6 @@ impl Launchpad {
 
     // ── Query API (issue: launchpad contract query API + deploy events) ───
 
-    /// All collections deployed by a specific creator address.
-    /// Callable from frontend and CLI.
-    pub fn get_creator_collections(env: Env, creator: Address) -> Vec<CollectionRecord> {
-        storage::collections_by_creator(&env, &creator)
-    }
-
     /// Look up a single collection record by its deployed contract address.
     /// Returns `None` if the address was not deployed through this launchpad.
     /// Callable from frontend and CLI.
@@ -567,12 +587,6 @@ impl Launchpad {
     /// Callable from frontend and CLI.
     pub fn get_collections(env: Env, start_index: u32, limit: u32) -> Vec<CollectionRecord> {
         storage::collections_paginated(&env, start_index as u64, limit as u64)
-    }
-
-    /// Total number of collections deployed through this launchpad.
-    /// Callable from frontend and CLI.
-    pub fn get_collection_count(env: Env) -> u64 {
-        storage::collection_count(&env)
     }
 
     /// Look up the staking pool clone deployed for an NFT collection address.

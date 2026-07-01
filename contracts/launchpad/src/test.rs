@@ -74,6 +74,10 @@ fn setup_launchpad(env: &Env) -> (LaunchpadClient<'_>, Address, Address, Address
     (client, admin, fee_receiver, creator)
 }
 
+fn approve_currency(client: &LaunchpadClient, currency: &Address) {
+    client.add_approved_currency(currency);
+}
+
 #[test]
 fn deploys_normal_721_twice_with_unique_addresses() {
     let env = Env::default();
@@ -84,6 +88,7 @@ fn deploys_normal_721_twice_with_unique_addresses() {
     let salt_b = BytesN::from_array(&env, &[11u8; 32]);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     let deployed_a = client.deploy_normal_721(
         &creator,
@@ -132,6 +137,7 @@ fn deploys_normal_1155_twice_with_unique_addresses() {
     let salt_b = BytesN::from_array(&env, &[21u8; 32]);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     let deployed_a = client.deploy_normal_1155(
         &creator,
@@ -177,6 +183,7 @@ fn deploys_lazy_721_twice_with_unique_addresses() {
     let creator_pubkey = BytesN::from_array(&env, &[7u8; 32]);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     let deployed_a = client.deploy_lazy_721(
         &creator,
@@ -228,6 +235,7 @@ fn deploys_lazy_1155_twice_with_unique_addresses() {
     let creator_pubkey = BytesN::from_array(&env, &[9u8; 32]);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     let deployed_a = client.deploy_lazy_1155(
         &creator,
@@ -272,6 +280,7 @@ fn deploy_calls_extend_instance_ttl() {
 
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     // After initialize(), instance TTL is bumped to 100_000 ledgers.
     // Move forward so remaining TTL is below threshold (50_000),
@@ -345,6 +354,7 @@ fn same_salt_different_creators_normal_721_yields_different_addresses() {
     let salt = BytesN::from_array(&env, &[0xAAu8; 32]);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     let addr_alice = client.deploy_normal_721(
         &alice,
@@ -387,6 +397,7 @@ fn same_salt_different_creators_normal_1155_yields_different_addresses() {
     let salt = BytesN::from_array(&env, &[0xBBu8; 32]);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     let addr_alice = client.deploy_normal_1155(
         &alice,
@@ -422,6 +433,7 @@ fn same_salt_different_creators_lazy_721_yields_different_addresses() {
     let creator_pubkey = BytesN::from_array(&env, &[0x01u8; 32]);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     let addr_alice = client.deploy_lazy_721(
         &alice,
@@ -463,6 +475,7 @@ fn same_salt_different_creators_lazy_1155_yields_different_addresses() {
     let creator_pubkey = BytesN::from_array(&env, &[0x02u8; 32]);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     let addr_alice = client.deploy_lazy_1155(
         &alice,
@@ -505,6 +518,7 @@ fn front_runner_cannot_grief_normal_721() {
     let salt = BytesN::from_array(&env, &[0x11u8; 32]);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     // Bob front-runs using Alice's raw salt.
     let addr_bob = client.deploy_normal_721(
@@ -548,6 +562,7 @@ fn front_runner_cannot_grief_normal_1155() {
     let salt = BytesN::from_array(&env, &[0x22u8; 32]);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     let addr_bob = client.deploy_normal_1155(
         &bob,
@@ -583,6 +598,7 @@ fn front_runner_cannot_grief_lazy_721() {
     let creator_pubkey = BytesN::from_array(&env, &[0x03u8; 32]);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     let addr_bob = client.deploy_lazy_721(
         &bob,
@@ -624,6 +640,7 @@ fn front_runner_cannot_grief_lazy_1155() {
     let creator_pubkey = BytesN::from_array(&env, &[0x04u8; 32]);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     let addr_bob = client.deploy_lazy_1155(
         &bob,
@@ -682,6 +699,7 @@ fn deploy_without_wasm_hashes_fails() {
 
     let salt = BytesN::from_array(&env, &[0x99u8; 32]);
     let currency = Address::generate(&env);
+    client.add_approved_currency(&currency);
     let royalty_receiver = Address::generate(&env);
 
     let result = client.try_deploy_normal_721(
@@ -768,6 +786,7 @@ fn collections_by_creator_returns_correct_collections() {
     let other = Address::generate(&env);
     let salt = BytesN::from_array(&env, &[0x55u8; 32]);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
     let royalty_receiver = Address::generate(&env);
 
     client.deploy_normal_721(
@@ -850,6 +869,7 @@ fn deployed_lazy_721_rejects_invalid_ed25519_signature() {
     let creator_pubkey = BytesN::from_array(&env, &[1u8; 32]);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
     let salt = BytesN::from_array(&env, &[0xA1u8; 32]);
 
     let collection_addr = client.deploy_lazy_721(
@@ -892,6 +912,7 @@ fn deployed_lazy_721_rejects_expired_voucher() {
     let creator_pubkey = BytesN::from_array(&env, &[2u8; 32]);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
     let salt = BytesN::from_array(&env, &[0xA2u8; 32]);
 
     let collection_addr = client.deploy_lazy_721(
@@ -942,6 +963,7 @@ fn get_collection_by_id_returns_record() {
     let salt = BytesN::from_array(&env, &[0xB1u8; 32]);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     let addr = client.deploy_normal_721(
         &creator,
@@ -974,7 +996,7 @@ fn get_collection_by_id_returns_none_for_unknown_address() {
     assert!(record.is_none());
 }
 
-/// get_creator_collections returns only the caller's collections.
+/// collections_by_creator returns only the caller's collections.
 #[test]
 fn get_creator_collections_returns_only_caller_collections() {
     let env = Env::default();
@@ -984,6 +1006,7 @@ fn get_creator_collections_returns_only_caller_collections() {
     let other = Address::generate(&env);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     client.deploy_normal_721(
         &creator,
@@ -1006,10 +1029,10 @@ fn get_creator_collections_returns_only_caller_collections() {
     );
 
     // creator has 2 collections, other has 0
-    let creator_colls = client.get_creator_collections(&creator);
+    let creator_colls = client.collections_by_creator(&creator);
     assert_eq!(creator_colls.len(), 2);
 
-    let other_colls = client.get_creator_collections(&other);
+    let other_colls = client.collections_by_creator(&other);
     assert_eq!(other_colls.len(), 0);
 }
 
@@ -1023,6 +1046,7 @@ fn get_all_collections_returns_all_deployed() {
     let alice = Address::generate(&env);
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     client.deploy_normal_721(
         &creator,
@@ -1048,7 +1072,7 @@ fn get_all_collections_returns_all_deployed() {
     assert_eq!(all.len(), 2);
 }
 
-/// get_collection_count matches the number of deploys.
+/// collection_count matches the number of deploys.
 #[test]
 fn get_collection_count_increments_per_deploy() {
     let env = Env::default();
@@ -1058,8 +1082,9 @@ fn get_collection_count_increments_per_deploy() {
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
     let creator_pubkey = BytesN::from_array(&env, &[0x05u8; 32]);
+    approve_currency(&client, &currency);
 
-    assert_eq!(client.get_collection_count(), 0u64);
+    assert_eq!(client.collection_count(), 0u64);
 
     client.deploy_normal_721(
         &creator,
@@ -1071,7 +1096,7 @@ fn get_collection_count_increments_per_deploy() {
         &royalty_receiver,
         &BytesN::from_array(&env, &[0xE1u8; 32]),
     );
-    assert_eq!(client.get_collection_count(), 1u64);
+    assert_eq!(client.collection_count(), 1u64);
 
     client.deploy_lazy_1155(
         &creator,
@@ -1082,7 +1107,7 @@ fn get_collection_count_increments_per_deploy() {
         &royalty_receiver,
         &BytesN::from_array(&env, &[0xE2u8; 32]),
     );
-    assert_eq!(client.get_collection_count(), 2u64);
+    assert_eq!(client.collection_count(), 2u64);
 }
 
 /// Deploy events carry (creator, collection_address, kind) in the data payload.
@@ -1094,6 +1119,7 @@ fn deploy_events_include_kind_in_payload() {
 
     let royalty_receiver = Address::generate(&env);
     let currency = Address::generate(&env);
+    approve_currency(&client, &currency);
 
     // Deploy one of each type and confirm no panic (events are emitted).
     // The soroban test SDK exposes env.events().all() to inspect events.
@@ -1127,7 +1153,7 @@ fn deploy_events_include_kind_in_payload() {
     assert_eq!(rec_n1155.creator, creator);
 
     // Confirm total count covers both
-    assert_eq!(client.get_collection_count(), 2u64);
+    assert_eq!(client.collection_count(), 2u64);
 }
 
 fn setup_launchpad_with_staking(env: &Env) -> (LaunchpadClient<'_>, Address, Address) {
@@ -1161,6 +1187,7 @@ fn deploys_staking_pool_for_nft_collection() {
     let nft_address = Address::generate(&env);
     let reward_token = Address::generate(&env);
     let salt = BytesN::from_array(&env, &[0xAAu8; 32]);
+    approve_currency(&client, &reward_token);
 
     let pool_a = client.deploy_staking_pool(
         &creator,
