@@ -40,7 +40,6 @@ pub enum DataKey {
     PlatformFeeReceiver,
     PlatformFeeBps,
     PlatformFeeToken,
-    PlatformFeeToken,
     WasmNormal721,
     WasmNormal1155,
     WasmLazy721,

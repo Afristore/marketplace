@@ -444,28 +444,25 @@ export async function getCollectionMetadata(
   };
 }
 
+function mapKeySymbol(name: string, val: xdr.ScVal): xdr.ScMapEntry {
+  return new xdr.ScMapEntry({
+    key: nativeToScVal(name, { type: "symbol" }),
+    val,
+  });
+}
+
 /**
- * deploy_lazy_721
+ * mint721 — Mint a single token in a Normal 721 collection.
  */
-export async function deployLazy721(
+export async function mint721(
   creatorPublicKey: string,
-  creatorPubkeyBytes: Buffer, // 32 bytes
-  name: string,
-  symbol: string,
-  maxSupply: number,
-  royaltyBps: number,
-  royaltyReceiver: string,
-  salt: Buffer,
-): Promise<string> {
+  collectionAddress: string,
+  recipient: string,
+  uri: string,
+): Promise<number> {
   const args: xdr.ScVal[] = [
-    toAddressScVal(creatorPublicKey),
-    nativeToScVal(Uint8Array.from(creatorPubkeyBytes), { type: "bytes" }),
-    nativeToScVal(name, { type: "string" }),
-    nativeToScVal(symbol, { type: "string" }),
-    nativeToScVal(BigInt(maxSupply), { type: "u64" }),
-    nativeToScVal(royaltyBps, { type: "u32" }),
-    toAddressScVal(royaltyReceiver),
-    nativeToScVal(Uint8Array.from(salt), { type: "bytes" }),
+    toAddressScVal(recipient),
+    nativeToScVal(uri, { type: "string" }),
   ];
 
   const retVal = await invokeContract(
@@ -476,13 +473,6 @@ export async function deployLazy721(
     collectionAddress,
   );
   return Number(scValToNative(retVal));
-}
-
-function mapKeySymbol(name: string, val: xdr.ScVal): xdr.ScMapEntry {
-  return new xdr.ScMapEntry({
-    key: nativeToScVal(name, { type: "symbol" }),
-    val,
-  });
 }
 
 /**

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   useDeployCollection,
   DeployCollectionInput,
@@ -9,6 +9,8 @@ import { useWalletContext } from "@/context/WalletContext";
 import { Loader2, Rocket, CheckCircle, ArrowRight, Info, ChevronDown } from "lucide-react";
 import { GuardButton } from "./WalletGuard";
 import { CollectionKind } from "@/lib/launchpad";
+import { useSupportedTokens } from "@/hooks/useSupportedTokens";
+import { getDefaultSupportedToken } from "@/lib/token-support";
 
 const SPLITTER_TOOLTIP =
   "If you want to split royalties with multiple people, paste your deployed Royalty Splitter contract address here, or deploy one first via Launchpad → Royalty Splitter.";
@@ -45,6 +47,8 @@ function isStellarAddress(v: string) {
 export function CollectionForm() {
   const { publicKey } = useWalletContext();
   const { deploy, isDeploying, error } = useDeployCollection(publicKey);
+  const { tokens: supportedTokens } = useSupportedTokens();
+  const hasSupportedTokens = supportedTokens.length > 0;
 
   const [successAddress, setSuccessAddress] = useState<string | null>(null);
 
@@ -59,6 +63,7 @@ export function CollectionForm() {
     maxSupply: 10000,
     royaltyBps: 500, // 5%
     royaltyReceiver: publicKey || "",
+    currencyAddress: "",
   });
 
   useEffect(() => {

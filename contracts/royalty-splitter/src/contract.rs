@@ -21,7 +21,7 @@ impl RoyaltySplitter {
         if is_initialized(&env) {
             panic_with_error!(&env, SplitterError::AlreadyInitialized);
         }
-        if beneficiaries.len() == 0 {
+        if beneficiaries.is_empty() {
             panic_with_error!(&env, SplitterError::NoBeneficiaries);
         }
         if beneficiaries.len() > MAX_BENEFICIARIES {
@@ -70,7 +70,7 @@ impl RoyaltySplitter {
             let share = shares.get(i).unwrap() as i128;
             let amount = balance * share / 10_000;
             if amount > 0 {
-                token_client.transfer(&contract_addr, &beneficiaries.get(i).unwrap(), &amount);
+                token_client.transfer(&contract_addr, beneficiaries.get(i).unwrap(), &amount);
                 distributed += amount;
             }
         }
