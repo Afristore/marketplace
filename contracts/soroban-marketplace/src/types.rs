@@ -1,5 +1,5 @@
 // types.rs
-use soroban_sdk::{contracterror, contracttype, Address, Bytes, Symbol};
+use soroban_sdk::{contracterror, contracttype, Address, Symbol};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

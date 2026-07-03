@@ -43,8 +43,9 @@ fn setup_launchpad(env: &Env) -> (LaunchpadClient<'_>, Address, Address, Address
     let admin = Address::generate(env);
     let fee_receiver = Address::generate(env);
     let creator = Address::generate(env);
+    let fee_token = Address::generate(env);
 
-    client.initialize(&admin, &fee_receiver, &0u32);
+    client.initialize(&admin, &fee_receiver, &0u32, &fee_token);
 
     let wasm_normal_721_bytes = wasm_bytes("collection_nft_erc721");
     let wasm_normal_1155_bytes = wasm_bytes("collection_nft_erc1155");
@@ -74,10 +75,6 @@ fn setup_launchpad(env: &Env) -> (LaunchpadClient<'_>, Address, Address, Address
     (client, admin, fee_receiver, creator)
 }
 
-fn approve_currency(client: &LaunchpadClient, currency: &Address) {
-    client.add_approved_currency(currency);
-}
-
 #[test]
 fn deploys_normal_721_twice_with_unique_addresses() {
     let env = Env::default();
@@ -87,12 +84,9 @@ fn deploys_normal_721_twice_with_unique_addresses() {
     let salt_a = BytesN::from_array(&env, &[10u8; 32]);
     let salt_b = BytesN::from_array(&env, &[11u8; 32]);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     let deployed_a = client.deploy_normal_721(
         &creator,
-        &currency,
         &String::from_str(&env, "Creator 721 A"),
         &String::from_str(&env, "C721A"),
         &1_000u64,
@@ -103,7 +97,6 @@ fn deploys_normal_721_twice_with_unique_addresses() {
 
     let deployed_b = client.deploy_normal_721(
         &creator,
-        &currency,
         &String::from_str(&env, "Creator 721 B"),
         &String::from_str(&env, "C721B"),
         &1_500u64,
@@ -136,12 +129,9 @@ fn deploys_normal_1155_twice_with_unique_addresses() {
     let salt_a = BytesN::from_array(&env, &[20u8; 32]);
     let salt_b = BytesN::from_array(&env, &[21u8; 32]);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     let deployed_a = client.deploy_normal_1155(
         &creator,
-        &currency,
         &String::from_str(&env, "Creator 1155 A"),
         &500u32,
         &royalty_receiver,
@@ -150,7 +140,6 @@ fn deploys_normal_1155_twice_with_unique_addresses() {
 
     let deployed_b = client.deploy_normal_1155(
         &creator,
-        &currency,
         &String::from_str(&env, "Creator 1155 B"),
         &500u32,
         &royalty_receiver,
@@ -182,12 +171,9 @@ fn deploys_lazy_721_twice_with_unique_addresses() {
     let salt_b = BytesN::from_array(&env, &[31u8; 32]);
     let creator_pubkey = BytesN::from_array(&env, &[7u8; 32]);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     let deployed_a = client.deploy_lazy_721(
         &creator,
-        &currency,
         &creator_pubkey,
         &String::from_str(&env, "Lazy 721 A"),
         &String::from_str(&env, "LZ7A"),
@@ -199,7 +185,6 @@ fn deploys_lazy_721_twice_with_unique_addresses() {
 
     let deployed_b = client.deploy_lazy_721(
         &creator,
-        &currency,
         &creator_pubkey,
         &String::from_str(&env, "Lazy 721 B"),
         &String::from_str(&env, "LZ7B"),
@@ -234,12 +219,9 @@ fn deploys_lazy_1155_twice_with_unique_addresses() {
     let salt_b = BytesN::from_array(&env, &[41u8; 32]);
     let creator_pubkey = BytesN::from_array(&env, &[9u8; 32]);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     let deployed_a = client.deploy_lazy_1155(
         &creator,
-        &currency,
         &creator_pubkey,
         &String::from_str(&env, "Lazy 1155 A"),
         &600u32,
@@ -249,7 +231,6 @@ fn deploys_lazy_1155_twice_with_unique_addresses() {
 
     let deployed_b = client.deploy_lazy_1155(
         &creator,
-        &currency,
         &creator_pubkey,
         &String::from_str(&env, "Lazy 1155 B"),
         &600u32,
@@ -279,8 +260,6 @@ fn deploy_calls_extend_instance_ttl() {
     let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
 
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     // After initialize(), instance TTL is bumped to 100_000 ledgers.
     // Move forward so remaining TTL is below threshold (50_000),
@@ -290,7 +269,6 @@ fn deploy_calls_extend_instance_ttl() {
     let salt_a = BytesN::from_array(&env, &[60u8; 32]);
     let _deployed_a = client.deploy_normal_721(
         &creator,
-        &currency,
         &String::from_str(&env, "TTL A"),
         &String::from_str(&env, "TTLA"),
         &100u64,
@@ -306,7 +284,6 @@ fn deploy_calls_extend_instance_ttl() {
     let salt_b = BytesN::from_array(&env, &[61u8; 32]);
     let _deployed_b = client.deploy_normal_1155(
         &creator,
-        &currency,
         &String::from_str(&env, "TTL B"),
         &500u32,
         &royalty_receiver,
@@ -353,12 +330,9 @@ fn same_salt_different_creators_normal_721_yields_different_addresses() {
 
     let salt = BytesN::from_array(&env, &[0xAAu8; 32]);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     let addr_alice = client.deploy_normal_721(
         &alice,
-        &currency,
         &String::from_str(&env, "Alice 721"),
         &String::from_str(&env, "AL7"),
         &100u64,
@@ -369,7 +343,6 @@ fn same_salt_different_creators_normal_721_yields_different_addresses() {
 
     let addr_bob = client.deploy_normal_721(
         &bob,
-        &currency,
         &String::from_str(&env, "Bob 721"),
         &String::from_str(&env, "BO7"),
         &100u64,
@@ -396,12 +369,9 @@ fn same_salt_different_creators_normal_1155_yields_different_addresses() {
 
     let salt = BytesN::from_array(&env, &[0xBBu8; 32]);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     let addr_alice = client.deploy_normal_1155(
         &alice,
-        &currency,
         &String::from_str(&env, "Alice 1155"),
         &500u32,
         &royalty_receiver,
@@ -410,7 +380,6 @@ fn same_salt_different_creators_normal_1155_yields_different_addresses() {
 
     let addr_bob = client.deploy_normal_1155(
         &bob,
-        &currency,
         &String::from_str(&env, "Bob 1155"),
         &500u32,
         &royalty_receiver,
@@ -432,12 +401,9 @@ fn same_salt_different_creators_lazy_721_yields_different_addresses() {
     let salt = BytesN::from_array(&env, &[0xCCu8; 32]);
     let creator_pubkey = BytesN::from_array(&env, &[0x01u8; 32]);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     let addr_alice = client.deploy_lazy_721(
         &alice,
-        &currency,
         &creator_pubkey,
         &String::from_str(&env, "Alice L721"),
         &String::from_str(&env, "AL7L"),
@@ -449,7 +415,6 @@ fn same_salt_different_creators_lazy_721_yields_different_addresses() {
 
     let addr_bob = client.deploy_lazy_721(
         &bob,
-        &currency,
         &creator_pubkey,
         &String::from_str(&env, "Bob L721"),
         &String::from_str(&env, "BO7L"),
@@ -474,12 +439,9 @@ fn same_salt_different_creators_lazy_1155_yields_different_addresses() {
     let salt = BytesN::from_array(&env, &[0xDDu8; 32]);
     let creator_pubkey = BytesN::from_array(&env, &[0x02u8; 32]);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     let addr_alice = client.deploy_lazy_1155(
         &alice,
-        &currency,
         &creator_pubkey,
         &String::from_str(&env, "Alice L1155"),
         &400u32,
@@ -489,7 +451,6 @@ fn same_salt_different_creators_lazy_1155_yields_different_addresses() {
 
     let addr_bob = client.deploy_lazy_1155(
         &bob,
-        &currency,
         &creator_pubkey,
         &String::from_str(&env, "Bob L1155"),
         &400u32,
@@ -517,13 +478,10 @@ fn front_runner_cannot_grief_normal_721() {
 
     let salt = BytesN::from_array(&env, &[0x11u8; 32]);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     // Bob front-runs using Alice's raw salt.
     let addr_bob = client.deploy_normal_721(
         &bob,
-        &currency,
         &String::from_str(&env, "Bob Grief 721"),
         &String::from_str(&env, "BG7"),
         &100u64,
@@ -535,7 +493,6 @@ fn front_runner_cannot_grief_normal_721() {
     // Alice's transaction must still succeed (no panic / error).
     let addr_alice = client.deploy_normal_721(
         &alice,
-        &currency,
         &String::from_str(&env, "Alice 721"),
         &String::from_str(&env, "AL7"),
         &100u64,
@@ -561,12 +518,9 @@ fn front_runner_cannot_grief_normal_1155() {
 
     let salt = BytesN::from_array(&env, &[0x22u8; 32]);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     let addr_bob = client.deploy_normal_1155(
         &bob,
-        &currency,
         &String::from_str(&env, "Bob Grief 1155"),
         &0u32,
         &royalty_receiver,
@@ -575,7 +529,6 @@ fn front_runner_cannot_grief_normal_1155() {
 
     let addr_alice = client.deploy_normal_1155(
         &alice,
-        &currency,
         &String::from_str(&env, "Alice 1155"),
         &0u32,
         &royalty_receiver,
@@ -597,12 +550,9 @@ fn front_runner_cannot_grief_lazy_721() {
     let salt = BytesN::from_array(&env, &[0x33u8; 32]);
     let creator_pubkey = BytesN::from_array(&env, &[0x03u8; 32]);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     let addr_bob = client.deploy_lazy_721(
         &bob,
-        &currency,
         &creator_pubkey,
         &String::from_str(&env, "Bob Grief L721"),
         &String::from_str(&env, "BGL7"),
@@ -614,7 +564,6 @@ fn front_runner_cannot_grief_lazy_721() {
 
     let addr_alice = client.deploy_lazy_721(
         &alice,
-        &currency,
         &creator_pubkey,
         &String::from_str(&env, "Alice L721"),
         &String::from_str(&env, "ALL7"),
@@ -639,12 +588,9 @@ fn front_runner_cannot_grief_lazy_1155() {
     let salt = BytesN::from_array(&env, &[0x44u8; 32]);
     let creator_pubkey = BytesN::from_array(&env, &[0x04u8; 32]);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     let addr_bob = client.deploy_lazy_1155(
         &bob,
-        &currency,
         &creator_pubkey,
         &String::from_str(&env, "Bob Grief L1155"),
         &0u32,
@@ -654,7 +600,6 @@ fn front_runner_cannot_grief_lazy_1155() {
 
     let addr_alice = client.deploy_lazy_1155(
         &alice,
-        &currency,
         &creator_pubkey,
         &String::from_str(&env, "Alice L1155"),
         &0u32,
@@ -678,9 +623,10 @@ fn initialize_twice_fails() {
 
     let admin = Address::generate(&env);
     let fee_receiver = Address::generate(&env);
-    client.initialize(&admin, &fee_receiver, &0u32);
+    let fee_token = Address::generate(&env);
+    client.initialize(&admin, &fee_receiver, &0u32, &fee_token);
 
-    let result = client.try_initialize(&admin, &fee_receiver, &0u32);
+    let result = client.try_initialize(&admin, &fee_receiver, &0u32, &fee_token);
     assert_eq!(result, Err(Ok(Error::AlreadyInitialized)));
 }
 
@@ -695,16 +641,14 @@ fn deploy_without_wasm_hashes_fails() {
     let admin = Address::generate(&env);
     let fee_receiver = Address::generate(&env);
     let creator = Address::generate(&env);
-    client.initialize(&admin, &fee_receiver, &0u32);
+    let fee_token = Address::generate(&env);
+    client.initialize(&admin, &fee_receiver, &0u32, &fee_token);
 
     let salt = BytesN::from_array(&env, &[0x99u8; 32]);
-    let currency = Address::generate(&env);
-    client.add_approved_currency(&currency);
     let royalty_receiver = Address::generate(&env);
 
     let result = client.try_deploy_normal_721(
         &creator,
-        &currency,
         &String::from_str(&env, "No Wasm"),
         &String::from_str(&env, "NOWASM"),
         &100u64,
@@ -785,13 +729,10 @@ fn collections_by_creator_returns_correct_collections() {
 
     let other = Address::generate(&env);
     let salt = BytesN::from_array(&env, &[0x55u8; 32]);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
     let royalty_receiver = Address::generate(&env);
 
     client.deploy_normal_721(
         &creator,
-        &currency,
         &String::from_str(&env, "Creator Coll"),
         &String::from_str(&env, "CRC"),
         &100u64,
@@ -868,13 +809,10 @@ fn deployed_lazy_721_rejects_invalid_ed25519_signature() {
 
     let creator_pubkey = BytesN::from_array(&env, &[1u8; 32]);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
     let salt = BytesN::from_array(&env, &[0xA1u8; 32]);
 
     let collection_addr = client.deploy_lazy_721(
         &creator,
-        &currency,
         &creator_pubkey,
         &String::from_str(&env, "Sig Test 721"),
         &String::from_str(&env, "ST7"),
@@ -911,13 +849,10 @@ fn deployed_lazy_721_rejects_expired_voucher() {
 
     let creator_pubkey = BytesN::from_array(&env, &[2u8; 32]);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
     let salt = BytesN::from_array(&env, &[0xA2u8; 32]);
 
     let collection_addr = client.deploy_lazy_721(
         &creator,
-        &currency,
         &creator_pubkey,
         &String::from_str(&env, "Expiry Test 721"),
         &String::from_str(&env, "ET7"),
@@ -962,12 +897,9 @@ fn get_collection_by_id_returns_record() {
 
     let salt = BytesN::from_array(&env, &[0xB1u8; 32]);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     let addr = client.deploy_normal_721(
         &creator,
-        &currency,
         &String::from_str(&env, "Query Test"),
         &String::from_str(&env, "QT7"),
         &100u64,
@@ -1005,12 +937,9 @@ fn get_creator_collections_returns_only_caller_collections() {
 
     let other = Address::generate(&env);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     client.deploy_normal_721(
         &creator,
-        &currency,
         &String::from_str(&env, "Creator A"),
         &String::from_str(&env, "CA7"),
         &100u64,
@@ -1021,7 +950,6 @@ fn get_creator_collections_returns_only_caller_collections() {
 
     client.deploy_normal_1155(
         &creator,
-        &currency,
         &String::from_str(&env, "Creator B"),
         &0u32,
         &royalty_receiver,
@@ -1045,12 +973,9 @@ fn get_all_collections_returns_all_deployed() {
 
     let alice = Address::generate(&env);
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     client.deploy_normal_721(
         &creator,
-        &currency,
         &String::from_str(&env, "Coll 1"),
         &String::from_str(&env, "C1"),
         &100u64,
@@ -1061,7 +986,6 @@ fn get_all_collections_returns_all_deployed() {
 
     client.deploy_normal_1155(
         &alice,
-        &currency,
         &String::from_str(&env, "Coll 2"),
         &0u32,
         &royalty_receiver,
@@ -1080,15 +1004,12 @@ fn get_collection_count_increments_per_deploy() {
     let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
 
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
     let creator_pubkey = BytesN::from_array(&env, &[0x05u8; 32]);
-    approve_currency(&client, &currency);
 
     assert_eq!(client.collection_count(), 0u64);
 
     client.deploy_normal_721(
         &creator,
-        &currency,
         &String::from_str(&env, "Count 1"),
         &String::from_str(&env, "CNT1"),
         &100u64,
@@ -1100,7 +1021,6 @@ fn get_collection_count_increments_per_deploy() {
 
     client.deploy_lazy_1155(
         &creator,
-        &currency,
         &creator_pubkey,
         &String::from_str(&env, "Count 2"),
         &0u32,
@@ -1118,14 +1038,11 @@ fn deploy_events_include_kind_in_payload() {
     let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
 
     let royalty_receiver = Address::generate(&env);
-    let currency = Address::generate(&env);
-    approve_currency(&client, &currency);
 
     // Deploy one of each type and confirm no panic (events are emitted).
     // The soroban test SDK exposes env.events().all() to inspect events.
     let addr_n721 = client.deploy_normal_721(
         &creator,
-        &currency,
         &String::from_str(&env, "Evt 721"),
         &String::from_str(&env, "EV7"),
         &100u64,
@@ -1136,7 +1053,6 @@ fn deploy_events_include_kind_in_payload() {
 
     let addr_n1155 = client.deploy_normal_1155(
         &creator,
-        &currency,
         &String::from_str(&env, "Evt 1155"),
         &0u32,
         &royalty_receiver,
@@ -1165,8 +1081,9 @@ fn setup_launchpad_with_staking(env: &Env) -> (LaunchpadClient<'_>, Address, Add
     let admin = Address::generate(env);
     let creator = Address::generate(env);
     let fee_receiver = Address::generate(env);
+    let fee_token = Address::generate(env);
 
-    client.initialize(&admin, &fee_receiver, &0u32);
+    client.initialize(&admin, &fee_receiver, &0u32, &fee_token);
 
     let wasm_staking_bytes = wasm_bytes("nft_staking");
     let wasm_staking = env
@@ -1187,23 +1104,15 @@ fn deploys_staking_pool_for_nft_collection() {
     let nft_address = Address::generate(&env);
     let reward_token = Address::generate(&env);
     let salt = BytesN::from_array(&env, &[0xAAu8; 32]);
-    approve_currency(&client, &reward_token);
 
-    let pool_a = client.deploy_staking_pool(
-        &creator,
-        &reward_token,
-        &nft_address,
-        &reward_token,
-        &1_000_000i128,
-        &salt,
-    );
+    let pool_a =
+        client.deploy_staking_pool(&creator, &nft_address, &reward_token, &1_000_000i128, &salt);
 
     let pool_b = client.get_staking_pool(&nft_address);
     assert_eq!(Some(pool_a), pool_b);
 
     let duplicate = client.try_deploy_staking_pool(
         &creator,
-        &reward_token,
         &nft_address,
         &reward_token,
         &1_000_000i128,

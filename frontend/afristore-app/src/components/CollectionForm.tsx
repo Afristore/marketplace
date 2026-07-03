@@ -9,7 +9,6 @@ import { useWalletContext } from "@/context/WalletContext";
 import { Loader2, Rocket, CheckCircle, ArrowRight, Info, ChevronDown } from "lucide-react";
 import { GuardButton } from "./WalletGuard";
 import { CollectionKind } from "@/lib/launchpad";
-import { DEFAULT_TOKEN } from "@/config/tokens";
 import { useSupportedTokens } from "@/hooks/useSupportedTokens";
 import { getDefaultSupportedToken } from "@/lib/token-support";
 
@@ -64,7 +63,7 @@ export function CollectionForm() {
     maxSupply: 10000,
     royaltyBps: 500, // 5%
     royaltyReceiver: publicKey || "",
-    currencyAddress: DEFAULT_TOKEN.address,
+    currencyAddress: "",
   });
 
   useEffect(() => {
@@ -399,7 +398,7 @@ export function CollectionForm() {
 
           <GuardButton
             type="submit"
-            disabled={isDeploying || !hasSupportedTokens || (!!form.royaltyReceiver && !royaltyAddressValid)}
+            disabled={isDeploying}
             actionName="to deploy your collection"
             className="w-full flex items-center justify-center gap-3 rounded-2xl bg-brand-500 py-5 text-xl font-bold text-white shadow-2xl shadow-brand-500/30 hover:bg-brand-600 hover:scale-[1.01] transition-all active:scale-[0.98] disabled:opacity-50 disabled:hover:scale-100"
           >

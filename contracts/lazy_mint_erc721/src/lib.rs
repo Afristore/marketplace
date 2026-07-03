@@ -489,15 +489,6 @@ impl LazyMint721 {
         env.storage()
             .persistent()
             .set(&DataKey::BalanceOf(from.clone()), &(from_bal - 1));
-        let from_bal: u64 = env
-            .storage()
-            .persistent()
-            .get(&DataKey::BalanceOf(from.clone()))
-            .unwrap_or(0);
-        env.storage().persistent().set(
-            &DataKey::BalanceOf(from.clone()),
-            &(from_bal.saturating_sub(1)),
-        );
         env.storage().persistent().extend_ttl(
             &DataKey::BalanceOf(from.clone()),
             TTL_THRESHOLD,

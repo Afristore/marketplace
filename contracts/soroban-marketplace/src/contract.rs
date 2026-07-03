@@ -618,7 +618,7 @@ impl MarketplaceContract {
         if let Some(prev) = auction.highest_bidder.clone() {
             token_client.transfer(&env.current_contract_address(), &prev, &auction.highest_bid);
         }
-        token_client.transfer(&bidder, &env.current_contract_address(), &amount);
+        token_client.transfer(&bidder, env.current_contract_address(), &amount);
         auction.highest_bid = amount;
         auction.highest_bidder = Some(bidder.clone());
         save_auction(&env, &auction);
@@ -657,11 +657,9 @@ impl MarketplaceContract {
         }
 
         // Time check
-        if env.ledger().timestamp() < auction.end_time {
-            if caller != auction.creator {
-                release_auction_lock(&env, auction_id);
-                panic_with_error!(&env, MarketplaceError::Unauthorized);
-            }
+        if env.ledger().timestamp() < auction.end_time && caller != auction.creator {
+            release_auction_lock(&env, auction_id);
+            panic_with_error!(&env, MarketplaceError::Unauthorized);
         }
 
         let (finalized_winner, finalized_amount) =
@@ -731,7 +729,7 @@ impl MarketplaceContract {
         if amount <= 0 {
             panic_with_error!(&env, MarketplaceError::InsufficientOfferAmount);
         }
-        TokenClient::new(&env, &token).transfer(&offerer, &env.current_contract_address(), &amount);
+        TokenClient::new(&env, &token).transfer(&offerer, env.current_contract_address(), &amount);
         let offer_id = increment_offer_count(&env);
         save_offer(
             &env,
@@ -1019,7 +1017,7 @@ impl MarketplaceContract {
     ) {
         let token = TokenClient::new(env, token_addr);
         if transfer_from_buyer {
-            token.transfer(buyer, &env.current_contract_address(), &amount);
+            token.transfer(buyer, env.current_contract_address(), &amount);
         }
         let mut payout = amount;
 

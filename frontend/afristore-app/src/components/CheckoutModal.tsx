@@ -23,18 +23,21 @@ export function CheckoutModal({
   isBuyingCrypto,
 }: CheckoutModalProps) {
   const [method, setMethod] = useState<"crypto" | "fiat">("crypto");
+  const [quantity, setQuantity] = useState(1);
 
   if (!isOpen) return null;
 
   const priceXlm = Number(stroopsToXlm(listing.price));
-  const estimatedFiat = (priceXlm * 0.12).toFixed(2);
+  const totalPriceXlm = priceXlm * quantity;
+  const estimatedFiat = (totalPriceXlm * 0.12).toFixed(2);
 
   const handleCryptoPurchase = async () => {
     const success = await onCryptoPurchase();
     if (success) {
       posthog.capture("Purchase Successful", {
         listing_id: listing.listing_id,
-        price_xlm: priceXlm,
+        price_xlm: totalPriceXlm,
+        quantity,
         method: "crypto",
       });
       onPurchased?.();
@@ -66,13 +69,35 @@ export function CheckoutModal({
         <div className="p-6">
           <div className="mb-6 flex justify-between rounded-2xl bg-gray-50 p-4">
             <div>
-              <p className="text-sm text-gray-500">Total Price</p>
-              <p className="font-display text-2xl font-bold text-gray-900">
+              <p className="text-sm text-gray-500">Unit Price</p>
+              <p className="font-display text-lg font-bold text-gray-700">
                 {priceXlm} XLM
               </p>
+              <p className="text-sm text-gray-500 mt-1">Quantity</p>
+              <div className="flex items-center gap-3 mt-1">
+                <button
+                  onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                  className="rounded-lg bg-gray-200 px-3 py-1 text-sm font-bold hover:bg-gray-300 transition"
+                >
+                  -
+                </button>
+                <span className="font-display text-lg font-bold text-gray-900 min-w-[2ch] text-center">
+                  {quantity}
+                </span>
+                <button
+                  onClick={() => setQuantity((q) => q + 1)}
+                  className="rounded-lg bg-gray-200 px-3 py-1 text-sm font-bold hover:bg-gray-300 transition"
+                >
+                  +
+                </button>
+              </div>
             </div>
             <div className="text-right">
-              <p className="text-sm text-gray-500">Estimated</p>
+              <p className="text-sm text-gray-500">Total Price</p>
+              <p className="font-display text-2xl font-bold text-gray-900">
+                {totalPriceXlm} XLM
+              </p>
+              <p className="text-sm text-gray-500 mt-1">Estimated</p>
               <p className="font-display text-xl font-bold text-brand-500">
                 ~${estimatedFiat}
               </p>
@@ -114,7 +139,7 @@ export function CheckoutModal({
                   <Loader2 className="animate-spin" size={18} /> Processing...
                 </>
               ) : (
-                `Pay ${priceXlm} XLM`
+                `Pay ${totalPriceXlm} XLM`
               )}
             </button>
           </div>

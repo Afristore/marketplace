@@ -138,6 +138,7 @@ impl Launchpad {
         admin: Address,
         platform_fee_receiver: Address,
         platform_fee_bps: u32,
+        platform_fee_token: Address,
     ) -> Result<(), Error> {
         if storage::is_initialized(&env) {
             return Err(Error::AlreadyInitialized);
@@ -146,6 +147,7 @@ impl Launchpad {
         storage::set_initialized(&env);
         storage::set_admin(&env, &admin);
         storage::set_platform_fee(&env, &platform_fee_receiver, platform_fee_bps);
+        storage::set_platform_fee_token(&env, &platform_fee_token);
         Ok(())
     }
 
@@ -188,7 +190,6 @@ impl Launchpad {
     pub fn deploy_normal_721(
         env: Env,
         creator: Address,
-        currency: Address,
         name: String,
         symbol: String,
         max_supply: u64,
@@ -198,12 +199,13 @@ impl Launchpad {
     ) -> Result<Address, Error> {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
-        storage::require_approved_currency(&env, &currency)?;
 
-        // [FEE] Collect deployment fee (#54)
+        // [FEE] Collect deployment fee using admin-set token (#442)
         let (receiver, fee) = storage::get_platform_fee(&env);
         if fee > 0 {
-            soroban_sdk::token::TokenClient::new(&env, &currency).transfer(
+            let fee_token =
+                storage::get_platform_fee_token(&env).ok_or(Error::PlatformFeeTokenNotSet)?;
+            soroban_sdk::token::TokenClient::new(&env, &fee_token).transfer(
                 &creator,
                 &receiver,
                 &(fee as i128),
@@ -245,7 +247,6 @@ impl Launchpad {
     pub fn deploy_normal_1155(
         env: Env,
         creator: Address,
-        currency: Address,
         name: String,
         royalty_bps: u32,
         royalty_receiver: Address,
@@ -253,12 +254,13 @@ impl Launchpad {
     ) -> Result<Address, Error> {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
-        storage::require_approved_currency(&env, &currency)?;
 
-        // [FEE] Collect deployment fee (#54)
+        // [FEE] Collect deployment fee (#442) — use globally-set fee token
         let (receiver, fee) = storage::get_platform_fee(&env);
         if fee > 0 {
-            soroban_sdk::token::TokenClient::new(&env, &currency).transfer(
+            let fee_token =
+                storage::get_platform_fee_token(&env).ok_or(Error::PlatformFeeTokenNotSet)?;
+            soroban_sdk::token::TokenClient::new(&env, &fee_token).transfer(
                 &creator,
                 &receiver,
                 &(fee as i128),
@@ -300,7 +302,6 @@ impl Launchpad {
     pub fn deploy_lazy_721(
         env: Env,
         creator: Address,
-        currency: Address,
         creator_pubkey: BytesN<32>,
         name: String,
         symbol: String,
@@ -311,12 +312,13 @@ impl Launchpad {
     ) -> Result<Address, Error> {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
-        storage::require_approved_currency(&env, &currency)?;
 
-        // [FEE] Collect deployment fee (#54)
+        // [FEE] Collect deployment fee (#442) — use globally-set fee token
         let (receiver, fee) = storage::get_platform_fee(&env);
         if fee > 0 {
-            soroban_sdk::token::TokenClient::new(&env, &currency).transfer(
+            let fee_token =
+                storage::get_platform_fee_token(&env).ok_or(Error::PlatformFeeTokenNotSet)?;
+            soroban_sdk::token::TokenClient::new(&env, &fee_token).transfer(
                 &creator,
                 &receiver,
                 &(fee as i128),
@@ -357,7 +359,6 @@ impl Launchpad {
     pub fn deploy_lazy_1155(
         env: Env,
         creator: Address,
-        currency: Address,
         creator_pubkey: BytesN<32>,
         name: String,
         royalty_bps: u32,
@@ -366,12 +367,13 @@ impl Launchpad {
     ) -> Result<Address, Error> {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
-        storage::require_approved_currency(&env, &currency)?;
 
-        // [FEE] Collect deployment fee (#54)
+        // [FEE] Collect deployment fee (#442) — use globally-set fee token
         let (receiver, fee) = storage::get_platform_fee(&env);
         if fee > 0 {
-            soroban_sdk::token::TokenClient::new(&env, &currency).transfer(
+            let fee_token =
+                storage::get_platform_fee_token(&env).ok_or(Error::PlatformFeeTokenNotSet)?;
+            soroban_sdk::token::TokenClient::new(&env, &fee_token).transfer(
                 &creator,
                 &receiver,
                 &(fee as i128),
@@ -467,7 +469,6 @@ impl Launchpad {
     pub fn deploy_staking_pool(
         env: Env,
         creator: Address,
-        currency: Address,
         nft_address: Address,
         reward_token: Address,
         reward_rate: i128,
@@ -475,12 +476,13 @@ impl Launchpad {
     ) -> Result<Address, Error> {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
-        storage::require_approved_currency(&env, &currency)?;
 
-        // [FEE] Collect deployment fee
+        // [FEE] Collect deployment fee (#442) — use globally-set fee token
         let (receiver, fee) = storage::get_platform_fee(&env);
         if fee > 0 {
-            soroban_sdk::token::TokenClient::new(&env, &currency).transfer(
+            let fee_token =
+                storage::get_platform_fee_token(&env).ok_or(Error::PlatformFeeTokenNotSet)?;
+            soroban_sdk::token::TokenClient::new(&env, &fee_token).transfer(
                 &creator,
                 &receiver,
                 &(fee as i128),
@@ -528,6 +530,15 @@ impl Launchpad {
         Ok(())
     }
 
+    /// Admin sets the token used for platform fee collection.
+    /// Deploy functions will use this token instead of the caller-supplied currency.
+    pub fn set_platform_fee_token(env: Env, token: Address) -> Result<(), Error> {
+        storage::extend_instance_ttl(&env);
+        storage::require_admin(&env)?;
+        storage::set_platform_fee_token(&env, &token);
+        Ok(())
+    }
+
     /// Add a token address to the approved currency whitelist.
     pub fn add_approved_currency(env: Env, currency: Address) -> Result<(), Error> {
         storage::extend_instance_ttl(&env);
@@ -571,6 +582,10 @@ impl Launchpad {
 
     pub fn platform_fee(env: Env) -> (Address, u32) {
         storage::get_platform_fee(&env)
+    }
+
+    pub fn platform_fee_token(env: Env) -> Option<Address> {
+        storage::get_platform_fee_token(&env)
     }
 
     // ── Query API (issue: launchpad contract query API + deploy events) ───

@@ -48,7 +48,6 @@ function toAddressScVal(address: string): xdr.ScVal {
  */
 export async function deployNormal721(
   creatorPublicKey: string,
-  currencyAddress: string,
   name: string,
   symbol: string,
   maxSupply: number,
@@ -58,7 +57,6 @@ export async function deployNormal721(
 ): Promise<string> {
   const args: xdr.ScVal[] = [
     toAddressScVal(creatorPublicKey),
-    toAddressScVal(currencyAddress),
     nativeToScVal(name, { type: "string" }),
     nativeToScVal(symbol, { type: "string" }),
     nativeToScVal(BigInt(maxSupply), { type: "u64" }),
@@ -82,7 +80,6 @@ export async function deployNormal721(
  */
 export async function deployNormal1155(
   creatorPublicKey: string,
-  currencyAddress: string,
   name: string,
   royaltyBps: number,
   royaltyReceiver: string,
@@ -90,7 +87,6 @@ export async function deployNormal1155(
 ): Promise<string> {
   const args: xdr.ScVal[] = [
     toAddressScVal(creatorPublicKey),
-    toAddressScVal(currencyAddress),
     nativeToScVal(name, { type: "string" }),
     nativeToScVal(royaltyBps, { type: "u32" }),
     toAddressScVal(royaltyReceiver),
@@ -112,7 +108,6 @@ export async function deployNormal1155(
  */
 export async function deployLazy721(
   creatorPublicKey: string,
-  currencyAddress: string,
   creatorPubkeyBytes: Buffer, // 32 bytes
   name: string,
   symbol: string,
@@ -123,7 +118,6 @@ export async function deployLazy721(
 ): Promise<string> {
   const args: xdr.ScVal[] = [
     toAddressScVal(creatorPublicKey),
-    toAddressScVal(currencyAddress),
     nativeToScVal(Uint8Array.from(creatorPubkeyBytes), { type: "bytes" }),
     nativeToScVal(name, { type: "string" }),
     nativeToScVal(symbol, { type: "string" }),
@@ -148,7 +142,6 @@ export async function deployLazy721(
  */
 export async function deployLazy1155(
   creatorPublicKey: string,
-  currencyAddress: string,
   creatorPubkeyBytes: Buffer,
   name: string,
   royaltyBps: number,
@@ -157,7 +150,6 @@ export async function deployLazy1155(
 ): Promise<string> {
   const args: xdr.ScVal[] = [
     toAddressScVal(creatorPublicKey),
-    toAddressScVal(currencyAddress),
     nativeToScVal(Uint8Array.from(creatorPubkeyBytes), { type: "bytes" }),
     nativeToScVal(name, { type: "string" }),
     nativeToScVal(royaltyBps, { type: "u32" }),
@@ -297,7 +289,6 @@ export async function getStakingPoolByNft(
  */
 export async function deployStakingPool(
   creatorPublicKey: string,
-  currencyAddress: string,
   nftAddress: string,
   rewardToken: string,
   rewardRate: bigint,
@@ -305,7 +296,6 @@ export async function deployStakingPool(
 ): Promise<string> {
   const args: xdr.ScVal[] = [
     toAddressScVal(creatorPublicKey),
-    toAddressScVal(currencyAddress),
     toAddressScVal(nftAddress),
     toAddressScVal(rewardToken),
     nativeToScVal(rewardRate, { type: "i128" }),
@@ -454,18 +444,25 @@ export async function getCollectionMetadata(
   };
 }
 
+function mapKeySymbol(name: string, val: xdr.ScVal): xdr.ScMapEntry {
+  return new xdr.ScMapEntry({
+    key: nativeToScVal(name, { type: "symbol" }),
+    val,
+  });
+}
+
 /**
- * Mint a new NFT in a Normal 721 collection.
+ * mint721 — Mint a single token in a Normal 721 collection.
  */
 export async function mint721(
   creatorPublicKey: string,
   collectionAddress: string,
   recipient: string,
-  metadataCid: string,
+  uri: string,
 ): Promise<number> {
   const args: xdr.ScVal[] = [
     toAddressScVal(recipient),
-    nativeToScVal(metadataCid, { type: "string" }),
+    nativeToScVal(uri, { type: "string" }),
   ];
 
   const retVal = await invokeContract(
@@ -476,13 +473,6 @@ export async function mint721(
     collectionAddress,
   );
   return Number(scValToNative(retVal));
-}
-
-function mapKeySymbol(name: string, val: xdr.ScVal): xdr.ScMapEntry {
-  return new xdr.ScMapEntry({
-    key: nativeToScVal(name, { type: "symbol" }),
-    val,
-  });
 }
 
 /**
