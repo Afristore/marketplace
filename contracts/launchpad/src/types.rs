@@ -10,6 +10,7 @@ pub enum Error {
     WasmHashNotSet = 4,
     StakingPoolAlreadyExists = 5,
     PlatformFeeTokenNotSet = 6,
+    InvalidCurrency = 6,
 }
 
 /// Which of the four collection types was deployed.
@@ -61,4 +62,6 @@ pub enum DataKey {
     StakingPoolByNft(Address),
     /// WASM hash for RoyaltySplitter clone deployments
     WasmRoyaltySplitter,
+    /// Tracks which token addresses are approved as payment currencies
+    ApprovedCurrency(Address),
 }

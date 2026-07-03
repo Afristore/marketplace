@@ -14,6 +14,8 @@ pub enum StakingError {
     AlreadyInitialized = 8,
     NotInitialized = 9,
     InvalidToken = 10,
+    InsufficientRewardBalance = 11,
+    RewardRateTooHigh = 12,
 }
 
 #[contracttype]

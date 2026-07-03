@@ -326,3 +326,58 @@ fn test_distribute_dust_goes_to_caller() {
     assert_eq!(tc.balance(&caller), 1, "dust goes to caller");
     assert_eq!(tc.balance(&contract_id), 0);
 }
+
+// ── get_share ────────────────────────────────────────────────
+
+#[test]
+fn test_get_share_for_beneficiary() {
+    let (env, client, token, _) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.initialize(
+        &token,
+        &vec![&env, alice.clone(), bob.clone()],
+        &vec![&env, 6_000_u32, 4_000_u32],
+    );
+
+    assert_eq!(client.get_share(&alice), 6_000_u32);
+    assert_eq!(client.get_share(&bob), 4_000_u32);
+}
+
+#[test]
+fn test_get_share_for_nonexistent_beneficiary() {
+    let (env, client, token, _) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let charlie = Address::generate(&env);
+
+    client.initialize(
+        &token,
+        &vec![&env, alice, bob],
+        &vec![&env, 5_000_u32, 5_000_u32],
+    );
+
+    let err = client.try_get_share(&charlie).unwrap_err().unwrap();
+
+    assert_eq!(err, SplitterError::BeneficiaryNotFound.into());
+}
+
+#[test]
+fn test_get_share_before_initialize() {
+    let (env, client, _token, _) = setup();
+    let alice = Address::generate(&env);
+
+    let err = client.try_get_share(&alice).unwrap_err().unwrap();
+    assert_eq!(err, SplitterError::NotInitialized.into());
+}
+
+#[test]
+fn test_get_share_single_beneficiary() {
+    let (env, client, token, _) = setup();
+    let alice = Address::generate(&env);
+
+    client.initialize(&token, &vec![&env, alice.clone()], &vec![&env, 10_000_u32]);
+
+    assert_eq!(client.get_share(&alice), 10_000_u32);
+}

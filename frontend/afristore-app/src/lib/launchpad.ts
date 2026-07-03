@@ -168,6 +168,38 @@ export async function deployLazy1155(
 }
 
 /**
+ * deploy_splitter - Deploy a royalty splitter contract
+ */
+export async function deploySplitter(
+  creatorPublicKey: string,
+  token: string,
+  beneficiaries: string[],
+  shares: number[],
+  salt: Buffer,
+): Promise<string> {
+  const addressArray = beneficiaries.map(b => new Address(b));
+  const beneficiariesScVal = nativeToScVal(addressArray, { type: "Vec" });
+  const sharesScVal = nativeToScVal(shares, { type: "Vec" });
+
+  const args: xdr.ScVal[] = [
+    toAddressScVal(creatorPublicKey),
+    toAddressScVal(token),
+    beneficiariesScVal,
+    sharesScVal,
+    nativeToScVal(Uint8Array.from(salt), { type: "bytes" }),
+  ];
+
+  const retVal = await invokeContract(
+    creatorPublicKey,
+    "deploy_splitter",
+    args,
+    false,
+    config.launchpadContractId,
+  );
+  return (scValToNative(retVal) as Address).toString();
+}
+
+/**
  * collections_by_creator
  */
 export async function getCollectionsByCreator(

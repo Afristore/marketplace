@@ -4,6 +4,8 @@ use crate::events::*;
 use crate::storage::*;
 use crate::types::*;
 
+const MAX_REWARD_RATE: i128 = 1_000_000_000_000_000;
+
 #[contract]
 pub struct NftStaking;
 
@@ -24,6 +26,9 @@ impl NftStaking {
         }
         if reward_rate <= 0 {
             panic_with_error!(&env, StakingError::InvalidDuration);
+        }
+        if reward_rate > MAX_REWARD_RATE {
+            panic_with_error!(&env, StakingError::RewardRateTooHigh);
         }
 
         set_initialized(&env);
@@ -116,15 +121,15 @@ impl NftStaking {
             panic_with_error!(&env, StakingError::AlreadyStaked);
         }
 
+        // User is the current owner; transfer directly without requiring a prior approve().
         env.invoke_contract::<()>(
             &token_address,
-            &soroban_sdk::Symbol::new(&env, "transfer_from"),
+            &soroban_sdk::Symbol::new(&env, "transfer"),
             soroban_sdk::vec![
                 &env,
-                env.current_contract_address().into_val(&env),
                 user.clone().into_val(&env),
                 env.current_contract_address().into_val(&env),
-                (token_id as u64).into_val(&env),
+                token_id.into_val(&env),
             ],
         );
 
@@ -179,7 +184,7 @@ impl NftStaking {
                 &env,
                 user.clone().into_val(&env),
                 env.current_contract_address().into_val(&env),
-                (token_id as u64).into_val(&env),
+                token_id.into_val(&env),
                 (amount as i128).into_val(&env),
                 soroban_sdk::Bytes::new(&env).into_val(&env),
             ],
@@ -222,27 +227,39 @@ impl NftStaking {
         Self::require_pool_nft(&env, &token_address);
 
         let position_key = DataKey::StakedPosition(user.clone(), token_address.clone(), token_id);
-        let mut position = load_staked_position(&env, &position_key)
+        let position = load_staked_position(&env, &position_key)
             .unwrap_or_else(|| panic_with_error!(&env, StakingError::NotStaked));
 
         if position.owner != user {
             panic_with_error!(&env, StakingError::Unauthorized);
         }
 
+        // Accrue any rewards still owed since the last checkpoint, then pay out
+        // before the position record is wiped.
         let rate = Self::rewards_per_second(&env);
         let elapsed = env.ledger().timestamp() - position.staked_at;
-        let rewards = (elapsed as i128) * rate;
-        position.rewards_earned += rewards;
+        let pending = position.rewards_earned + (elapsed as i128) * rate;
 
+        if pending > 0 {
+            let reward_token_addr = get_reward_token(&env)
+                .unwrap_or_else(|| panic_with_error!(&env, StakingError::NotInitialized));
+            let token_client = soroban_sdk::token::TokenClient::new(&env, &reward_token_addr);
+            let balance = token_client.balance(&env.current_contract_address());
+            if balance < pending {
+                panic_with_error!(&env, StakingError::InsufficientRewardBalance);
+            }
+            token_client.transfer(&env.current_contract_address(), &user, &pending);
+        }
+
+        // Contract is the current owner; return the NFT directly.
         env.invoke_contract::<()>(
             &token_address,
-            &soroban_sdk::Symbol::new(&env, "transfer_from"),
+            &soroban_sdk::Symbol::new(&env, "transfer"),
             soroban_sdk::vec![
                 &env,
                 env.current_contract_address().into_val(&env),
-                env.current_contract_address().into_val(&env),
                 user.clone().into_val(&env),
-                (token_id as u64).into_val(&env),
+                token_id.into_val(&env),
             ],
         );
 
@@ -254,7 +271,7 @@ impl NftStaking {
             user,
             token_address,
             token_id,
-            rewards_paid: position.rewards_earned,
+            rewards_paid: pending,
             timestamp: env.ledger().timestamp(),
         }
         .publish(&env);
@@ -293,7 +310,7 @@ impl NftStaking {
                 &env,
                 env.current_contract_address().into_val(&env),
                 user.clone().into_val(&env),
-                (token_id as u64).into_val(&env),
+                token_id.into_val(&env),
                 (amount as i128).into_val(&env),
                 soroban_sdk::Bytes::new(&env).into_val(&env),
             ],
@@ -326,10 +343,12 @@ impl NftStaking {
         for key in stake_keys.iter() {
             if let Some(mut position) = load_staked_position(&env, &key) {
                 let elapsed = env.ledger().timestamp() - position.staked_at;
-                let rewards = (elapsed as i128) * rate;
-                position.rewards_earned += rewards;
+                // Collect all pending rewards: previously accrued + newly elapsed.
+                let claimable = position.rewards_earned + (elapsed as i128) * rate;
+                total_rewards += claimable;
+                // Reset so the same rewards are never counted twice.
+                position.rewards_earned = 0;
                 position.staked_at = env.ledger().timestamp();
-                total_rewards += rewards;
                 save_staked_position(&env, &key, &position);
             }
         }
@@ -337,6 +356,15 @@ impl NftStaking {
         if total_rewards <= 0 {
             panic_with_error!(&env, StakingError::NoRewardsToClaim);
         }
+
+        let reward_token_addr = get_reward_token(&env)
+            .unwrap_or_else(|| panic_with_error!(&env, StakingError::NotInitialized));
+        let token_client = soroban_sdk::token::TokenClient::new(&env, &reward_token_addr);
+        let balance = token_client.balance(&env.current_contract_address());
+        if balance < total_rewards {
+            panic_with_error!(&env, StakingError::InsufficientRewardBalance);
+        }
+        token_client.transfer(&env.current_contract_address(), &user, &total_rewards);
 
         RewardsClaimedEvent {
             user,
@@ -380,6 +408,7 @@ impl NftStaking {
         for key in stake_keys.iter() {
             if let Some(position) = load_staked_position(&env, &key) {
                 let elapsed = env.ledger().timestamp() - position.staked_at;
+                // rewards_earned holds only the pending (not-yet-claimed) portion.
                 total += (elapsed as i128) * rate + position.rewards_earned;
             }
         }
