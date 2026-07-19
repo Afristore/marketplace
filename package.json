@@ -10,8 +10,8 @@
   "scripts": {
     "postinstall": "npm --workspace=indexer run prisma:generate",
     "dev": "concurrently \"npm --workspace=indexer run dev\" \"npm --workspace=frontend/afristore-app run dev\" \"npm --workspace=indexer run crank\"",
-    "build:contracts": "cargo build --target wasm32v1-none --release --manifest-path contracts/soroban-marketplace/Cargo.toml",
-    "test:contracts": "cargo test --manifest-path contracts/soroban-marketplace/Cargo.toml",
+    "build:contracts": "cargo build --target wasm32v1-none --release --workspace",
+    "test:contracts": "cargo test --workspace",
     "deploy:local": "bash scripts/deploy/deploy_contract.sh"
   },
   "keywords": [],

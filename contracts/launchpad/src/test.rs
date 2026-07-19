@@ -28,7 +28,7 @@ fn wasm_bytes(name: &str) -> std::vec::Vec<u8> {
 
     std::fs::read(&path).unwrap_or_else(|_| {
         panic!(
-            "missing wasm at {}. build it first with: cargo build --target wasm32v1-none --release -p collection-nft-erc1155 -p lazy-mint-erc721 -p collection-nft-erc721 -p lazy-mint-erc1155",
+            "missing wasm at {}. build it first with: cargo build --target wasm32v1-none --release --workspace",
             path.display()
         )
     })
