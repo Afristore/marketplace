@@ -224,3 +224,79 @@ export async function getSplitterRecipients(
     percentage: Number(obj.percentage),
   }));
 }
+
+export async function getPendingBalance(
+  contractId: string,
+): Promise<number> {
+  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+  const contract = new Contract(contractId);
+  const rpc = getRpc();
+  const account = await rpc.getAccount(DUMMY_KEY);
+
+  // Get the token address from the contract
+  const tokenTx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: getNetworkPassphrase(),
+  })
+    .addOperation(contract.call("get_token"))
+    .setTimeout(30)
+    .build();
+
+  const simResult = await rpc.simulateTransaction(tokenTx);
+
+  if (SorobanRpc.Api.isSimulationError(simResult)) {
+    throw new Error("Unable to fetch token address from splitter.");
+  }
+
+  const tokenRetVal = (
+    simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
+  ).result?.retval;
+  if (!tokenRetVal) throw new Error("No token address returned.");
+
+  const tokenAddress = scValToNative(tokenRetVal) as any;
+  const tokenAddressStr =
+    tokenAddress instanceof Address ? tokenAddress.toString() : String(tokenAddress);
+
+  // Get the balance of the contract with the token
+  const tokenContract = new Contract(tokenAddressStr);
+  const balanceTx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: getNetworkPassphrase(),
+  })
+    .addOperation(tokenContract.call("balance", new Address(contractId).toScVal()))
+    .setTimeout(30)
+    .build();
+
+  const balanceSimResult = await rpc.simulateTransaction(balanceTx);
+
+  if (SorobanRpc.Api.isSimulationError(balanceSimResult)) {
+    throw new Error("Unable to fetch pending balance.");
+  }
+
+  const balanceRetVal = (
+    balanceSimResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
+  ).result?.retval;
+  if (!balanceRetVal) throw new Error("No balance returned.");
+
+  const balance = scValToNative(balanceRetVal) as number;
+  return balance;
+}
+
+export async function distributeRoyalties(
+  userPublicKey: string,
+  contractId: string,
+): Promise<void> {
+  const contract = new Contract(contractId);
+  const rpc = getRpc();
+  const account = await rpc.getAccount(userPublicKey);
+
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: getNetworkPassphrase(),
+  })
+    .addOperation(contract.call("distribute"))
+    .setTimeout(30)
+    .build();
+
+  await submitAndPoll(tx, rpc);
+}
