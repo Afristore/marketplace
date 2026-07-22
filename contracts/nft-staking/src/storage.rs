@@ -59,10 +59,19 @@ pub fn add_user_stake(env: &Env, user: &Address, position_key: DataKey) {
 
 pub fn get_user_stakes(env: &Env, user: &Address) -> Vec<DataKey> {
     let key = DataKey::UserStakes(user.clone());
-    env.storage()
+    let stakes = env
+        .storage()
         .persistent()
         .get::<_, Vec<DataKey>>(&key)
-        .unwrap_or_else(|| Vec::new(env))
+        .unwrap_or_else(|| Vec::new(env));
+
+    if env.storage().persistent().has(&key) {
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
+    }
+
+    stakes
 }
 
 pub fn remove_user_stake(env: &Env, user: &Address, position_key: &DataKey) {

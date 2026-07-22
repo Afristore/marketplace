@@ -167,7 +167,7 @@ export async function fetchMetadata(cid?: string): Promise<ArtworkMetadata> {
   }
   const cleanCid = cid.replace("ipfs://", "").trim();
   const url = `${config.pinataGateway}/ipfs/${cleanCid}`;
-  const res = await axios.get<ArtworkMetadata>(url);
+  const res = await axios.get<ArtworkMetadata>(url, { timeout: 10000 });
   return res.data;
 }
 

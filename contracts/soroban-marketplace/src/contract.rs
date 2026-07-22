@@ -31,6 +31,8 @@ use crate::{
 #[contract]
 pub struct MarketplaceContract;
 
+const MIN_DURATION_SECONDS: u64 = 60;
+
 #[contractimpl]
 impl MarketplaceContract {
     // ── Admin & Global Configuration ───────────────────────
@@ -223,6 +225,7 @@ impl MarketplaceContract {
         token: Address,
         collection: Address,
         token_id: u64,
+        amount: u64,
         recipients: Vec<Recipient>,
     ) -> u64 {
         if crate::storage::is_paused(&env) {
@@ -267,6 +270,7 @@ impl MarketplaceContract {
             token,
             collection,
             token_id,
+            amount,
             recipients,
             status: ListingStatus::Active,
             owner: None,
@@ -414,7 +418,7 @@ impl MarketplaceContract {
             true,
         );
 
-        // Transfer the NFT
+        // Transfer the NFT (ERC-1155 requires amount as 5th arg; ERC-721 amount is always 1)
         env.invoke_contract::<()>(
             &listing.collection,
             &soroban_sdk::Symbol::new(&env, "transfer_from"),
@@ -423,7 +427,8 @@ impl MarketplaceContract {
                 env.current_contract_address().into_val(&env),
                 listing.artist.into_val(&env),
                 buyer.into_val(&env),
-                listing.token_id.into_val(&env)
+                listing.token_id.into_val(&env),
+                listing.amount.into_val(&env)
             ],
         );
 
@@ -527,6 +532,7 @@ impl MarketplaceContract {
         token: Address,
         collection: Address,
         token_id: u64,
+        amount: u64,
         reserve_price: i128,
         duration: u64,
         recipients: Vec<Recipient>,
@@ -544,6 +550,11 @@ impl MarketplaceContract {
         if !Self::is_token_whitelisted(&env, &token) {
             panic_with_error!(&env, MarketplaceError::Unauthorized);
         }
+        // A duration of less than a minute is not practical.
+        if duration < MIN_DURATION_SECONDS {
+            panic_with_error!(&env, MarketplaceError::InvalidAuctionDuration);
+        }
+
         let auction_id = increment_auction_count(&env);
         let end_time = env.ledger().timestamp() + duration;
         let auction = Auction {
@@ -552,6 +563,7 @@ impl MarketplaceContract {
             token: token.clone(),
             collection: collection.clone(),
             token_id,
+            amount,
             reserve_price,
             highest_bid: 0,
             highest_bidder: None,
@@ -589,15 +601,24 @@ impl MarketplaceContract {
         if env.ledger().timestamp() >= auction.end_time {
             panic_with_error!(&env, MarketplaceError::AuctionExpired);
         }
-        if amount <= auction.highest_bid || amount < auction.reserve_price {
-            panic_with_error!(&env, MarketplaceError::BidTooLow);
+
+        // Enforce minimum bid increment to prevent griefing.
+        // If there's an existing bid, the new bid must be at least 5% higher.
+        // Otherwise, it must meet the reserve price.
+        let min_bid = if auction.highest_bid > 0 {
+            auction.highest_bid + (auction.highest_bid * 5 / 100)
+        } else {
+            auction.reserve_price
+        };
+        if amount < min_bid {
+            panic_with_error!(&env, MarketplaceError::BidTooLow)
         }
 
         let token_client = TokenClient::new(&env, &auction.token);
         if let Some(prev) = auction.highest_bidder.clone() {
             token_client.transfer(&env.current_contract_address(), &prev, &auction.highest_bid);
         }
-        token_client.transfer(&bidder, &env.current_contract_address(), &amount);
+        token_client.transfer(&bidder, env.current_contract_address(), &amount);
         auction.highest_bid = amount;
         auction.highest_bidder = Some(bidder.clone());
         save_auction(&env, &auction);
@@ -636,11 +657,9 @@ impl MarketplaceContract {
         }
 
         // Time check
-        if env.ledger().timestamp() < auction.end_time {
-            if caller != auction.creator {
-                release_auction_lock(&env, auction_id);
-                panic_with_error!(&env, MarketplaceError::Unauthorized);
-            }
+        if env.ledger().timestamp() < auction.end_time && caller != auction.creator {
+            release_auction_lock(&env, auction_id);
+            panic_with_error!(&env, MarketplaceError::Unauthorized);
         }
 
         let (finalized_winner, finalized_amount) =
@@ -656,7 +675,7 @@ impl MarketplaceContract {
                     false,
                 );
 
-                // Transfer the NFT
+                // Transfer the NFT (ERC-1155 requires amount as 5th arg; ERC-721 amount is always 1)
                 env.invoke_contract::<()>(
                     &auction.collection,
                     &soroban_sdk::Symbol::new(&env, "transfer_from"),
@@ -665,7 +684,8 @@ impl MarketplaceContract {
                         env.current_contract_address().into_val(&env),
                         auction.creator.into_val(&env),
                         winner.into_val(&env),
-                        auction.token_id.into_val(&env)
+                        auction.token_id.into_val(&env),
+                        auction.amount.into_val(&env)
                     ],
                 );
 
@@ -709,7 +729,7 @@ impl MarketplaceContract {
         if amount <= 0 {
             panic_with_error!(&env, MarketplaceError::InsufficientOfferAmount);
         }
-        TokenClient::new(&env, &token).transfer(&offerer, &env.current_contract_address(), &amount);
+        TokenClient::new(&env, &token).transfer(&offerer, env.current_contract_address(), &amount);
         let offer_id = increment_offer_count(&env);
         save_offer(
             &env,
@@ -842,7 +862,7 @@ impl MarketplaceContract {
             false,
         );
 
-        // Transfer the NFT
+        // Transfer the NFT (ERC-1155 requires amount as 5th arg; ERC-721 amount is always 1)
         env.invoke_contract::<()>(
             &listing.collection,
             &soroban_sdk::Symbol::new(&env, "transfer_from"),
@@ -851,7 +871,8 @@ impl MarketplaceContract {
                 env.current_contract_address().into_val(&env),
                 artist.into_val(&env),
                 offer.offerer.into_val(&env),
-                listing.token_id.into_val(&env)
+                listing.token_id.into_val(&env),
+                listing.amount.into_val(&env)
             ],
         );
         let accepted_offerer = offer.offerer.clone();
@@ -996,7 +1017,7 @@ impl MarketplaceContract {
     ) {
         let token = TokenClient::new(env, token_addr);
         if transfer_from_buyer {
-            token.transfer(buyer, &env.current_contract_address(), &amount);
+            token.transfer(buyer, env.current_contract_address(), &amount);
         }
         let mut payout = amount;
 
@@ -1015,7 +1036,7 @@ impl MarketplaceContract {
         }
         let fee_bps = crate::storage::get_protocol_fee_bps_storage(env).unwrap_or(0);
         if let Some(t) = crate::storage::get_treasury_storage(env) {
-            let fee = payout * fee_bps as i128 / 10_000;
+            let fee = amount * fee_bps as i128 / 10_000;
             token.transfer(&env.current_contract_address(), &t, &fee);
             payout -= fee;
         }

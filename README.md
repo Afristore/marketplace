@@ -94,7 +94,7 @@ cd scripts/deploy
 
 Instead of starting the indexer and frontend in separate terminals, we use a unified startup script at the root:
 
-> **Important:** Run `npm install` at the **repository root** before `npm run dev`. This installs the root-level `concurrently` dev dependency. If you skip this step, `npm run dev` will fail with `sh: concurrently: command not found`.
+> **Important:** Run `npm install` at the **repository root** before `npm run dev`. This installs the root-level `concurrently` dev dependency and automatically generates the Prisma Client. If you skip this step, `npm run dev` will fail with `sh: concurrently: command not found` or Prisma initialization errors.
 
 ```bash
 # 1. Ensure you have copied the environment files:
@@ -102,15 +102,17 @@ cd indexer && cp .env.example .env
 cd ../frontend/afristore-app && cp .env.example .env.local
 cd ../..
 
-# 2. Run the database migrations for the indexer:
-cd indexer && npx prisma migrate deploy && cd ..
-
-# 3. Install root dependencies (required for concurrently):
+# 2. Install root dependencies (generates Prisma Client automatically):
 npm install
+
+# 3. Run the database migrations for the indexer:
+cd indexer && npx prisma migrate deploy && cd ..
 
 # 4. Start all services concurrently:
 npm run dev
 ```
+
+The `postinstall` script automatically runs `npx prisma generate` in the indexer workspace, ensuring the Prisma Client is available before the indexer API and crank bot start.
 
 This will concurrently start the frontend (Next.js), the indexer backend, and a Keep-Alive bot (`crank`) to ensure testnet contracts are not archived.
 
@@ -137,6 +139,7 @@ Open [http://localhost:3000](http://localhost:3000)
 
 ### Launchpad
 - Deploy NFT collections (normal 721/1155, lazy-mint 721/1155)
+- Deploy standalone Royalty Splitter contracts for multi-party secondary sale royalties
 - Salt-based front-running protection
 - Platform fee configuration per-collection
 - Collection creation wizard in frontend

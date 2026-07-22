@@ -83,10 +83,16 @@ export default function ListingInteractiveArea({
   const isOwn = publicKey === artist;
   const status = listing?.status || auction?.status;
   const isActive = status === "Active";
-  const royaltyBps = (listing as unknown as { royalty_bps?: number })?.royalty_bps
-    ?? (auction as unknown as { royalty_bps?: number })?.royalty_bps
-    ?? 0;
-  const royaltyPercent = (royaltyBps / 100).toFixed(1);
+  
+  const calculateRoyaltyPercent = () => {
+    const recipients = listing?.recipients || auction?.recipients || [];
+    if (recipients.length === 0) return "0.0";
+    
+    const totalBps = recipients.reduce((sum, r) => sum + (r.percentage || 0), 0);
+    return (totalBps / 100).toFixed(1);
+  };
+  
+  const royaltyPercent = calculateRoyaltyPercent();
   const priceDisplay = listing
     ? stroopsToXlm(listing.price)
     : auction

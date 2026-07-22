@@ -46,6 +46,17 @@ pub fn get_platform_fee(env: &Env) -> (Address, u32) {
     )
 }
 
+pub fn set_platform_fee_token(env: &Env, token: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::PlatformFeeToken, token);
+    extend_instance_ttl(env);
+}
+
+pub fn get_platform_fee_token(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::PlatformFeeToken)
+}
+
 pub fn set_wasm_hashes(
     env: &Env,
     normal_721: &BytesN<32>,
@@ -89,6 +100,16 @@ pub fn set_staking_wasm_hash(env: &Env, hash: &BytesN<32>) {
 
 pub fn get_staking_wasm_hash(env: &Env) -> Option<BytesN<32>> {
     env.storage().instance().get(&DataKey::WasmStaking)
+}
+
+pub fn set_royalty_splitter_wasm_hash(env: &Env, hash: &BytesN<32>) {
+    env.storage()
+        .instance()
+        .set(&DataKey::WasmRoyaltySplitter, hash);
+}
+
+pub fn get_royalty_splitter_wasm_hash(env: &Env) -> Option<BytesN<32>> {
+    env.storage().instance().get(&DataKey::WasmRoyaltySplitter)
 }
 
 pub fn staking_pool_by_nft(env: &Env, nft_address: &Address) -> Option<Address> {
@@ -256,4 +277,24 @@ pub fn creator_collection_by_index(
     env.storage()
         .persistent()
         .get(&DataKey::CreatorCollectionByIndex(creator.clone(), index))
+}
+
+pub fn set_approved_currency(env: &Env, currency: &Address, approved: bool) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ApprovedCurrency(currency.clone()), &approved);
+}
+
+pub fn is_approved_currency(env: &Env, currency: &Address) -> bool {
+    env.storage()
+        .instance()
+        .get::<DataKey, bool>(&DataKey::ApprovedCurrency(currency.clone()))
+        .unwrap_or(false)
+}
+
+pub fn require_approved_currency(env: &Env, currency: &Address) -> Result<(), crate::types::Error> {
+    if !is_approved_currency(env, currency) {
+        return Err(crate::types::Error::InvalidCurrency);
+    }
+    Ok(())
 }

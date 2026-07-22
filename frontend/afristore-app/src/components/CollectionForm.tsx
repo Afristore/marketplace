@@ -6,12 +6,43 @@ import {
   DeployCollectionInput,
 } from "@/hooks/useLaunchpad";
 import { useWalletContext } from "@/context/WalletContext";
-import { Loader2, Rocket, CheckCircle, ArrowRight } from "lucide-react";
+import { Loader2, Rocket, CheckCircle, ArrowRight, Info, ChevronDown } from "lucide-react";
 import { GuardButton } from "./WalletGuard";
 import { CollectionKind } from "@/lib/launchpad";
-import { DEFAULT_TOKEN } from "@/config/tokens";
 import { useSupportedTokens } from "@/hooks/useSupportedTokens";
 import { getDefaultSupportedToken } from "@/lib/token-support";
+
+const SPLITTER_TOOLTIP =
+  "If you want to split royalties with multiple people, paste your deployed Royalty Splitter contract address here, or deploy one first via Launchpad → Royalty Splitter.";
+
+function SplitterTooltip() {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-flex items-center">
+      <button
+        type="button"
+        aria-label="Royalty splitter info"
+        onClick={() => setOpen((o) => !o)}
+        onBlur={() => setOpen(false)}
+        className="ml-1.5 text-gray-400 hover:text-brand-500 transition-colors focus:outline-none"
+      >
+        <Info size={13} />
+      </button>
+      {open && (
+        <span
+          role="tooltip"
+          className="absolute left-6 top-0 z-50 w-72 rounded-2xl bg-gray-900 px-4 py-3 text-xs text-white shadow-xl font-inter leading-relaxed"
+        >
+          {SPLITTER_TOOLTIP}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function isStellarAddress(v: string) {
+  return (v.startsWith("G") || v.startsWith("C")) && v.length >= 50;
+}
 
 export function CollectionForm() {
   const { publicKey } = useWalletContext();
@@ -20,6 +51,11 @@ export function CollectionForm() {
   const hasSupportedTokens = supportedTokens.length > 0;
 
   const [successAddress, setSuccessAddress] = useState<string | null>(null);
+
+  // Splitter addresses the user has deployed (persisted in localStorage under their pubkey)
+  const [savedSplitters, setSavedSplitters] = useState<string[]>([]);
+  const [showSplitterPicker, setShowSplitterPicker] = useState(false);
+
   const [form, setForm] = useState({
     name: "",
     symbol: "",
@@ -27,7 +63,7 @@ export function CollectionForm() {
     maxSupply: 10000,
     royaltyBps: 500, // 5%
     royaltyReceiver: publicKey || "",
-    currencyAddress: DEFAULT_TOKEN.address,
+    currencyAddress: "",
   });
 
   useEffect(() => {
@@ -44,6 +80,17 @@ export function CollectionForm() {
       }));
     }
   }, [form.currencyAddress, supportedTokens]);
+
+  // Load saved splitter addresses from localStorage when the wallet connects
+  useEffect(() => {
+    if (!publicKey) return;
+    try {
+      const raw = localStorage.getItem(`splitters:${publicKey}`);
+      setSavedSplitters(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      setSavedSplitters([]);
+    }
+  }, [publicKey]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -104,6 +151,8 @@ export function CollectionForm() {
   }
 
   const is721 = form.kind.includes("721");
+  const royaltyAddressValid =
+    !form.royaltyReceiver || isStellarAddress(form.royaltyReceiver);
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
@@ -274,18 +323,70 @@ export function CollectionForm() {
               </select>
             </div>
 
+            {/* ── Royalty Receiver Address ─────────────────────────── */}
             <div className="sm:col-span-2 space-y-2">
-              <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
-                Royalty Receiver Address
-              </label>
+              <div className="flex items-center justify-between">
+                <label className="flex items-center text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+                  Royalty Receiver Address
+                  <SplitterTooltip />
+                </label>
+
+                {/* "Use my Splitter" picker — shown when saved splitters exist */}
+                {savedSplitters.length > 0 && (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowSplitterPicker((o) => !o)}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-brand-50 border border-brand-200 px-3 py-1.5 text-xs font-bold text-brand-700 hover:bg-brand-100 transition-colors"
+                    >
+                      Select my Splitter
+                      <ChevronDown size={12} />
+                    </button>
+                    {showSplitterPicker && (
+                      <div className="absolute right-0 top-8 z-40 w-80 rounded-2xl border border-gray-200 bg-white shadow-xl overflow-hidden">
+                        <p className="px-4 pt-3 pb-1 text-xs font-bold text-gray-400 uppercase tracking-widest">
+                          Your deployed splitters
+                        </p>
+                        {savedSplitters.map((addr) => (
+                          <button
+                            key={addr}
+                            type="button"
+                            onClick={() => {
+                              setForm({ ...form, royaltyReceiver: addr });
+                              setShowSplitterPicker(false);
+                            }}
+                            className="w-full text-left px-4 py-3 font-mono text-xs text-gray-700 hover:bg-brand-50 truncate border-t border-gray-100 first:border-0"
+                          >
+                            {addr}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
               <input
                 value={form.royaltyReceiver}
                 onChange={(e) =>
                   setForm({ ...form, royaltyReceiver: e.target.value })
                 }
-                className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter font-mono text-sm"
-                placeholder={publicKey || "G... (defaults to creator)"}
+                className={`w-full rounded-2xl border bg-gray-50/50 px-5 py-4 text-base focus:bg-white focus:outline-none transition-all shadow-sm font-inter font-mono text-sm ${
+                  form.royaltyReceiver && !royaltyAddressValid
+                    ? "border-red-400 focus:border-red-500"
+                    : "border-gray-200 focus:border-brand-500"
+                }`}
+                placeholder={publicKey || "G… wallet or C… contract address (defaults to creator)"}
+                aria-describedby="royalty-receiver-hint"
               />
+              <p id="royalty-receiver-hint" className="text-xs text-gray-400 font-inter">
+                Accepts any Stellar address: a regular wallet (G…) or a Royalty Splitter contract (C…).
+              </p>
+              {form.royaltyReceiver && !royaltyAddressValid && (
+                <p className="text-xs text-red-500 font-inter">
+                  Must be a valid Stellar address starting with G or C.
+                </p>
+              )}
             </div>
           </div>
 
@@ -297,7 +398,7 @@ export function CollectionForm() {
 
           <GuardButton
             type="submit"
-            disabled={isDeploying || !hasSupportedTokens}
+            disabled={isDeploying}
             actionName="to deploy your collection"
             className="w-full flex items-center justify-center gap-3 rounded-2xl bg-brand-500 py-5 text-xl font-bold text-white shadow-2xl shadow-brand-500/30 hover:bg-brand-600 hover:scale-[1.01] transition-all active:scale-[0.98] disabled:opacity-50 disabled:hover:scale-100"
           >

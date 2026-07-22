@@ -89,6 +89,34 @@ echo "Step 4/4  Deploying contract instance..."
 CONTRACT_ID=$(echo "$output" | tail -1)
 echo "  Contract ID: $CONTRACT_ID"
 
+# ── Initialize contract (set_admin + set_treasury) ─────────────
+echo ""
+echo "Step 5/5  Initializing contract (set_admin + set_treasury)..."
+stellar keys add deployer-temp --secret "$STELLAR_SECRET" 2>/dev/null || true
+ADMIN_ADDRESS=$(stellar keys address deployer-temp)
+echo "  Admin address: $ADMIN_ADDRESS"
+
+stellar contract invoke \
+  --id "$CONTRACT_ID" \
+  --source deployer-temp \
+  --rpc-url "$RPC_URL" \
+  --network-passphrase "Test SDF Network ; September 2015" \
+  --ignore-checks \
+  --fn set_admin \
+  --arg "$ADMIN_ADDRESS" 2>&1 && echo "  ✓ set_admin" || echo "  ✗ set_admin failed"
+
+stellar contract invoke \
+  --id "$CONTRACT_ID" \
+  --source deployer-temp \
+  --rpc-url "$RPC_URL" \
+  --network-passphrase "Test SDF Network ; September 2015" \
+  --ignore-checks \
+  --fn set_treasury \
+  --arg "$ADMIN_ADDRESS" \
+  --arg "$ADMIN_ADDRESS" 2>&1 && echo "  ✓ set_treasury" || echo "  ✗ set_treasury failed"
+
+stellar keys rm deployer-temp 2>/dev/null || true
+
 # ── Write frontend .env.local ────────────────────────────────
 mkdir -p "$(dirname "$FRONTEND_ENV")"
 

@@ -9,6 +9,8 @@ pub enum Error {
     NotAdmin = 3,
     WasmHashNotSet = 4,
     StakingPoolAlreadyExists = 5,
+    PlatformFeeTokenNotSet = 6,
+    InvalidCurrency = 7,
 }
 
 /// Which of the four collection types was deployed.
@@ -37,6 +39,7 @@ pub enum DataKey {
     Admin,
     PlatformFeeReceiver,
     PlatformFeeBps,
+    PlatformFeeToken,
     WasmNormal721,
     WasmNormal1155,
     WasmLazy721,
@@ -56,4 +59,8 @@ pub enum DataKey {
     WasmStaking,
     /// Maps an NFT collection address to its staking pool clone
     StakingPoolByNft(Address),
+    /// WASM hash for RoyaltySplitter clone deployments
+    WasmRoyaltySplitter,
+    /// Tracks which token addresses are approved as payment currencies
+    ApprovedCurrency(Address),
 }

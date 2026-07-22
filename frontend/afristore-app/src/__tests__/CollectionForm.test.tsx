@@ -8,7 +8,9 @@ import userEvent from "@testing-library/user-event";
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
 const mockDeploy = jest.fn();
-let mockPublicKey: string | null = "GPUBKEY";
+// Must be 56 chars (valid Stellar key length) so isStellarAddress passes
+// and the deploy button isn't disabled by our address validator.
+let mockPublicKey: string | null = "G" + "A".repeat(55);
 
 jest.mock("@/context/WalletContext", () => ({
   useWalletContext: () => ({ publicKey: mockPublicKey }),
@@ -56,7 +58,7 @@ jest.mock("@/components/WalletGuard", () => ({
 
 jest.mock("lucide-react", () =>
   Object.fromEntries(
-    ["Loader2", "Rocket", "CheckCircle", "ArrowRight"].map((name) => [
+    ["Loader2", "Rocket", "CheckCircle", "ArrowRight", "Info", "ChevronDown"].map((name) => [
       name,
       () => <span />,
     ]),
@@ -70,7 +72,7 @@ import { CollectionForm } from "@/components/CollectionForm";
 describe("CollectionForm", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    mockPublicKey = "GPUBKEY";
+    mockPublicKey = "G" + "A".repeat(55);
   });
 
   it("renders the collection name input", () => {

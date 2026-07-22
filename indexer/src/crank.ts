@@ -53,6 +53,11 @@ async function runCrank() {
         // get_protocol_fee is a read-only fn on marketplace
         await simulateRead(MARKETPLACE_CONTRACT_ID, "get_protocol_fee");
       }
+
+      if (LAUNCHPAD_CONTRACT_ID) {
+        // get_platform_fee is a read-only fn on the launchpad
+        await simulateRead(LAUNCHPAD_CONTRACT_ID, "get_platform_fee");
+      }
       
       // Ping a few recent active collections to keep them alive too
       const recentCollections = await prisma.collection.findMany({

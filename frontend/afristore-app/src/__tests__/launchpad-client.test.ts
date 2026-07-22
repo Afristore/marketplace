@@ -28,7 +28,6 @@ describe("Launchpad Client", () => {
 
     await deployNormal721(
       mockCreator,
-      mockCurrency,
       "Test Collection",
       "TEST",
       1000,
@@ -48,15 +47,15 @@ describe("Launchpad Client", () => {
     const args = (invokeContract as jest.Mock).mock.calls[0][2] as xdr.ScVal[];
 
     // Check name
-    expect(scValToNative(args[2])).toBe("Test Collection");
+    expect(scValToNative(args[1])).toBe("Test Collection");
     // Check symbol
-    expect(scValToNative(args[3])).toBe("TEST");
+    expect(scValToNative(args[2])).toBe("TEST");
     // Check maxSupply
-    expect(scValToNative(args[4])).toBe(1000n);
+    expect(scValToNative(args[3])).toBe(1000n);
     // Check royaltyBps
-    expect(scValToNative(args[5])).toBe(500);
+    expect(scValToNative(args[4])).toBe(500);
     // Check salt
-    expect(scValToNative(args[7])).toEqual(Uint8Array.from(mockSalt));
+    expect(scValToNative(args[6])).toEqual(Uint8Array.from(mockSalt));
   });
 
   it("handles errors from invokeContract", async () => {
@@ -67,7 +66,6 @@ describe("Launchpad Client", () => {
     await expect(
       deployNormal721(
         mockCreator,
-        mockCurrency,
         "Test",
         "T",
         100,

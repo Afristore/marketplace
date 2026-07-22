@@ -51,9 +51,8 @@ impl RoyaltySplitter {
 
     /// Drain the contract's full token balance to all beneficiaries
     /// proportionally. Callable by anyone; no auth required.
-    /// The final beneficiary absorbs any rounding remainder so no dust
-    /// is ever trapped.
-    pub fn distribute(env: Env) {
+    /// The caller receives any rounding remainder (dust) as a gas incentive.
+    pub fn distribute(env: Env, token_address: Address, caller: Address) {
         if !is_initialized(&env) {
             panic_with_error!(&env, SplitterError::NotInitialized);
         }
@@ -108,5 +107,25 @@ impl RoyaltySplitter {
 
     pub fn get_shares(env: Env) -> Vec<u32> {
         load_shares(&env)
+    }
+
+    /// Retrieve the share percentage (in BPS) for a specific beneficiary.
+    /// Returns the exact percentage allocated to the beneficiary address.
+    /// Reverts with BeneficiaryNotFound if the address is not a beneficiary.
+    pub fn get_share(env: Env, beneficiary: Address) -> Result<u32, SplitterError> {
+        if !is_initialized(&env) {
+            return Err(SplitterError::NotInitialized);
+        }
+
+        let beneficiaries = load_beneficiaries(&env);
+        let shares = load_shares(&env);
+
+        for i in 0..beneficiaries.len() {
+            if beneficiaries.get(i).unwrap() == beneficiary {
+                return Ok(shares.get(i).unwrap());
+            }
+        }
+
+        Err(SplitterError::BeneficiaryNotFound)
     }
 }

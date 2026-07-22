@@ -97,9 +97,22 @@ mod iface {
             reward_rate: i128,
         );
     }
+
+    #[contractclient(name = "RoyaltySplitterClient")]
+    pub trait IRoyaltySplitter {
+        fn initialize(
+            env: Env,
+            token: Address,
+            beneficiaries: soroban_sdk::Vec<Address>,
+            shares: soroban_sdk::Vec<u32>,
+        );
+    }
 }
 
-use iface::{Lazy1155Client, Lazy721Client, NftStakingClient, Normal1155Client, Normal721Client};
+use iface::{
+    Lazy1155Client, Lazy721Client, NftStakingClient, Normal1155Client, Normal721Client,
+    RoyaltySplitterClient,
+};
 
 // ─── Salt hardening (fix #53) ─────────────────────────────────────────────────
 /// Bind `raw_salt` to the caller so that two different creators can never
@@ -125,6 +138,7 @@ impl Launchpad {
         admin: Address,
         platform_fee_receiver: Address,
         platform_fee_bps: u32,
+        platform_fee_token: Address,
     ) -> Result<(), Error> {
         if storage::is_initialized(&env) {
             return Err(Error::AlreadyInitialized);
@@ -133,6 +147,7 @@ impl Launchpad {
         storage::set_initialized(&env);
         storage::set_admin(&env, &admin);
         storage::set_platform_fee(&env, &platform_fee_receiver, platform_fee_bps);
+        storage::set_platform_fee_token(&env, &platform_fee_token);
         Ok(())
     }
 
@@ -175,7 +190,6 @@ impl Launchpad {
     pub fn deploy_normal_721(
         env: Env,
         creator: Address,
-        currency: Address, // [NEW] SAC address for fee payment
         name: String,
         symbol: String,
         max_supply: u64,
@@ -186,10 +200,12 @@ impl Launchpad {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
 
-        // [FEE] Collect deployment fee (#54)
+        // [FEE] Collect deployment fee using admin-set token (#442)
         let (receiver, fee) = storage::get_platform_fee(&env);
         if fee > 0 {
-            soroban_sdk::token::TokenClient::new(&env, &currency).transfer(
+            let fee_token =
+                storage::get_platform_fee_token(&env).ok_or(Error::PlatformFeeTokenNotSet)?;
+            soroban_sdk::token::TokenClient::new(&env, &fee_token).transfer(
                 &creator,
                 &receiver,
                 &(fee as i128),
@@ -231,7 +247,6 @@ impl Launchpad {
     pub fn deploy_normal_1155(
         env: Env,
         creator: Address,
-        currency: Address,
         name: String,
         royalty_bps: u32,
         royalty_receiver: Address,
@@ -240,10 +255,12 @@ impl Launchpad {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
 
-        // [FEE] Collect deployment fee (#54)
+        // [FEE] Collect deployment fee (#442) — use globally-set fee token
         let (receiver, fee) = storage::get_platform_fee(&env);
         if fee > 0 {
-            soroban_sdk::token::TokenClient::new(&env, &currency).transfer(
+            let fee_token =
+                storage::get_platform_fee_token(&env).ok_or(Error::PlatformFeeTokenNotSet)?;
+            soroban_sdk::token::TokenClient::new(&env, &fee_token).transfer(
                 &creator,
                 &receiver,
                 &(fee as i128),
@@ -285,7 +302,6 @@ impl Launchpad {
     pub fn deploy_lazy_721(
         env: Env,
         creator: Address,
-        currency: Address,
         creator_pubkey: BytesN<32>,
         name: String,
         symbol: String,
@@ -297,10 +313,12 @@ impl Launchpad {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
 
-        // [FEE] Collect deployment fee (#54)
+        // [FEE] Collect deployment fee (#442) — use globally-set fee token
         let (receiver, fee) = storage::get_platform_fee(&env);
         if fee > 0 {
-            soroban_sdk::token::TokenClient::new(&env, &currency).transfer(
+            let fee_token =
+                storage::get_platform_fee_token(&env).ok_or(Error::PlatformFeeTokenNotSet)?;
+            soroban_sdk::token::TokenClient::new(&env, &fee_token).transfer(
                 &creator,
                 &receiver,
                 &(fee as i128),
@@ -341,7 +359,6 @@ impl Launchpad {
     pub fn deploy_lazy_1155(
         env: Env,
         creator: Address,
-        currency: Address,
         creator_pubkey: BytesN<32>,
         name: String,
         royalty_bps: u32,
@@ -351,10 +368,12 @@ impl Launchpad {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
 
-        // [FEE] Collect deployment fee (#54)
+        // [FEE] Collect deployment fee (#442) — use globally-set fee token
         let (receiver, fee) = storage::get_platform_fee(&env);
         if fee > 0 {
-            soroban_sdk::token::TokenClient::new(&env, &currency).transfer(
+            let fee_token =
+                storage::get_platform_fee_token(&env).ok_or(Error::PlatformFeeTokenNotSet)?;
+            soroban_sdk::token::TokenClient::new(&env, &fee_token).transfer(
                 &creator,
                 &receiver,
                 &(fee as i128),
@@ -397,6 +416,51 @@ impl Launchpad {
         Ok(())
     }
 
+    /// Register the RoyaltySplitter WASM hash (upload off-chain first).
+    pub fn set_royalty_splitter_wasm_hash(
+        env: Env,
+        wasm_splitter: BytesN<32>,
+    ) -> Result<(), Error> {
+        storage::extend_instance_ttl(&env);
+        storage::require_admin(&env)?;
+        storage::set_royalty_splitter_wasm_hash(&env, &wasm_splitter);
+        Ok(())
+    }
+
+    /// Deploy a RoyaltySplitter clone for a creator.
+    ///
+    /// `salt` — unique 32 bytes per splitter; combined with creator for front-run protection.
+    pub fn deploy_splitter(
+        env: Env,
+        creator: Address,
+        token: Address,
+        beneficiaries: soroban_sdk::Vec<Address>,
+        shares: soroban_sdk::Vec<u32>,
+        salt: BytesN<32>,
+    ) -> Result<Address, Error> {
+        storage::extend_instance_ttl(&env);
+        creator.require_auth();
+
+        let wasm = storage::get_royalty_splitter_wasm_hash(&env).ok_or(Error::WasmHashNotSet)?;
+
+        let secure_salt = make_secure_salt(&env, &creator, &salt);
+        let addr = env
+            .deployer()
+            .with_current_contract(secure_salt)
+            .deploy_v2(wasm, ());
+
+        RoyaltySplitterClient::new(&env, &addr).initialize(&token, &beneficiaries, &shares);
+
+        events::publish_deploy(
+            &env,
+            symbol_short!("split"),
+            &creator,
+            &addr,
+            &CollectionKind::Normal721,
+        );
+        Ok(addr)
+    }
+
     // ── Deploy: Staking pool clone ────────────────────────────────────────
 
     /// Deploy a dedicated NftStaking clone for an NFT collection.
@@ -412,6 +476,18 @@ impl Launchpad {
     ) -> Result<Address, Error> {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
+
+        // [FEE] Collect deployment fee (#442) — use globally-set fee token
+        let (receiver, fee) = storage::get_platform_fee(&env);
+        if fee > 0 {
+            let fee_token =
+                storage::get_platform_fee_token(&env).ok_or(Error::PlatformFeeTokenNotSet)?;
+            soroban_sdk::token::TokenClient::new(&env, &fee_token).transfer(
+                &creator,
+                &receiver,
+                &(fee as i128),
+            );
+        }
 
         if storage::staking_pool_by_nft(&env, &nft_address).is_some() {
             return Err(Error::StakingPoolAlreadyExists);
@@ -442,6 +518,7 @@ impl Launchpad {
     pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), Error> {
         storage::extend_instance_ttl(&env);
         storage::require_admin(&env)?;
+        new_admin.require_auth();
         storage::set_admin(&env, &new_admin);
         Ok(())
     }
@@ -451,6 +528,36 @@ impl Launchpad {
         storage::require_admin(&env)?;
         storage::set_platform_fee(&env, &receiver, fee_bps);
         Ok(())
+    }
+
+    /// Admin sets the token used for platform fee collection.
+    /// Deploy functions will use this token instead of the caller-supplied currency.
+    pub fn set_platform_fee_token(env: Env, token: Address) -> Result<(), Error> {
+        storage::extend_instance_ttl(&env);
+        storage::require_admin(&env)?;
+        storage::set_platform_fee_token(&env, &token);
+        Ok(())
+    }
+
+    /// Add a token address to the approved currency whitelist.
+    pub fn add_approved_currency(env: Env, currency: Address) -> Result<(), Error> {
+        storage::extend_instance_ttl(&env);
+        storage::require_admin(&env)?;
+        storage::set_approved_currency(&env, &currency, true);
+        Ok(())
+    }
+
+    /// Remove a token address from the approved currency whitelist.
+    pub fn remove_approved_currency(env: Env, currency: Address) -> Result<(), Error> {
+        storage::extend_instance_ttl(&env);
+        storage::require_admin(&env)?;
+        storage::set_approved_currency(&env, &currency, false);
+        Ok(())
+    }
+
+    /// Check whether a token address is on the approved currency whitelist.
+    pub fn is_approved_currency(env: Env, currency: Address) -> bool {
+        storage::is_approved_currency(&env, &currency)
     }
 
     // ── View functions ────────────────────────────────────────────────────
@@ -477,13 +584,11 @@ impl Launchpad {
         storage::get_platform_fee(&env)
     }
 
-    // ── Query API (issue: launchpad contract query API + deploy events) ───
-
-    /// All collections deployed by a specific creator address.
-    /// Callable from frontend and CLI.
-    pub fn get_creator_collections(env: Env, creator: Address) -> Vec<CollectionRecord> {
-        storage::collections_by_creator(&env, &creator)
+    pub fn platform_fee_token(env: Env) -> Option<Address> {
+        storage::get_platform_fee_token(&env)
     }
+
+    // ── Query API (issue: launchpad contract query API + deploy events) ───
 
     /// Look up a single collection record by its deployed contract address.
     /// Returns `None` if the address was not deployed through this launchpad.
@@ -497,12 +602,6 @@ impl Launchpad {
     /// Callable from frontend and CLI.
     pub fn get_collections(env: Env, start_index: u32, limit: u32) -> Vec<CollectionRecord> {
         storage::collections_paginated(&env, start_index as u64, limit as u64)
-    }
-
-    /// Total number of collections deployed through this launchpad.
-    /// Callable from frontend and CLI.
-    pub fn get_collection_count(env: Env) -> u64 {
-        storage::collection_count(&env)
     }
 
     /// Look up the staking pool clone deployed for an NFT collection address.

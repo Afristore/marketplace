@@ -1,6 +1,5 @@
 # Rust / Cargo
 target/
-Cargo.lock
 
 # Node.js
 node_modules/
@@ -30,3 +29,4 @@ Thumbs.db
 # Generated test snapshots
 **/test_snapshots/
 **/issues.md
+fix.md

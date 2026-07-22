@@ -4,11 +4,12 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useWalletContext } from "@/context/WalletContext";
 import {
   AlertTriangle,
+  ChevronDown,
   Compass,
   Gavel,
   HelpCircle,
@@ -28,6 +29,15 @@ import {
 } from "lucide-react";
 import { ConnectWalletModal } from "./ConnectWalletModal";
 
+const USER_MENU_ITEMS = [
+  { href: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
+  { href: "/dashboard/splitter", icon: Split, label: "Splitter" },
+  { href: "/profile", icon: User, label: "My Profile" },
+  { href: "/offers", icon: Tag, label: "My Offers" },
+  { href: "/offers/incoming", icon: Inbox, label: "Offer Inbox" },
+  { href: "/settings", icon: Settings, label: "Settings" },
+];
+
 export function Navbar() {
   const {
     publicKey,
@@ -39,7 +49,10 @@ export function Navbar() {
   } = useWalletContext();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   const shortKey = publicKey
     ? `${publicKey.slice(0, 4)}…${publicKey.slice(-4)}`
@@ -51,6 +64,21 @@ export function Navbar() {
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
+
+  // Close user menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    if (userMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [userMenuOpen]);
 
   return (
     <>
@@ -102,56 +130,6 @@ export function Navbar() {
               <Rocket size={16} />
               Launchpad
             </Link>
-            {isConnected && (
-              <>
-                <Link
-                  href="/dashboard"
-                  className="flex items-center gap-1.5 text-white/70 hover:text-brand-400 transition-colors duration-300"
-                >
-                  <LayoutDashboard size={16} />
-                  Dashboard
-                </Link>
-                <Link
-                  href="/dashboard/splitter"
-                  className="flex items-center gap-1.5 text-white/70 hover:text-brand-400 transition-colors duration-300"
-                >
-                  <Split size={16} />
-                  Splitter
-                </Link>
-                <Link
-                  href="/profile"
-                  className="flex items-center gap-1.5 text-white/70 hover:text-mint-400 transition-colors duration-300"
-                >
-                  <User size={16} />
-                  My Profile
-                </Link>
-              </>
-            )}
-            {isConnected && (
-              <Link
-                href="/offers"
-                className="flex items-center gap-1.5 text-white/70 hover:text-brand-400 transition-colors duration-300"
-              >
-                <Tag size={16} />
-                My Offers
-              </Link>
-            )}
-            {isConnected && (
-              <Link
-                href="/offers/incoming"
-                className="flex items-center gap-1.5 text-white/70 hover:text-brand-400 transition-colors duration-300"
-              >
-                <Inbox size={16} />
-                Offer Inbox
-              </Link>
-            )}
-            <Link
-              href="/settings"
-              className="flex items-center gap-1.5 text-white/70 hover:text-brand-400 transition-colors duration-300"
-            >
-              <Settings size={16} />
-              Settings
-            </Link>
             <Link
               href="/help"
               className="flex items-center gap-1.5 text-white/70 hover:text-brand-400 transition-colors duration-300"
@@ -180,19 +158,62 @@ export function Navbar() {
                   </div>
                 )}
 
-                <div className="relative group">
-                  <div className="flex items-center gap-2 pl-3 pr-1 py-1 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors cursor-pointer">
-                    <span className="text-xs font-mono text-white/90">
-                      {shortKey}
-                    </span>
-                    <button
-                      onClick={disconnect}
-                      title="Disconnect Wallet"
-                      className="p-1.5 rounded-lg text-white/40 hover:text-terracotta-400 transition-colors"
-                    >
-                      <LogOut size={14} />
-                    </button>
-                  </div>
+                <div className="relative" ref={userMenuRef}>
+                  <button
+                    onClick={() => setUserMenuOpen((prev) => !prev)}
+                    className="flex items-center gap-2 pl-3 pr-2 py-1 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-colors"
+                    aria-haspopup="true"
+                    aria-expanded={userMenuOpen}
+                  >
+                    <span className="text-xs font-mono text-white/90">{shortKey}</span>
+                    <ChevronDown
+                      size={14}
+                      className={`text-white/40 transition-transform duration-200 ${
+                        userMenuOpen ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+
+                  {/* Dropdown panel */}
+                  {userMenuOpen && (
+                    <div className="absolute right-0 mt-2 w-52 rounded-xl bg-midnight-900/98 backdrop-blur-xl border border-white/10 shadow-xl shadow-black/40 overflow-hidden">
+                      <div className="px-3 py-2.5 border-b border-white/5">
+                        <p className="text-[10px] uppercase tracking-widest text-white/30 font-bold">
+                          My Account
+                        </p>
+                        <p className="text-xs font-mono text-white/60 mt-0.5 truncate">
+                          {publicKey}
+                        </p>
+                      </div>
+
+                      <div className="py-1">
+                        {USER_MENU_ITEMS.map(({ href, icon: Icon, label }) => (
+                          <Link
+                            key={href}
+                            href={href}
+                            onClick={() => setUserMenuOpen(false)}
+                            className="flex items-center gap-3 px-4 py-2.5 text-sm text-white/70 hover:text-white hover:bg-white/5 transition-colors"
+                          >
+                            <Icon size={15} className="text-brand-400 shrink-0" />
+                            {label}
+                          </Link>
+                        ))}
+                      </div>
+
+                      <div className="border-t border-white/5 py-1">
+                        <button
+                          onClick={() => {
+                            disconnect();
+                            setUserMenuOpen(false);
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-2.5 text-sm text-terracotta-400 hover:bg-terracotta-500/10 transition-colors"
+                        >
+                          <LogOut size={15} className="shrink-0" />
+                          Disconnect
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
@@ -207,10 +228,11 @@ export function Navbar() {
             )}
           </div>
 
-          {/* Mobile menu button */}
+          {/* Mobile hamburger */}
           <button
             onClick={() => setMobileOpen(!mobileOpen)}
             className="md:hidden flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 text-white/70 hover:bg-white/10 border border-white/10 transition-all"
+            aria-label={mobileOpen ? "Close menu" : "Open menu"}
           >
             {mobileOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
@@ -219,7 +241,7 @@ export function Navbar() {
         {/* Mobile drawer */}
         <div
           className={`md:hidden overflow-hidden transition-all duration-500 ${
-            mobileOpen ? "max-h-96 opacity-100" : "max-h-0 opacity-0"
+            mobileOpen ? "max-h-[600px] opacity-100" : "max-h-0 opacity-0"
           }`}
         >
           <div className="bg-midnight-950/98 backdrop-blur-xl border-t border-white/5 px-4 py-8 space-y-6">
@@ -256,62 +278,6 @@ export function Navbar() {
                 <Rocket size={20} className="text-brand-500" />
                 Launchpad
               </Link>
-              {isConnected && (
-                <>
-                  <Link
-                    href="/dashboard"
-                    onClick={() => setMobileOpen(false)}
-                    className="flex items-center gap-3 text-white/80 hover:text-brand-400 transition-colors text-lg font-display"
-                  >
-                    <LayoutDashboard size={20} className="text-brand-500" />
-                    Dashboard
-                  </Link>
-                  <Link
-                    href="/dashboard/splitter"
-                    onClick={() => setMobileOpen(false)}
-                    className="flex items-center gap-3 text-white/80 hover:text-brand-400 transition-colors text-lg font-display"
-                  >
-                    <Split size={20} className="text-brand-500" />
-                    Splitter
-                  </Link>
-                  <Link
-                    href="/profile"
-                    onClick={() => setMobileOpen(false)}
-                    className="flex items-center gap-3 text-white/80 hover:text-mint-400 transition-colors text-lg font-display"
-                  >
-                    <User size={20} className="text-mint-400" />
-                    My Profile
-                  </Link>
-                </>
-              )}
-              {isConnected && (
-                <Link
-                  href="/offers"
-                  onClick={() => setMobileOpen(false)}
-                  className="flex items-center gap-3 text-white/80 hover:text-brand-400 transition-colors text-lg font-display"
-                >
-                  <Tag size={20} className="text-brand-500" />
-                  My Offers
-                </Link>
-              )}
-              {isConnected && (
-                <Link
-                  href="/offers/incoming"
-                  onClick={() => setMobileOpen(false)}
-                  className="flex items-center gap-3 text-white/80 hover:text-brand-400 transition-colors text-lg font-display"
-                >
-                  <Inbox size={20} className="text-brand-500" />
-                  Offer Inbox
-                </Link>
-              )}
-              <Link
-                href="/settings"
-                onClick={() => setMobileOpen(false)}
-                className="flex items-center gap-3 text-white/80 hover:text-brand-400 transition-colors text-lg font-display"
-              >
-                <Settings size={20} className="text-gray-400" />
-                Settings
-              </Link>
               <Link
                 href="/help"
                 onClick={() => setMobileOpen(false)}
@@ -322,7 +288,30 @@ export function Navbar() {
               </Link>
             </div>
 
-            <div className="pt-6 border-t border-white/5">
+            {/* Post-login account section — only shown when connected */}
+            {isConnected && (
+              <div className="border-t border-white/10 pt-6 space-y-4">
+                <p className="text-[10px] uppercase tracking-widest text-white/30 font-bold px-1">
+                  My Account
+                </p>
+                <div className="grid grid-cols-1 gap-4">
+                  {USER_MENU_ITEMS.map(({ href, icon: Icon, label }) => (
+                    <Link
+                      key={href}
+                      href={href}
+                      onClick={() => setMobileOpen(false)}
+                      className="flex items-center gap-3 text-white/80 hover:text-brand-400 transition-colors text-lg font-display"
+                    >
+                      <Icon size={20} className="text-brand-500" />
+                      {label}
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Wallet section */}
+            <div className="border-t border-white/5 pt-6">
               {isConnected ? (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">

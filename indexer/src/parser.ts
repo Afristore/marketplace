@@ -93,8 +93,21 @@ export function parseMarketplaceEvent(
 }
 
 /**
+ * Extracts the ERC-1155 token quantity from a decoded event data object.
+ * Returns 1 for ERC-721 events that do not carry an amount field.
+ */
+export function extractAmount(nativeData: any): number {
+  if (nativeData === null || nativeData === undefined) return 1;
+  if (typeof nativeData !== 'object' || Array.isArray(nativeData)) return 1;
+  const raw = nativeData.amount ?? nativeData.quantity ?? nativeData.value;
+  if (raw === undefined || raw === null) return 1;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+/**
  * Helper to convert BigInts in an object to strings for JSON storage if needed,
- * though Prisma handles BigInt natively in some cases. 
+ * though Prisma handles BigInt natively in some cases.
  * For 'Json' field in Prisma, we should convert them to strings or numbers.
  */
 function convertBigInts(obj: any): any {

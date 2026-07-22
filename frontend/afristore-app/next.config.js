@@ -25,6 +25,14 @@ const nextConfig = {
         protocol: "https",
         hostname: "images.unsplash.com",
       },
+      ...(process.env.NEXT_PUBLIC_PINATA_GATEWAY
+        ? [
+            {
+              protocol: "https",
+              hostname: new URL(process.env.NEXT_PUBLIC_PINATA_GATEWAY).hostname,
+            },
+          ]
+        : []),
     ],
   },
   webpack: (config, { isServer }) => {

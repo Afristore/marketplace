@@ -12,6 +12,11 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// Trust the first proxy in front of the app (e.g., Render, Heroku, AWS ELB).
+// This is required for express-rate-limit to use the X-Forwarded-For header
+// and correctly identify client IPs.
+app.set('trust proxy', 1);
+
 const limiter = rateLimit({
     windowMs: 60 * 1000,
     limit: 100,

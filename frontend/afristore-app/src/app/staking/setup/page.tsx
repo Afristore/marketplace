@@ -94,7 +94,7 @@ export default function StakingSetupPage() {
       const poolAddress = await deployStakingPool(
         publicKey,
         lookupAddress,
-        token.address,
+        token.address, // reward token
         rateStroops,
         salt,
       );
