@@ -6,6 +6,7 @@ use crate::{
     storage::{
         is_initialized, load_beneficiaries, load_shares, load_token, save_beneficiaries,
         save_shares, save_token, set_initialized, MAX_BENEFICIARIES,
+        LEDGER_TTL_BUMP, LEDGER_TTL_THRESHOLD,
     },
     types::SplitterError,
 };
@@ -21,7 +22,7 @@ impl RoyaltySplitter {
         if is_initialized(&env) {
             panic_with_error!(&env, SplitterError::AlreadyInitialized);
         }
-        if beneficiaries.len() == 0 {
+        if beneficiaries.is_empty() {
             panic_with_error!(&env, SplitterError::NoBeneficiaries);
         }
         if beneficiaries.len() > MAX_BENEFICIARIES {
@@ -32,8 +33,8 @@ impl RoyaltySplitter {
         }
 
         let mut total: u32 = 0;
-        for i in 0..shares.len() {
-            total += shares.get(i).unwrap();
+        for share in shares.iter() {
+            total += share;
         }
         if total != 10_000 {
             panic_with_error!(&env, SplitterError::InvalidShares);
@@ -43,6 +44,9 @@ impl RoyaltySplitter {
         save_beneficiaries(&env, &beneficiaries);
         save_shares(&env, &shares);
         set_initialized(&env);
+        env.storage()
+            .instance()
+            .extend_ttl(LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
     }
 
     /// Drain the contract's full token balance to all beneficiaries
@@ -53,6 +57,10 @@ impl RoyaltySplitter {
         if !is_initialized(&env) {
             panic_with_error!(&env, SplitterError::NotInitialized);
         }
+
+        env.storage()
+            .instance()
+            .extend_ttl(LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
 
         let token = load_token(&env);
         let token_client = TokenClient::new(&env, &token);
@@ -68,11 +76,14 @@ impl RoyaltySplitter {
         let len = beneficiaries.len();
 
         let mut distributed: i128 = 0;
-        for i in 0..len - 1 {
-            let share = shares.get(i).unwrap() as i128;
-            let amount = balance * share / 10_000;
+        for (beneficiary, share) in beneficiaries
+            .iter()
+            .zip(shares.iter())
+            .take((len - 1) as usize)
+        {
+            let amount = balance * (share as i128) / 10_000;
             if amount > 0 {
-                token_client.transfer(&contract_addr, &beneficiaries.get(i).unwrap(), &amount);
+                token_client.transfer(&contract_addr, &beneficiary, &amount);
                 distributed += amount;
             }
         }
@@ -81,7 +92,7 @@ impl RoyaltySplitter {
         if remainder > 0 {
             token_client.transfer(
                 &contract_addr,
-                &beneficiaries.get(len - 1).unwrap(),
+                beneficiaries.get(len - 1).unwrap(),
                 &remainder,
             );
         }
