@@ -5,8 +5,8 @@ use soroban_sdk::{
 use crate::{
     storage::{
         is_initialized, load_beneficiaries, load_shares, load_token, save_beneficiaries,
-        save_shares, save_token, set_initialized, MAX_BENEFICIARIES,
-        LEDGER_TTL_BUMP, LEDGER_TTL_THRESHOLD,
+        save_shares, save_token, set_initialized, LEDGER_TTL_BUMP, LEDGER_TTL_THRESHOLD,
+        MAX_BENEFICIARIES,
     },
     types::SplitterError,
 };
