@@ -5,7 +5,8 @@ use soroban_sdk::{
 use crate::{
     storage::{
         is_initialized, load_beneficiaries, load_shares, load_token, save_beneficiaries,
-        save_shares, save_token, set_initialized, MAX_BENEFICIARIES,
+        save_shares, save_token, set_initialized, LEDGER_TTL_BUMP, LEDGER_TTL_THRESHOLD,
+        MAX_BENEFICIARIES,
     },
     types::SplitterError,
 };
@@ -32,8 +33,8 @@ impl RoyaltySplitter {
         }
 
         let mut total: u32 = 0;
-        for i in 0..shares.len() {
-            total += shares.get(i).unwrap();
+        for share in shares.iter() {
+            total += share;
         }
         if total != 10_000 {
             panic_with_error!(&env, SplitterError::InvalidShares);
@@ -43,17 +44,25 @@ impl RoyaltySplitter {
         save_beneficiaries(&env, &beneficiaries);
         save_shares(&env, &shares);
         set_initialized(&env);
+        env.storage()
+            .instance()
+            .extend_ttl(LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
     }
 
     /// Drain the contract's full token balance to all beneficiaries
     /// proportionally. Callable by anyone; no auth required.
     /// The caller receives any rounding remainder (dust) as a gas incentive.
-    pub fn distribute(env: Env, token_address: Address, caller: Address) {
+    pub fn distribute(env: Env, _token_address: Address, caller: Address) {
         if !is_initialized(&env) {
             panic_with_error!(&env, SplitterError::NotInitialized);
         }
 
-        let token_client = TokenClient::new(&env, &token_address);
+        env.storage()
+            .instance()
+            .extend_ttl(LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
+
+        let token = load_token(&env);
+        let token_client = TokenClient::new(&env, &token);
         let contract_addr = env.current_contract_address();
 
         let balance = token_client.balance(&contract_addr);
@@ -63,14 +72,12 @@ impl RoyaltySplitter {
 
         let beneficiaries = load_beneficiaries(&env);
         let shares = load_shares(&env);
-        let len = beneficiaries.len();
 
         let mut distributed: i128 = 0;
-        for i in 0..len {
-            let share = shares.get(i).unwrap() as i128;
-            let amount = balance * share / 10_000;
+        for (beneficiary, share) in beneficiaries.iter().zip(shares.iter()) {
+            let amount = balance * (share as i128) / 10_000;
             if amount > 0 {
-                token_client.transfer(&contract_addr, beneficiaries.get(i).unwrap(), &amount);
+                token_client.transfer(&contract_addr, &beneficiary, &amount);
                 distributed += amount;
             }
         }

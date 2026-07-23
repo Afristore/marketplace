@@ -5,6 +5,7 @@ import { useWalletContext } from "@/context/WalletContext";
 import { useDeploySplitter } from "@/hooks/useSplitter";
 import { SplitterRecipient } from "@/lib/splitter";
 import { WalletGuard } from "@/components/WalletGuard";
+import { RoyaltiesDistributor } from "@/components/RoyaltiesDistributor";
 import {
   Plus,
   Trash2,
@@ -143,6 +144,11 @@ export default function SplitterPage() {
             <ArrowLeft size={16} />
             Back to Dashboard
           </Link>
+
+          {/* My Royalties Section - Distribute from Existing Splitter */}
+          <div className="relative mb-12 animate-fade-in">
+            <RoyaltiesDistributor userPublicKey={publicKey} />
+          </div>
 
           <div className="relative mb-10 overflow-hidden rounded-[3rem] bg-midnight-900 border border-white/5 shadow-2xl p-8 sm:p-12">
             <div className="absolute -top-24 -right-24 h-64 w-64 rounded-full bg-brand-500/10 blur-[100px]" />
