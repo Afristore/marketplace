@@ -3,7 +3,7 @@ use super::*;
 use soroban_sdk::{
     testutils::Address as _,
     token::{StellarAssetClient, TokenClient},
-    vec, Address, Env,
+    vec, Address, Env, Vec,
 };
 
 fn setup() -> (
@@ -380,4 +380,267 @@ fn test_get_share_single_beneficiary() {
     client.initialize(&token, &vec![&env, alice.clone()], &vec![&env, 10_000_u32]);
 
     assert_eq!(client.get_share(&alice), 10_000_u32);
+}
+
+// ── 100% royalty allocation enforcement regression tests ──────────────
+
+#[test]
+fn test_distribute_royalties_exact_100_percent_success() {
+    let (env, client, token, contract_id) = setup();
+    let recipient_a = Address::generate(&env);
+    let recipient_b = Address::generate(&env);
+    let recipient_c = Address::generate(&env);
+    let caller = Address::generate(&env);
+
+    // Configure exact 100% allocation across 3 recipients:
+    // Recipient A -> 50% (5_000 BPS)
+    // Recipient B -> 30% (3_000 BPS)
+    // Recipient C -> 20% (2_000 BPS)
+    // Total = 10_000 BPS (100%)
+    client.initialize(
+        &token,
+        &vec![
+            &env,
+            recipient_a.clone(),
+            recipient_b.clone(),
+            recipient_c.clone(),
+        ],
+        &vec![&env, 5_000_u32, 3_000_u32, 2_000_u32],
+    );
+
+    let sac = StellarAssetClient::new(&env, &token);
+    sac.mint(&contract_id, &100_000);
+
+    let tc = TokenClient::new(&env, &token);
+    assert_eq!(tc.balance(&contract_id), 100_000);
+    assert_eq!(tc.balance(&recipient_a), 0);
+    assert_eq!(tc.balance(&recipient_b), 0);
+    assert_eq!(tc.balance(&recipient_c), 0);
+
+    // Call distribute
+    client.distribute(&token, &caller);
+
+    // Verify distribution succeeds and exact amounts are received
+    assert_eq!(
+        tc.balance(&recipient_a),
+        50_000,
+        "Recipient A should receive 50%"
+    );
+    assert_eq!(
+        tc.balance(&recipient_b),
+        30_000,
+        "Recipient B should receive 30%"
+    );
+    assert_eq!(
+        tc.balance(&recipient_c),
+        20_000,
+        "Recipient C should receive 20%"
+    );
+    assert_eq!(
+        tc.balance(&contract_id),
+        0,
+        "Contract balance should be drained"
+    );
+    assert_eq!(tc.balance(&caller), 0, "No dust remainder for caller");
+
+    // Verify getters return expected shares
+    assert_eq!(client.get_share(&recipient_a), 5_000);
+    assert_eq!(client.get_share(&recipient_b), 3_000);
+    assert_eq!(client.get_share(&recipient_c), 2_000);
+}
+
+#[test]
+fn test_distribute_royalties_less_than_100_percent_fails() {
+    let (env, client, token, contract_id) = setup();
+    let recipient_a = Address::generate(&env);
+    let recipient_b = Address::generate(&env);
+    let recipient_c = Address::generate(&env);
+    let caller = Address::generate(&env);
+
+    // Configure invalid allocation under 100%:
+    // 40% + 30% + 20% = 90% (9_000 BPS)
+    let err = client
+        .try_initialize(
+            &token,
+            &vec![
+                &env,
+                recipient_a.clone(),
+                recipient_b.clone(),
+                recipient_c.clone(),
+            ],
+            &vec![&env, 4_000_u32, 3_000_u32, 2_000_u32],
+        )
+        .unwrap_err()
+        .unwrap();
+
+    // Verify transaction fails with SplitterError::InvalidShares
+    assert_eq!(err, SplitterError::InvalidShares.into());
+
+    // Mint funds to contract to test distribution fails on uninitialized contract
+    let sac = StellarAssetClient::new(&env, &token);
+    sac.mint(&contract_id, &100_000);
+
+    let tc = TokenClient::new(&env, &token);
+    assert_eq!(tc.balance(&contract_id), 100_000);
+
+    // Verify state integrity: distribute fails because contract was not initialized
+    let dist_err = client.try_distribute(&token, &caller).unwrap_err().unwrap();
+    assert_eq!(dist_err, SplitterError::NotInitialized.into());
+
+    // Confirm state integrity: no partial distribution, all balances and state remain unchanged
+    assert_eq!(tc.balance(&recipient_a), 0, "Recipient A balance unchanged");
+    assert_eq!(tc.balance(&recipient_b), 0, "Recipient B balance unchanged");
+    assert_eq!(tc.balance(&recipient_c), 0, "Recipient C balance unchanged");
+    assert_eq!(
+        tc.balance(&contract_id),
+        100_000,
+        "Contract balance unchanged"
+    );
+    assert_eq!(tc.balance(&caller), 0, "Caller balance unchanged");
+
+    assert_eq!(
+        client.try_get_share(&recipient_a).unwrap_err().unwrap(),
+        SplitterError::NotInitialized.into()
+    );
+}
+
+#[test]
+fn test_distribute_royalties_greater_than_100_percent_fails() {
+    let (env, client, token, contract_id) = setup();
+    let recipient_a = Address::generate(&env);
+    let recipient_b = Address::generate(&env);
+    let recipient_c = Address::generate(&env);
+    let caller = Address::generate(&env);
+
+    // Configure invalid allocation over 100%:
+    // 50% + 40% + 20% = 110% (11_000 BPS)
+    let err = client
+        .try_initialize(
+            &token,
+            &vec![
+                &env,
+                recipient_a.clone(),
+                recipient_b.clone(),
+                recipient_c.clone(),
+            ],
+            &vec![&env, 5_000_u32, 4_000_u32, 2_000_u32],
+        )
+        .unwrap_err()
+        .unwrap();
+
+    // Verify transaction fails with SplitterError::InvalidShares
+    assert_eq!(err, SplitterError::InvalidShares.into());
+
+    // Mint funds to contract to test distribution fails on uninitialized contract
+    let sac = StellarAssetClient::new(&env, &token);
+    sac.mint(&contract_id, &100_000);
+
+    let tc = TokenClient::new(&env, &token);
+    assert_eq!(tc.balance(&contract_id), 100_000);
+
+    // Verify state integrity: distribute fails because contract was not initialized
+    let dist_err = client.try_distribute(&token, &caller).unwrap_err().unwrap();
+    assert_eq!(dist_err, SplitterError::NotInitialized.into());
+
+    // Confirm state integrity: no partial distribution, all balances and state remain unchanged
+    assert_eq!(tc.balance(&recipient_a), 0, "Recipient A balance unchanged");
+    assert_eq!(tc.balance(&recipient_b), 0, "Recipient B balance unchanged");
+    assert_eq!(tc.balance(&recipient_c), 0, "Recipient C balance unchanged");
+    assert_eq!(
+        tc.balance(&contract_id),
+        100_000,
+        "Contract balance unchanged"
+    );
+    assert_eq!(tc.balance(&caller), 0, "Caller balance unchanged");
+
+    assert_eq!(
+        client.try_get_share(&recipient_a).unwrap_err().unwrap(),
+        SplitterError::NotInitialized.into()
+    );
+}
+
+#[test]
+fn test_distribute_royalties_max_recipients_100_percent_success() {
+    let (env, client, token, contract_id) = setup();
+    let caller = Address::generate(&env);
+
+    // Max beneficiaries supported is 20, total must equal 10_000 BPS (500 BPS each = 5% each)
+    let mut beneficiaries = vec![&env];
+    let mut shares = vec![&env];
+    let mut recipients: Vec<Address> = Vec::new(&env);
+
+    for _ in 0..20 {
+        let recipient = Address::generate(&env);
+        beneficiaries.push_back(recipient.clone());
+        shares.push_back(500_u32);
+        recipients.push_back(recipient);
+    }
+
+    client.initialize(&token, &beneficiaries, &shares);
+
+    let sac = StellarAssetClient::new(&env, &token);
+    sac.mint(&contract_id, &20_000);
+
+    client.distribute(&token, &caller);
+
+    let tc = TokenClient::new(&env, &token);
+    for recipient in recipients.iter() {
+        assert_eq!(
+            tc.balance(&recipient),
+            1_000,
+            "Each recipient should receive exactly 5% of 20,000"
+        );
+    }
+    assert_eq!(
+        tc.balance(&contract_id),
+        0,
+        "Contract balance should be drained"
+    );
+}
+
+#[test]
+fn test_distribute_royalties_smallest_valid_percentages_100_percent_success() {
+    let (env, client, token, contract_id) = setup();
+    let caller = Address::generate(&env);
+
+    // Smallest BPS unit is 1 BPS (0.01%).
+    // 19 recipients get 1 BPS each (19 BPS total = 0.19%)
+    // 1 recipient gets 9,981 BPS (99.81%)
+    // Total = 19 + 9,981 = 10,000 BPS (100%)
+    let mut beneficiaries = vec![&env];
+    let mut shares = vec![&env];
+    let mut small_recipients: Vec<Address> = Vec::new(&env);
+
+    for _ in 0..19 {
+        let recipient = Address::generate(&env);
+        beneficiaries.push_back(recipient.clone());
+        shares.push_back(1_u32);
+        small_recipients.push_back(recipient);
+    }
+    let large_recipient = Address::generate(&env);
+    beneficiaries.push_back(large_recipient.clone());
+    shares.push_back(9_981_u32);
+
+    client.initialize(&token, &beneficiaries, &shares);
+
+    let sac = StellarAssetClient::new(&env, &token);
+    // Mint 10,000,000 tokens so 1 BPS = 1,000 tokens cleanly
+    sac.mint(&contract_id, &10_000_000);
+
+    client.distribute(&token, &caller);
+
+    let tc = TokenClient::new(&env, &token);
+    for recipient in small_recipients.iter() {
+        assert_eq!(
+            tc.balance(&recipient),
+            1_000,
+            "Small recipient with 1 BPS receives 1,000 tokens"
+        );
+    }
+    assert_eq!(
+        tc.balance(&large_recipient),
+        9_981_000,
+        "Large recipient with 9,981 BPS receives 9,981,000 tokens"
+    );
+    assert_eq!(tc.balance(&contract_id), 0);
 }
