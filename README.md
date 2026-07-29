@@ -383,3 +383,5 @@ The admin dashboard (`/admin`) provides platform operators with:
 | Creator profiles | Collections and activity per creator address |
 
 Access at `http://localhost:3000/admin` — wallet must match the admin address set during launchpad initialization.
+
+Thank you
