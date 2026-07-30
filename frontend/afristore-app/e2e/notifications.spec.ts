@@ -143,7 +143,9 @@ test.describe("Notifications", () => {
     }
   });
 
-  // ── Issue #490 ──────────────────────────────────────────────────────────────
+  // ── Issue #602 & #490 ────────────────────────────────────────────────────────────────
+  // Note: #602 - 'Mark all as read' updates backend via PATCH API and clears UI badge
+  // This test verifies both the PATCH call and badge clearance. ──────────────────────────────────────────────────────────────
   test("mark all as read clears the notification counter", async ({ page }) => {
     const INDEXER_URL = (
       process.env.NEXT_PUBLIC_INDEXER_URL ?? "http://localhost:4000"

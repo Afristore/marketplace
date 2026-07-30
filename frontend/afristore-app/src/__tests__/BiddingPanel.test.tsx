@@ -152,4 +152,32 @@ describe("BiddingPanel", () => {
     render(<BiddingPanel auction={makeAuction({ status: "Finalized" })} />);
     expect(screen.getByText(/finalized/i)).toBeInTheDocument();
   });
+  // ── Issue #603 ──────────────────────────────────────────────────────────────
+  it("disables Place Bid button when input is below the minimum increment", async () => {
+    const user = userEvent.setup();
+    const auction = makeAuction(); // reserve = 1 XLM
+
+    render(<BiddingPanel auction={auction} />);
+
+    const input = screen.getByPlaceholderText(/min/i);
+    const button = screen.getByRole("button", { name: /place bid/i });
+
+    // Button should be disabled when input is empty
+    expect(button).toBeDisabled();
+
+    // Type an amount well above reserve — button should enable
+    await user.type(input, "5");
+    expect(button).toBeEnabled();
+
+    // Clear and type amount below reserve — button should disable
+    await user.clear(input);
+    await user.type(input, "0.1");
+    expect(button).toBeDisabled();
+
+    // Type amount equal to reserve — button should enable
+    await user.clear(input);
+    await user.type(input, "1");
+    expect(button).toBeEnabled();
+  });
+
 });
