@@ -4,9 +4,9 @@ use soroban_sdk::{
 
 use crate::{
     storage::{
-        is_initialized, load_beneficiaries, load_shares, load_token, save_beneficiaries,
-        save_shares, save_token, set_initialized, LEDGER_TTL_BUMP, LEDGER_TTL_THRESHOLD,
-        MAX_BENEFICIARIES,
+        is_initialized, load_admin, load_beneficiaries, load_shares, load_token,
+        save_admin, save_beneficiaries, save_shares, save_token, set_initialized,
+        LEDGER_TTL_BUMP, LEDGER_TTL_THRESHOLD, MAX_BENEFICIARIES,
     },
     types::SplitterError,
 };
@@ -16,9 +16,15 @@ pub struct RoyaltySplitter;
 
 #[contractimpl]
 impl RoyaltySplitter {
-    /// Lock in the token, beneficiaries, and BPS shares forever.
+    /// Lock in the admin, token, beneficiaries, and BPS shares forever.
     /// Shares must sum to exactly 10 000. Can only be called once.
-    pub fn initialize(env: Env, token: Address, beneficiaries: Vec<Address>, shares: Vec<u32>) {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        token: Address,
+        beneficiaries: Vec<Address>,
+        shares: Vec<u32>,
+    ) {
         if is_initialized(&env) {
             panic_with_error!(&env, SplitterError::AlreadyInitialized);
         }
@@ -40,6 +46,7 @@ impl RoyaltySplitter {
             panic_with_error!(&env, SplitterError::InvalidShares);
         }
 
+        save_admin(&env, &admin);
         save_token(&env, &token);
         save_beneficiaries(&env, &beneficiaries);
         save_shares(&env, &shares);
@@ -86,6 +93,55 @@ impl RoyaltySplitter {
         if remainder > 0 {
             token_client.transfer(&contract_addr, &caller, &remainder);
         }
+    }
+
+    /// Update the royalty split configuration. Can only be called by the admin.
+    /// Shares must sum to exactly 10 000.
+    pub fn update_royalty_split(
+        env: Env,
+        admin: Address,
+        beneficiaries: Vec<Address>,
+        shares: Vec<u32>,
+    ) {
+        // Require admin authentication
+        admin.require_auth();
+
+        if !is_initialized(&env) {
+            panic_with_error!(&env, SplitterError::NotInitialized);
+        }
+
+        // Verify the provided admin matches the stored admin
+        let stored_admin = load_admin(&env);
+        if admin != stored_admin {
+            panic_with_error!(&env, SplitterError::Unauthorized);
+        }
+
+        // Validate inputs
+        if beneficiaries.is_empty() {
+            panic_with_error!(&env, SplitterError::NoBeneficiaries);
+        }
+        if beneficiaries.len() > MAX_BENEFICIARIES {
+            panic_with_error!(&env, SplitterError::TooManyBeneficiaries);
+        }
+        if beneficiaries.len() != shares.len() {
+            panic_with_error!(&env, SplitterError::LengthMismatch);
+        }
+
+        let mut total: u32 = 0;
+        for share in shares.iter() {
+            total += share;
+        }
+        if total != 10_000 {
+            panic_with_error!(&env, SplitterError::InvalidShares);
+        }
+
+        // Update storage
+        save_beneficiaries(&env, &beneficiaries);
+        save_shares(&env, &shares);
+
+        env.storage()
+            .instance()
+            .extend_ttl(LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
     }
 
     pub fn get_token(env: Env) -> Address {

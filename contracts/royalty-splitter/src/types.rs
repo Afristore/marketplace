@@ -12,4 +12,5 @@ pub enum SplitterError {
     InvalidShares = 5,
     TooManyBeneficiaries = 6,
     BeneficiaryNotFound = 7,
+     Unauthorized = 8,
 }

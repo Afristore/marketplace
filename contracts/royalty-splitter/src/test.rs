@@ -13,6 +13,7 @@ fn setup() -> (
     RoyaltySplitterClient<'static>,
     Address, // token
     Address, // contract_id
+    Address, // admin
 ) {
     let env = Env::default();
     env.mock_all_auths();
@@ -20,23 +21,25 @@ fn setup() -> (
     let contract_id = env.register(RoyaltySplitter, ());
     let client = RoyaltySplitterClient::new(&env, &contract_id);
 
+    let admin = Address::generate(&env);
     let token_admin = Address::generate(&env);
     let token = env
         .register_stellar_asset_contract_v2(token_admin)
         .address();
 
-    (env, client, token, contract_id)
+    (env, client, token, contract_id, admin)
 }
 
 // ── initialize ────────────────────────────────────────────────
 
 #[test]
 fn test_initialize_stores_config() {
-    let (env, client, token, _) = setup();
+    let (env, client, token, _, admin) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
 
     client.initialize(
+        &admin,
         &token,
         &vec![&env, alice.clone(), bob.clone()],
         &vec![&env, 6_000_u32, 4_000_u32],
@@ -53,11 +56,12 @@ fn test_initialize_stores_config() {
 
 #[test]
 fn test_double_initialize_is_rejected() {
-    let (env, client, token, _) = setup();
+    let (env, client, token, _, admin) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
 
     client.initialize(
+        &admin,
         &token,
         &vec![&env, alice.clone(), bob.clone()],
         &vec![&env, 5_000_u32, 5_000_u32],
@@ -65,6 +69,7 @@ fn test_double_initialize_is_rejected() {
 
     let err = client
         .try_initialize(
+            &admin,
             &token,
             &vec![&env, alice, bob],
             &vec![&env, 5_000_u32, 5_000_u32],
@@ -77,12 +82,13 @@ fn test_double_initialize_is_rejected() {
 
 #[test]
 fn test_shares_not_summing_to_10000_is_rejected() {
-    let (env, client, token, _) = setup();
+    let (env, client, token, _, admin) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
 
     let err = client
         .try_initialize(
+            &admin,
             &token,
             &vec![&env, alice, bob],
             &vec![&env, 5_000_u32, 4_000_u32], // sums to 9000
@@ -95,11 +101,12 @@ fn test_shares_not_summing_to_10000_is_rejected() {
 
 #[test]
 fn test_length_mismatch_is_rejected() {
-    let (env, client, token, _) = setup();
+    let (env, client, token, _, admin) = setup();
     let alice = Address::generate(&env);
 
     let err = client
         .try_initialize(
+            &admin,
             &token,
             &vec![&env, alice],
             &vec![&env, 5_000_u32, 5_000_u32],
@@ -112,10 +119,10 @@ fn test_length_mismatch_is_rejected() {
 
 #[test]
 fn test_empty_beneficiaries_is_rejected() {
-    let (env, client, token, _) = setup();
+    let (env, client, token, _, admin) = setup();
 
     let err = client
-        .try_initialize(&token, &vec![&env], &vec![&env])
+        .try_initialize(&admin, &token, &vec![&env], &vec![&env])
         .unwrap_err()
         .unwrap();
 
@@ -126,12 +133,13 @@ fn test_empty_beneficiaries_is_rejected() {
 
 #[test]
 fn test_distribute_two_parties() {
-    let (env, client, token, contract_id) = setup();
+    let (env, client, token, contract_id, admin) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
     let caller = Address::generate(&env);
 
     client.initialize(
+        &admin,
         &token,
         &vec![&env, alice.clone(), bob.clone()],
         &vec![&env, 6_000_u32, 4_000_u32],
@@ -150,13 +158,14 @@ fn test_distribute_two_parties() {
 
 #[test]
 fn test_distribute_three_parties() {
-    let (env, client, token, contract_id) = setup();
+    let (env, client, token, contract_id, admin) = setup();
     let a = Address::generate(&env);
     let b = Address::generate(&env);
     let c = Address::generate(&env);
     let caller = Address::generate(&env);
 
     client.initialize(
+        &admin,
         &token,
         &vec![&env, a.clone(), b.clone(), c.clone()],
         &vec![&env, 3_334_u32, 3_333_u32, 3_333_u32],
@@ -178,13 +187,14 @@ fn test_distribute_three_parties() {
 
 #[test]
 fn test_distribute_rounding_no_dust_trapped() {
-    let (env, client, token, contract_id) = setup();
+    let (env, client, token, contract_id, admin) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
     let caller = Address::generate(&env);
 
     // 3333 + 6667 = 10000; with balance=10 alice gets floor(3.333)=3, bob gets 6, caller gets 1
     client.initialize(
+        &admin,
         &token,
         &vec![&env, alice.clone(), bob.clone()],
         &vec![&env, 3_333_u32, 6_667_u32],
@@ -205,12 +215,13 @@ fn test_distribute_rounding_no_dust_trapped() {
 
 #[test]
 fn test_distribute_empty_balance_is_noop() {
-    let (env, client, token, contract_id) = setup();
+    let (env, client, token, contract_id, admin) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
     let caller = Address::generate(&env);
 
     client.initialize(
+        &admin,
         &token,
         &vec![&env, alice.clone(), bob.clone()],
         &vec![&env, 5_000_u32, 5_000_u32],
@@ -227,12 +238,13 @@ fn test_distribute_empty_balance_is_noop() {
 
 #[test]
 fn test_distribute_callable_by_anyone() {
-    let (env, client, token, contract_id) = setup();
+    let (env, client, token, contract_id, admin) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
     let caller = Address::generate(&env);
 
     client.initialize(
+        &admin,
         &token,
         &vec![&env, alice.clone(), bob.clone()],
         &vec![&env, 7_000_u32, 3_000_u32],
@@ -252,7 +264,7 @@ fn test_distribute_callable_by_anyone() {
 
 #[test]
 fn test_distribute_before_initialize_is_rejected() {
-    let (env, client, token, _) = setup();
+    let (env, client, token, _, _) = setup();
     let caller = Address::generate(&env);
 
     let err = client.try_distribute(&token, &caller).unwrap_err().unwrap();
@@ -261,11 +273,16 @@ fn test_distribute_before_initialize_is_rejected() {
 
 #[test]
 fn test_distribute_single_beneficiary_gets_all() {
-    let (env, client, token, contract_id) = setup();
+    let (env, client, token, contract_id, admin) = setup();
     let alice = Address::generate(&env);
     let caller = Address::generate(&env);
 
-    client.initialize(&token, &vec![&env, alice.clone()], &vec![&env, 10_000_u32]);
+    client.initialize(
+        &admin,
+        &token,
+        &vec![&env, alice.clone()],
+        &vec![&env, 10_000_u32],
+    );
 
     let sac = StellarAssetClient::new(&env, &token);
     sac.mint(&contract_id, &5_000);
@@ -279,12 +296,13 @@ fn test_distribute_single_beneficiary_gets_all() {
 
 #[test]
 fn test_distribute_can_be_called_multiple_times() {
-    let (env, client, token, contract_id) = setup();
+    let (env, client, token, contract_id, admin) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
     let caller = Address::generate(&env);
 
     client.initialize(
+        &admin,
         &token,
         &vec![&env, alice.clone(), bob.clone()],
         &vec![&env, 5_000_u32, 5_000_u32],
@@ -306,12 +324,13 @@ fn test_distribute_can_be_called_multiple_times() {
 
 #[test]
 fn test_distribute_dust_goes_to_caller() {
-    let (env, client, token, contract_id) = setup();
+    let (env, client, token, contract_id, admin) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
     let caller = Address::generate(&env);
 
     client.initialize(
+        &admin,
         &token,
         &vec![&env, alice.clone(), bob.clone()],
         &vec![&env, 5_000_u32, 5_000_u32],
@@ -333,11 +352,12 @@ fn test_distribute_dust_goes_to_caller() {
 
 #[test]
 fn test_get_share_for_beneficiary() {
-    let (env, client, token, _) = setup();
+    let (env, client, token, _, admin) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
 
     client.initialize(
+        &admin,
         &token,
         &vec![&env, alice.clone(), bob.clone()],
         &vec![&env, 6_000_u32, 4_000_u32],
@@ -349,12 +369,13 @@ fn test_get_share_for_beneficiary() {
 
 #[test]
 fn test_get_share_for_nonexistent_beneficiary() {
-    let (env, client, token, _) = setup();
+    let (env, client, token, _, admin) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
     let charlie = Address::generate(&env);
 
     client.initialize(
+        &admin,
         &token,
         &vec![&env, alice, bob],
         &vec![&env, 5_000_u32, 5_000_u32],
@@ -367,7 +388,7 @@ fn test_get_share_for_nonexistent_beneficiary() {
 
 #[test]
 fn test_get_share_before_initialize() {
-    let (env, client, _token, _) = setup();
+    let (env, client, _token, _, _) = setup();
     let alice = Address::generate(&env);
 
     let err = client.try_get_share(&alice).unwrap_err().unwrap();
@@ -376,10 +397,15 @@ fn test_get_share_before_initialize() {
 
 #[test]
 fn test_get_share_single_beneficiary() {
-    let (env, client, token, _) = setup();
+    let (env, client, token, _, admin) = setup();
     let alice = Address::generate(&env);
 
-    client.initialize(&token, &vec![&env, alice.clone()], &vec![&env, 10_000_u32]);
+    client.initialize(
+        &admin,
+        &token,
+        &vec![&env, alice.clone()],
+        &vec![&env, 10_000_u32],
+    );
 
     assert_eq!(client.get_share(&alice), 10_000_u32);
 }
@@ -388,7 +414,7 @@ fn test_get_share_single_beneficiary() {
 
 #[test]
 fn test_distribute_royalties_exact_100_percent_success() {
-    let (env, client, token, contract_id) = setup();
+    let (env, client, token, contract_id, admin) = setup();
     let recipient_a = Address::generate(&env);
     let recipient_b = Address::generate(&env);
     let recipient_c = Address::generate(&env);
@@ -400,6 +426,7 @@ fn test_distribute_royalties_exact_100_percent_success() {
     // Recipient C -> 20% (2_000 BPS)
     // Total = 10_000 BPS (100%)
     client.initialize(
+        &admin,
         &token,
         &vec![
             &env,
@@ -453,7 +480,7 @@ fn test_distribute_royalties_exact_100_percent_success() {
 
 #[test]
 fn test_distribute_royalties_less_than_100_percent_fails() {
-    let (env, client, token, contract_id) = setup();
+    let (env, client, token, contract_id, admin) = setup();
     let recipient_a = Address::generate(&env);
     let recipient_b = Address::generate(&env);
     let recipient_c = Address::generate(&env);
@@ -463,6 +490,7 @@ fn test_distribute_royalties_less_than_100_percent_fails() {
     // 40% + 30% + 20% = 90% (9_000 BPS)
     let err = client
         .try_initialize(
+            &admin,
             &token,
             &vec![
                 &env,
@@ -508,7 +536,7 @@ fn test_distribute_royalties_less_than_100_percent_fails() {
 
 #[test]
 fn test_distribute_royalties_greater_than_100_percent_fails() {
-    let (env, client, token, contract_id) = setup();
+    let (env, client, token, contract_id, admin) = setup();
     let recipient_a = Address::generate(&env);
     let recipient_b = Address::generate(&env);
     let recipient_c = Address::generate(&env);
@@ -518,6 +546,7 @@ fn test_distribute_royalties_greater_than_100_percent_fails() {
     // 50% + 40% + 20% = 110% (11_000 BPS)
     let err = client
         .try_initialize(
+            &admin,
             &token,
             &vec![
                 &env,
@@ -563,7 +592,7 @@ fn test_distribute_royalties_greater_than_100_percent_fails() {
 
 #[test]
 fn test_distribute_royalties_max_recipients_100_percent_success() {
-    let (env, client, token, contract_id) = setup();
+    let (env, client, token, contract_id, admin) = setup();
     let caller = Address::generate(&env);
 
     // Max beneficiaries supported is 20, total must equal 10_000 BPS (500 BPS each = 5% each)
@@ -578,7 +607,7 @@ fn test_distribute_royalties_max_recipients_100_percent_success() {
         recipients.push(recipient);
     }
 
-    client.initialize(&token, &beneficiaries, &shares);
+    client.initialize(&admin, &token, &beneficiaries, &shares);
 
     let sac = StellarAssetClient::new(&env, &token);
     sac.mint(&contract_id, &20_000);
@@ -602,7 +631,7 @@ fn test_distribute_royalties_max_recipients_100_percent_success() {
 
 #[test]
 fn test_distribute_royalties_smallest_valid_percentages_100_percent_success() {
-    let (env, client, token, contract_id) = setup();
+    let (env, client, token, contract_id, admin) = setup();
     let caller = Address::generate(&env);
 
     // Smallest BPS unit is 1 BPS (0.01%).
@@ -623,7 +652,7 @@ fn test_distribute_royalties_smallest_valid_percentages_100_percent_success() {
     beneficiaries.push_back(large_recipient.clone());
     shares.push_back(9_981_u32);
 
-    client.initialize(&token, &beneficiaries, &shares);
+    client.initialize(&admin, &token, &beneficiaries, &shares);
 
     let sac = StellarAssetClient::new(&env, &token);
     // Mint 10,000,000 tokens so 1 BPS = 1,000 tokens cleanly
@@ -647,6 +676,272 @@ fn test_distribute_royalties_smallest_valid_percentages_100_percent_success() {
     assert_eq!(tc.balance(&contract_id), 0);
 }
 
+// ── update_royalty_split ─────────────────────────────────────────────
+
+#[test]
+fn test_update_royalty_split_by_admin() {
+    let (env, client, token, _, admin) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let charlie = Address::generate(&env);
+
+    // Initialize with initial config
+    client.initialize(
+        &admin,
+        &token,
+        &vec![&env, alice.clone(), bob.clone()],
+        &vec![&env, 5_000_u32, 5_000_u32],
+    );
+
+    // Update to new config
+    client.update_royalty_split(
+        &admin,
+        &vec![&env, alice.clone(), bob.clone(), charlie.clone()],
+        &vec![&env, 4_000_u32, 3_000_u32, 3_000_u32],
+    );
+
+    // Verify the update
+    let beneficiaries = client.get_beneficiaries();
+    assert_eq!(beneficiaries.len(), 3);
+    assert_eq!(beneficiaries.get(0).unwrap(), alice);
+    assert_eq!(beneficiaries.get(1).unwrap(), bob);
+    assert_eq!(beneficiaries.get(2).unwrap(), charlie);
+
+    let shares = client.get_shares();
+    assert_eq!(shares.get(0).unwrap(), 4_000_u32);
+    assert_eq!(shares.get(1).unwrap(), 3_000_u32);
+    assert_eq!(shares.get(2).unwrap(), 3_000_u32);
+}
+
+#[test]
+fn test_update_royalty_split_by_non_admin_fails() {
+    let (env, client, token, _, admin) = setup();
+    let non_admin = Address::generate(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    // Initialize with initial config
+    client.initialize(
+        &admin,
+        &token,
+        &vec![&env, alice.clone(), bob.clone()],
+        &vec![&env, 5_000_u32, 5_000_u32],
+    );
+
+    // Try to update as non-admin
+    let err = client
+        .try_update_royalty_split(
+            &non_admin,
+            &vec![&env, alice.clone(), bob.clone()],
+            &vec![&env, 7_000_u32, 3_000_u32],
+        )
+        .unwrap_err()
+        .unwrap();
+
+    assert_eq!(err, SplitterError::Unauthorized.into());
+
+    // Verify state didn't change
+    let shares = client.get_shares();
+    assert_eq!(shares.get(0).unwrap(), 5_000_u32);
+    assert_eq!(shares.get(1).unwrap(), 5_000_u32);
+}
+
+#[test]
+fn test_update_royalty_split_before_initialize_fails() {
+    let (env, client, _token, _, admin) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    // Try to update before initialization
+    let err = client
+        .try_update_royalty_split(
+            &admin,
+            &vec![&env, alice, bob],
+            &vec![&env, 5_000_u32, 5_000_u32],
+        )
+        .unwrap_err()
+        .unwrap();
+
+    assert_eq!(err, SplitterError::NotInitialized.into());
+}
+
+#[test]
+fn test_update_royalty_split_with_invalid_shares_fails() {
+    let (env, client, token, _, admin) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let charlie = Address::generate(&env);
+
+    // Initialize
+    client.initialize(
+        &admin,
+        &token,
+        &vec![&env, alice.clone(), bob.clone()],
+        &vec![&env, 5_000_u32, 5_000_u32],
+    );
+
+    // Try to update with shares that don't sum to 10,000
+    let err = client
+        .try_update_royalty_split(
+            &admin,
+            &vec![&env, alice.clone(), bob.clone(), charlie.clone()],
+            &vec![&env, 4_000_u32, 3_000_u32, 2_000_u32], // Sums to 9,000
+        )
+        .unwrap_err()
+        .unwrap();
+
+    assert_eq!(err, SplitterError::InvalidShares.into());
+
+    // Verify state didn't change
+    let shares = client.get_shares();
+    assert_eq!(shares.get(0).unwrap(), 5_000_u32);
+    assert_eq!(shares.get(1).unwrap(), 5_000_u32);
+}
+
+#[test]
+fn test_update_royalty_split_with_empty_beneficiaries_fails() {
+    let (env, client, token, _, admin) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    // Initialize
+    client.initialize(
+        &admin,
+        &token,
+        &vec![&env, alice, bob],
+        &vec![&env, 5_000_u32, 5_000_u32],
+    );
+
+    // Try to update with empty beneficiaries
+    let err = client
+        .try_update_royalty_split(&admin, &vec![&env], &vec![&env])
+        .unwrap_err()
+        .unwrap();
+
+    assert_eq!(err, SplitterError::NoBeneficiaries.into());
+}
+
+#[test]
+fn test_update_royalty_split_with_too_many_beneficiaries_fails() {
+    let (env, client, token, _, admin) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    // Initialize
+    client.initialize(
+        &admin,
+        &token,
+        &vec![&env, alice.clone(), bob.clone()],
+        &vec![&env, 5_000_u32, 5_000_u32],
+    );
+
+    // Create 21 beneficiaries (MAX_BENEFICIARIES is 20)
+    let mut beneficiaries = vec![&env];
+    let mut shares = vec![&env];
+    for _ in 0..21 {
+        beneficiaries.push_back(Address::generate(&env));
+        shares.push_back(1_u32);
+    }
+
+    // Try to update with too many beneficiaries
+    let err = client
+        .try_update_royalty_split(&admin, &beneficiaries, &shares)
+        .unwrap_err()
+        .unwrap();
+
+    assert_eq!(err, SplitterError::TooManyBeneficiaries.into());
+}
+
+#[test]
+fn test_update_royalty_split_length_mismatch_fails() {
+    let (env, client, token, _, admin) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    // Initialize
+    client.initialize(
+        &admin,
+        &token,
+        &vec![&env, alice.clone(), bob.clone()],
+        &vec![&env, 5_000_u32, 5_000_u32],
+    );
+
+    // Try to update with mismatched lengths
+    let err = client
+        .try_update_royalty_split(
+            &admin,
+            &vec![&env, alice.clone(), bob.clone()],
+            &vec![&env, 7_000_u32], // Only 1 share for 2 beneficiaries
+        )
+        .unwrap_err()
+        .unwrap();
+
+    assert_eq!(err, SplitterError::LengthMismatch.into());
+}
+
+#[test]
+fn test_update_royalty_split_multiple_times() {
+    let (env, client, token, contract_id, admin) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let charlie = Address::generate(&env);
+    let dave = Address::generate(&env);
+
+    // Initialize with 2 beneficiaries
+    client.initialize(
+        &admin,
+        &token,
+        &vec![&env, alice.clone(), bob.clone()],
+        &vec![&env, 5_000_u32, 5_000_u32],
+    );
+
+    // First update - 3 beneficiaries
+    client.update_royalty_split(
+        &admin,
+        &vec![&env, alice.clone(), bob.clone(), charlie.clone()],
+        &vec![&env, 4_000_u32, 3_000_u32, 3_000_u32],
+    );
+
+    let shares = client.get_shares();
+    assert_eq!(shares.len(), 3);
+    assert_eq!(shares.get(0).unwrap(), 4_000_u32);
+    assert_eq!(shares.get(1).unwrap(), 3_000_u32);
+    assert_eq!(shares.get(2).unwrap(), 3_000_u32);
+
+    // Second update - 4 beneficiaries
+    client.update_royalty_split(
+        &admin,
+        &vec![
+            &env,
+            alice.clone(),
+            bob.clone(),
+            charlie.clone(),
+            dave.clone(),
+        ],
+        &vec![&env, 2_500_u32, 2_500_u32, 2_500_u32, 2_500_u32],
+    );
+
+    let shares = client.get_shares();
+    assert_eq!(shares.len(), 4);
+    assert_eq!(shares.get(0).unwrap(), 2_500_u32);
+    assert_eq!(shares.get(1).unwrap(), 2_500_u32);
+    assert_eq!(shares.get(2).unwrap(), 2_500_u32);
+    assert_eq!(shares.get(3).unwrap(), 2_500_u32);
+
+    // Verify distribution still works
+    let caller = Address::generate(&env);
+    let sac = StellarAssetClient::new(&env, &token);
+    // Use contract_id from setup instead of env.current_contract_address()
+    sac.mint(&contract_id, &1_000_000);
+    client.distribute(&token, &caller);
+
+    let tc = TokenClient::new(&env, &token);
+    assert_eq!(tc.balance(&alice), 250_000);
+    assert_eq!(tc.balance(&bob), 250_000);
+    assert_eq!(tc.balance(&charlie), 250_000);
+    assert_eq!(tc.balance(&dave), 250_000);
+}
+
 // ── Invalid Recipient Address Regression Tests ─────────────────────────────
 
 #[test]
@@ -660,7 +955,7 @@ fn test_distribute_royalties_invalid_strkey_recipient_fails() {
 #[test]
 #[should_panic]
 fn test_distribute_royalties_invalid_recipient_first_position_fails() {
-    let (env, client, token, _contract_id) = setup();
+    let (env, client, token, _, admin) = setup();
     let valid_b = Address::generate(&env);
     let valid_c = Address::generate(&env);
 
@@ -668,6 +963,7 @@ fn test_distribute_royalties_invalid_recipient_first_position_fails() {
     let invalid_a = Address::from_string_bytes(&invalid_bytes);
 
     client.initialize(
+        &admin,
         &token,
         &vec![&env, invalid_a, valid_b, valid_c],
         &vec![&env, 5_000_u32, 3_000_u32, 2_000_u32],
@@ -677,7 +973,7 @@ fn test_distribute_royalties_invalid_recipient_first_position_fails() {
 #[test]
 #[should_panic]
 fn test_distribute_royalties_invalid_recipient_middle_position_fails() {
-    let (env, client, token, _contract_id) = setup();
+    let (env, client, token, _, admin) = setup();
     let valid_a = Address::generate(&env);
     let valid_c = Address::generate(&env);
 
@@ -685,6 +981,7 @@ fn test_distribute_royalties_invalid_recipient_middle_position_fails() {
     let invalid_b = Address::from_string_bytes(&invalid_bytes);
 
     client.initialize(
+        &admin,
         &token,
         &vec![&env, valid_a, invalid_b, valid_c],
         &vec![&env, 5_000_u32, 3_000_u32, 2_000_u32],
@@ -694,7 +991,7 @@ fn test_distribute_royalties_invalid_recipient_middle_position_fails() {
 #[test]
 #[should_panic]
 fn test_distribute_royalties_invalid_recipient_final_position_fails() {
-    let (env, client, token, _contract_id) = setup();
+    let (env, client, token, _, admin) = setup();
     let valid_a = Address::generate(&env);
     let valid_b = Address::generate(&env);
 
@@ -702,6 +999,7 @@ fn test_distribute_royalties_invalid_recipient_final_position_fails() {
     let invalid_c = Address::from_string_bytes(&invalid_bytes);
 
     client.initialize(
+        &admin,
         &token,
         &vec![&env, valid_a, valid_b, invalid_c],
         &vec![&env, 5_000_u32, 3_000_u32, 2_000_u32],

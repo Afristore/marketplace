@@ -4,6 +4,9 @@ pub const MAX_BENEFICIARIES: u32 = 20;
 pub const LEDGER_TTL_BUMP: u32 = 432_000;
 pub const LEDGER_TTL_THRESHOLD: u32 = 144_000;
 
+// Add these to the storage module
+const ADMIN_KEY: &[u8] = b"admin";
+
 #[contracttype]
 pub enum DataKey {
     Initialized,
@@ -72,4 +75,17 @@ pub fn load_shares(env: &Env) -> Vec<u32> {
         .persistent()
         .get::<DataKey, Vec<u32>>(&DataKey::Shares)
         .expect("shares not set")
+}
+
+
+pub fn save_admin(env: &Env, admin: &Address) {
+    env.storage().instance().set(&ADMIN_KEY, admin);
+}
+
+pub fn load_admin(env: &Env) -> Address {
+    env.storage().instance().get(&ADMIN_KEY).unwrap()
+}
+
+pub fn has_admin(env: &Env) -> bool {
+    env.storage().instance().has(&ADMIN_KEY)
 }
