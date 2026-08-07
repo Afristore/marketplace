@@ -689,6 +689,43 @@ router.put('/wallets/:address/preferences', async (req: Request, res: Response) 
     }
 });
 
+// GET /collections/:address/stats — volume, floor price, and total items for a collection
+router.get('/collections/:address/stats', async (req: Request, res: Response) => {
+    const address = req.params.address as string;
+    try {
+        const collection = await prisma.collection.findUnique({
+            where: { contractAddress: address },
+        });
+        if (!collection) {
+            return res.status(404).json({ error: 'Collection not found' });
+        }
+
+        const [volumeResult, floorResult, totalItems] = await Promise.all([
+            prisma.listing.aggregate({
+                _sum: { price: true },
+                where: { collection: address, status: 'Sold' },
+            }),
+            prisma.listing.aggregate({
+                _min: { price: true },
+                where: { collection: address, status: 'Active' },
+            }),
+            prisma.listing.count({
+                where: { collection: address },
+            }),
+        ]);
+
+        res.json({
+            contractAddress: address,
+            totalVolume: volumeResult?._sum?.price?.toString() ?? '0',
+            floorPrice: floorResult?._min?.price?.toString() ?? null,
+            totalItems,
+        });
+    } catch (err) {
+        console.error('Error details:', err);
+        res.status(500).json({ error: 'Failed to fetch collection stats' });
+    }
+});
+
 // GET /collections/:address — fetch a single collection by contract address
 router.get('/collections/:address', async (req: Request, res: Response) => {
     const { address } = req.params;

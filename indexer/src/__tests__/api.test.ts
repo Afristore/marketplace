@@ -21,10 +21,14 @@ const mockPrisma = vi.hoisted(() => ({
   },
   collection: {
     findMany: vi.fn(),
+    findUnique: vi.fn(),
   },
   userPreferences: {
     findUnique: vi.fn(),
     upsert: vi.fn(),
+  },
+  stakedNFT: {
+    findMany: vi.fn(),
   },
 }));
 
@@ -32,6 +36,7 @@ const mockRedis = vi.hoisted(() => ({
   isOpen: false,
   isReady: false,
   get: vi.fn(),
+  set: vi.fn().mockResolvedValue(undefined),
   setEx: vi.fn().mockResolvedValue(undefined),
   on: vi.fn(),
   connect: vi.fn().mockRejectedValue(new Error('No Redis')),
@@ -824,6 +829,68 @@ describe('PUT /wallets/:address/preferences', () => {
     expect(call.update.theme).toBeUndefined();
     expect(call.update.currency).toBeUndefined();
     expect(call.update.priceAlerts).toBeUndefined();
+  });
+});
+
+// ── GET /collections/:id/stats ───────────────────────────────────────────────
+
+describe('GET /collections/:id/stats', () => {
+  const CONTRACT = 'CCONTRACT123';
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('correctly aggregates volume, floor price, and total items', async () => {
+    mockPrisma.collection.findUnique.mockResolvedValue({
+      contractAddress: CONTRACT,
+      kind: 'normal_721',
+      creator: 'GCREATOR',
+      deployedAtLedger: 100,
+    });
+    mockPrisma.listing.aggregate
+      .mockResolvedValueOnce({ _sum: { price: '3000.0000000' } })  // volume
+      .mockResolvedValueOnce({ _min: { price: '500.0000000' } });  // floor
+    mockPrisma.listing.count.mockResolvedValue(12);
+
+    const res = await request(app).get(`/collections/${CONTRACT}/stats`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.contractAddress).toBe(CONTRACT);
+    expect(res.body.totalVolume).toBe('3000.0000000');
+    expect(res.body.floorPrice).toBe('500.0000000');
+    expect(res.body.totalItems).toBe(12);
+  });
+
+  it('returns null floorPrice when there are no active listings', async () => {
+    mockPrisma.collection.findUnique.mockResolvedValue({ contractAddress: CONTRACT });
+    mockPrisma.listing.aggregate
+      .mockResolvedValueOnce({ _sum: { price: null } })
+      .mockResolvedValueOnce({ _min: { price: null } });
+    mockPrisma.listing.count.mockResolvedValue(0);
+
+    const res = await request(app).get(`/collections/${CONTRACT}/stats`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalVolume).toBe('0');
+    expect(res.body.floorPrice).toBeNull();
+    expect(res.body.totalItems).toBe(0);
+  });
+
+  it('returns 404 when the collection does not exist', async () => {
+    mockPrisma.collection.findUnique.mockResolvedValue(null);
+
+    const res = await request(app).get('/collections/DOESNOTEXIST/stats');
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('Collection not found');
+  });
+
+  it('returns 500 when the database throws', async () => {
+    mockPrisma.collection.findUnique.mockRejectedValue(new Error('DB down'));
+
+    const res = await request(app).get(`/collections/${CONTRACT}/stats`);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBeDefined();
   });
 });
 
