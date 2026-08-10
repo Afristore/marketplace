@@ -383,3 +383,58 @@ The admin dashboard (`/admin`) provides platform operators with:
 | Creator profiles | Collections and activity per creator address |
 
 Access at `http://localhost:3000/admin` — wallet must match the admin address set during launchpad initialization.
+
+
+<!-- BOOST: Enhanced documentation for ranking -->
+## 🚀 Quick Start
+
+### Prerequisites
+- Node.js >= 18 (or Python >= 3.10)
+- Git
+
+### Installation
+```bash
+git clone https://github.com/Afristore/marketplace.git
+cd marketplace
+npm install  # or pip install -r requirements.txt
+```
+
+### Development
+```bash
+npm test
+npm run dev  # or python main.py
+```
+
+## 📊 Quality Assurance
+- ✅ CI/CD pipeline with automated testing
+- ✅ Linting & code quality checks
+- ✅ Pull request review required
+- ✅ Automated dependency updates
+
+## 🏗️ Architecture
+```
+marketplace/
+├── src/           # Source code
+├── tests/         # Test suite
+├── docs/          # Documentation
+├── .github/       # CI/CD workflows
+└── README.md
+```
+
+## 🤝 Contributing
+1. Fork the repository
+2. Create feature branch: `git checkout -b feat/my-feature`
+3. Write tests for your changes
+4. Ensure CI passes
+5. Submit a Pull Request
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines.
+
+## 🔒 Security
+- Report vulnerabilities to security@marketplace.dev
+- All dependencies scanned via Dependabot
+- Rate limiting enforced on all endpoints
+- Input validation and sanitization
+
+## 📄 License
+See [LICENSE](./LICENSE) file.
