@@ -292,6 +292,7 @@ pub fn is_approved_currency(env: &Env, currency: &Address) -> bool {
         .unwrap_or(false)
 }
 
+#[allow(dead_code)]
 pub fn require_approved_currency(env: &Env, currency: &Address) -> Result<(), crate::types::Error> {
     if !is_approved_currency(env, currency) {
         return Err(crate::types::Error::InvalidCurrency);

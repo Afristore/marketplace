@@ -33,6 +33,7 @@ use crate::{
 // We define minimal interfaces for the four collection types so the factory
 // can call `initialize` on freshly deployed contracts in the same transaction.
 
+#[allow(dead_code)]
 mod iface {
     use soroban_sdk::{contractclient, Address, BytesN, Env, String};
 
