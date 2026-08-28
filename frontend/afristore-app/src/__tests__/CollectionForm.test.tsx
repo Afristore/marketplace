@@ -135,4 +135,24 @@ describe("CollectionForm", () => {
     render(<CollectionForm />);
     expect(screen.getByText(/max supply/i)).toBeInTheDocument();
   });
+
+  it("rejects collection names with invalid special characters and does not call deploy", async () => {
+    const user = userEvent.setup();
+    render(<CollectionForm />);
+
+    const nameInput = screen.getByPlaceholderText(/african legends/i);
+    const symbolInput = screen.getByPlaceholderText(/AFRL/i);
+
+    await user.clear(nameInput);
+    await user.type(nameInput, "Invalid@Name#123!");
+    await user.clear(symbolInput);
+    await user.type(symbolInput, "INV");
+
+    await user.click(screen.getByRole("button", { name: /deploy|launch/i }));
+
+    expect(mockDeploy).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(/collection name can only contain letters/i)
+    ).toBeInTheDocument();
+  });
 });

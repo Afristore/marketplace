@@ -51,6 +51,7 @@ export function CollectionForm() {
   const hasSupportedTokens = supportedTokens.length > 0;
 
   const [successAddress, setSuccessAddress] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
 
   // Splitter addresses the user has deployed (persisted in localStorage under their pubkey)
   const [savedSplitters, setSavedSplitters] = useState<string[]>([]);
@@ -95,6 +96,15 @@ export function CollectionForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!publicKey) return;
+
+    const NAME_REGEX = /^[a-zA-Z0-9\s\-_]+$/;
+    if (!form.name.trim() || !NAME_REGEX.test(form.name)) {
+      setNameError(
+        "Collection name can only contain letters, numbers, spaces, hyphens, and underscores."
+      );
+      return;
+    }
+    setNameError(null);
 
     const input: DeployCollectionInput = {
       ...form,
@@ -234,11 +244,20 @@ export function CollectionForm() {
               </label>
               <input
                 required
+                pattern="^[a-zA-Z0-9\s\-_]+$"
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
-                className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
+                onChange={(e) => {
+                  setForm({ ...form, name: e.target.value });
+                  if (nameError) setNameError(null);
+                }}
+                className={`w-full rounded-2xl border ${
+                  nameError ? "border-red-500" : "border-gray-200"
+                } bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter`}
                 placeholder="e.g. African Legends"
               />
+              {nameError && (
+                <p className="text-xs text-red-500 font-inter">{nameError}</p>
+              )}
             </div>
 
             {is721 && (
