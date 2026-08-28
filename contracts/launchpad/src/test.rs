@@ -1395,6 +1395,8 @@ fn deploys_staking_pool_for_nft_collection() {
     let reward_token = Address::generate(&env);
     let salt = BytesN::from_array(&env, &[0xAAu8; 32]);
 
+    client.add_approved_currency(&reward_token);
+
     let pool_a =
         client.deploy_staking_pool(&creator, &nft_address, &reward_token, &1_000_000i128, &salt);
 
@@ -1409,4 +1411,33 @@ fn deploys_staking_pool_for_nft_collection() {
         &BytesN::from_array(&env, &[0xBBu8; 32]),
     );
     assert_eq!(duplicate, Err(Ok(Error::StakingPoolAlreadyExists)));
+}
+
+#[test]
+fn deploy_staking_pool_enforces_approved_currency() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, creator) = setup_launchpad_with_staking(&env);
+
+    let nft_address = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+    let salt = BytesN::from_array(&env, &[0xCCu8; 32]);
+
+    // Unapproved token must fail with InvalidCurrency
+    let res_unapproved = client.try_deploy_staking_pool(
+        &creator,
+        &nft_address,
+        &reward_token,
+        &1_000_000i128,
+        &salt,
+    );
+    assert_eq!(res_unapproved, Err(Ok(Error::InvalidCurrency)));
+
+    // Approve currency
+    client.add_approved_currency(&reward_token);
+    assert!(client.is_approved_currency(&reward_token));
+
+    // Deployment with approved currency succeeds
+    let pool = client.deploy_staking_pool(&creator, &nft_address, &reward_token, &1_000_000i128, &salt);
+    assert_eq!(client.get_staking_pool(&nft_address), Some(pool));
 }
