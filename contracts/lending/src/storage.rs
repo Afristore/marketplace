@@ -91,14 +91,16 @@ pub fn has_position(env: &Env, id: u64) -> bool {
     env.storage().persistent().has(&DataKey::Position(id))
 }
 
-pub fn get_currency_symbol(env: &Env, currency: &Address) -> String {
+use soroban_sdk::Symbol;
+
+pub fn get_currency_symbol(env: &Env, currency: &Address) -> Symbol {
     let key = DataKey::WhitelistedCurrency(currency.clone());
-    let symbol: String = env.storage().persistent().get(&key).unwrap();
+    let symbol: Symbol = env.storage().persistent().get(&key).unwrap();
     bump_persistent(env, &key);
     symbol
 }
 
-pub fn set_currency_symbol(env: &Env, currency: &Address, symbol: &String) {
+pub fn set_currency_symbol(env: &Env, currency: &Address, symbol: &Symbol) {
     let key = DataKey::WhitelistedCurrency(currency.clone());
     env.storage().persistent().set(&key, symbol);
     bump_persistent(env, &key);
