@@ -2,6 +2,7 @@
 
 pub mod contract;
 pub mod oracle;
+pub mod settlement;
 pub mod storage;
 pub mod types;
 
