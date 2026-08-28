@@ -6,7 +6,7 @@ use crate::types::{Listing, ListingStatus, PlatformConfig, PositionStatus};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as TokenAdminClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    vec, Address, Env, String,
+    vec, Address, Env, IntoVal, String,
 };
 
 fn create_token<'a>(env: &Env, admin: &Address) -> (TokenClient<'a>, TokenAdminClient<'a>) {
@@ -502,3 +502,253 @@ fn test_settle_zero_interest_zero_liquidator_fee() {
     assert_eq!(col_token.balance(&fee_receiver), 1_000_000);
     assert_eq!(col_token.balance(&borrower), 49_000_000);
 }
+
+// ─── Admin parameter update tests ────────────────────────────────────────────
+
+/// Seed a deployed contract with a default config and return the admin address
+/// along with the contract client.
+fn setup_initialized<'a>(
+    env: &'a Env,
+) -> (Address, LendingContractClient<'a>) {
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(env, &contract_id);
+
+    let admin = Address::generate(env);
+    let fee_receiver = Address::generate(env);
+    let oracle_address = Address::generate(env);
+
+    client.initialize(
+        &admin,
+        &fee_receiver,
+        &oracle_address,
+        &100,
+        &500,
+        &12000,
+        &20000,
+        &11000,
+        &11500,
+        &3600,
+    );
+
+    (admin, client)
+}
+
+// ── admin_update_bounds ───────────────────────────────────────────────────────
+
+#[test]
+fn test_admin_update_bounds_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (admin, client) = setup_initialized(&env);
+
+    // Update to new valid bounds.
+    client.admin_update_bounds(&13000, &25000, &12000, &12500);
+
+    // Retrieve config via contract context and verify every bound was persisted.
+    let contract_id = client.address.clone();
+    env.as_contract(&contract_id, || {
+        let cfg = crate::storage::get_config(&env);
+        assert_eq!(cfg.admin, admin);          // admin unchanged
+        assert_eq!(cfg.min_buffer_bps, 13000);
+        assert_eq!(cfg.max_buffer_bps, 25000);
+        assert_eq!(cfg.min_liq_threshold_bps, 12000);
+        assert_eq!(cfg.max_liq_threshold_bps, 12500);
+    });
+}
+
+#[test]
+#[should_panic]
+fn test_admin_update_bounds_non_admin_panics() {
+    let env = Env::default();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+
+    // Initialize with the real admin.
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: (
+                admin.clone(),
+                Address::generate(&env),
+                Address::generate(&env),
+                100u32,
+                500u32,
+                12000u32,
+                20000u32,
+                11000u32,
+                11500u32,
+                3600u64,
+            )
+                .into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(
+        &admin,
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &100,
+        &500,
+        &12000,
+        &20000,
+        &11000,
+        &11500,
+        &3600,
+    );
+
+    // Attempt admin_update_bounds as impostor — must panic (auth failure).
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &impostor,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "admin_update_bounds",
+            args: (13000u32, 25000u32, 12000u32, 12500u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.admin_update_bounds(&13000, &25000, &12000, &12500);
+}
+
+#[test]
+#[should_panic(
+    expected = "Invalid buffer bounds: min_buffer_bps must be less than max_buffer_bps"
+)]
+fn test_admin_update_bounds_bad_buffer_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_admin, client) = setup_initialized(&env);
+
+    // min >= max for buffer — must panic.
+    client.admin_update_bounds(&20000, &12000, &11000, &11500);
+}
+
+#[test]
+#[should_panic(
+    expected = "Invalid liquidation threshold bounds: min_liq_threshold_bps must be less than max_liq_threshold_bps"
+)]
+fn test_admin_update_bounds_bad_liq_threshold_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_admin, client) = setup_initialized(&env);
+
+    // min >= max for liq threshold — must panic.
+    client.admin_update_bounds(&12000, &20000, &15000, &11000);
+}
+
+#[test]
+#[should_panic(
+    expected = "Invalid bounds: max_liq_threshold_bps must be less than min_buffer_bps"
+)]
+fn test_admin_update_bounds_max_liq_ge_min_buffer_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_admin, client) = setup_initialized(&env);
+
+    // max_liq_threshold >= min_buffer — must panic.
+    client.admin_update_bounds(&12000, &20000, &11000, &12500);
+}
+
+// ── admin_set_fees ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_admin_set_fees_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (admin, client) = setup_initialized(&env);
+
+    // Update to new valid fees.
+    client.admin_set_fees(&200, &800); // 2% + 8% = 10% < 100%
+
+    let contract_id = client.address.clone();
+    env.as_contract(&contract_id, || {
+        let cfg = crate::storage::get_config(&env);
+        assert_eq!(cfg.admin, admin);           // admin unchanged
+        assert_eq!(cfg.platform_fee_bps, 200);
+        assert_eq!(cfg.liquidator_fee_bps, 800);
+        // Bounds must be untouched.
+        assert_eq!(cfg.min_buffer_bps, 12000);
+        assert_eq!(cfg.max_buffer_bps, 20000);
+    });
+}
+
+#[test]
+#[should_panic]
+fn test_admin_set_fees_non_admin_panics() {
+    let env = Env::default();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: (
+                admin.clone(),
+                Address::generate(&env),
+                Address::generate(&env),
+                100u32,
+                500u32,
+                12000u32,
+                20000u32,
+                11000u32,
+                11500u32,
+                3600u64,
+            )
+                .into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(
+        &admin,
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &100,
+        &500,
+        &12000,
+        &20000,
+        &11000,
+        &11500,
+        &3600,
+    );
+
+    // Attempt admin_set_fees as impostor — must panic (auth failure).
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &impostor,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "admin_set_fees",
+            args: (200u32, 800u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.admin_set_fees(&200, &800);
+}
+
+#[test]
+#[should_panic(expected = "Invalid fees: combined fees must be less than 10000")]
+fn test_admin_set_fees_combined_ge_10000_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_admin, client) = setup_initialized(&env);
+
+    // 5000 + 5000 = 10000 — must panic.
+    client.admin_set_fees(&5000, &5000);
+}
+

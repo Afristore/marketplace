@@ -2,15 +2,145 @@ use soroban_sdk::{contract, contractimpl, token, Address, Env};
 
 use crate::oracle;
 use crate::storage::{
-    get_config, get_listing, is_currency_whitelisted, next_position_id, set_listing, set_position,
+    get_config, get_listing, has_config, is_currency_whitelisted, next_position_id, set_config,
+    set_listing, set_position,
 };
-use crate::types::{ListingStatus, Position, PositionStatus};
+use crate::types::{ListingStatus, PlatformConfig, Position, PositionStatus};
 
 #[contract]
 pub struct LendingContract;
 
+// ── Private helpers ───────────────────────────────────────────────────────────
+
+/// Validate the four bps bound parameters that are shared by `initialize()`,
+/// `admin_update_bounds()`, and any future setter that touches these fields.
+///
+/// Invariants enforced (all panic with descriptive messages on violation):
+///   1. min_buffer_bps < max_buffer_bps
+///   2. min_liq_threshold_bps < max_liq_threshold_bps
+///   3. max_liq_threshold_bps < min_buffer_bps   (threshold ceiling below buffer floor)
+fn validate_bounds(
+    min_buffer_bps: u32,
+    max_buffer_bps: u32,
+    min_liq_threshold_bps: u32,
+    max_liq_threshold_bps: u32,
+) {
+    if min_buffer_bps >= max_buffer_bps {
+        panic!("Invalid buffer bounds: min_buffer_bps must be less than max_buffer_bps");
+    }
+    if min_liq_threshold_bps >= max_liq_threshold_bps {
+        panic!("Invalid liquidation threshold bounds: min_liq_threshold_bps must be less than max_liq_threshold_bps");
+    }
+    if max_liq_threshold_bps >= min_buffer_bps {
+        panic!("Invalid bounds: max_liq_threshold_bps must be less than min_buffer_bps");
+    }
+}
+
 #[contractimpl]
 impl LendingContract {
+    // ── Config / Init ─────────────────────────────────────────────────────────
+
+    /// One-time initializer. Must be called once immediately after deployment.
+    /// Panics if the contract has already been configured.
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        fee_receiver: Address,
+        oracle_address: Address,
+        platform_fee_bps: u32,
+        liquidator_fee_bps: u32,
+        min_buffer_bps: u32,
+        max_buffer_bps: u32,
+        min_liq_threshold_bps: u32,
+        max_liq_threshold_bps: u32,
+        max_price_staleness_secs: u64,
+    ) {
+        if has_config(&env) {
+            panic!("Already initialized");
+        }
+
+        admin.require_auth();
+
+        validate_bounds(
+            min_buffer_bps,
+            max_buffer_bps,
+            min_liq_threshold_bps,
+            max_liq_threshold_bps,
+        );
+
+        if platform_fee_bps.saturating_add(liquidator_fee_bps) >= 10000 {
+            panic!("Invalid fees: combined fees must be less than 10000");
+        }
+
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin,
+                fee_receiver,
+                platform_fee_bps,
+                liquidator_fee_bps,
+                min_buffer_bps,
+                max_buffer_bps,
+                min_liq_threshold_bps,
+                max_liq_threshold_bps,
+                oracle_address,
+                max_price_staleness_secs,
+            },
+        );
+    }
+
+    // ── Admin parameter updates ───────────────────────────────────────────────
+
+    /// Admin-only: update the four collateral-buffer / liquidation-threshold bps
+    /// bounds. Applies the same invariants as `initialize()`.
+    ///
+    /// Changes take effect for new listings and borrows only; open positions are
+    /// not retroactively affected.
+    pub fn admin_update_bounds(
+        env: Env,
+        min_buffer_bps: u32,
+        max_buffer_bps: u32,
+        min_liq_threshold_bps: u32,
+        max_liq_threshold_bps: u32,
+    ) {
+        let mut config = get_config(&env);
+        config.admin.require_auth();
+
+        validate_bounds(
+            min_buffer_bps,
+            max_buffer_bps,
+            min_liq_threshold_bps,
+            max_liq_threshold_bps,
+        );
+
+        config.min_buffer_bps = min_buffer_bps;
+        config.max_buffer_bps = max_buffer_bps;
+        config.min_liq_threshold_bps = min_liq_threshold_bps;
+        config.max_liq_threshold_bps = max_liq_threshold_bps;
+
+        set_config(&env, &config);
+    }
+
+    /// Admin-only: update the platform and liquidator fee basis points.
+    ///
+    /// Combined fees must remain below 10 000 bps (100 %). Changes take effect
+    /// for new positions only; open positions are not retroactively affected.
+    pub fn admin_set_fees(env: Env, platform_fee_bps: u32, liquidator_fee_bps: u32) {
+        let mut config = get_config(&env);
+        config.admin.require_auth();
+
+        if platform_fee_bps.saturating_add(liquidator_fee_bps) >= 10000 {
+            panic!("Invalid fees: combined fees must be less than 10000");
+        }
+
+        config.platform_fee_bps = platform_fee_bps;
+        config.liquidator_fee_bps = liquidator_fee_bps;
+
+        set_config(&env, &config);
+    }
+
+    // ── Listings ──────────────────────────────────────────────────────────────
+
     pub fn cancel_listing(env: Env, listing_id: u64) {
         let mut listing = get_listing(&env, listing_id);
 
@@ -22,7 +152,6 @@ impl LendingContract {
 
         // Return NFT to lender
         let nft_client = token::Client::new(&env, &listing.nft_contract);
-        // Assuming NFT uses the standard token interface for transfer
         nft_client.transfer(
             &env.current_contract_address(),
             &listing.lender,
@@ -33,10 +162,11 @@ impl LendingContract {
         set_listing(&env, listing_id, &listing);
 
         #[allow(deprecated)]
-        // Emitting event (dummy implementation since event spec is not fully provided)
         env.events()
             .publish((soroban_sdk::symbol_short!("cancel"), listing_id), ());
     }
+
+    // ── Borrow ────────────────────────────────────────────────────────────────
 
     pub fn borrow(
         env: Env,
@@ -60,9 +190,6 @@ impl LendingContract {
         let config = get_config(&env);
         let oracle_price = oracle::get_price(&env, &config.oracle_address, &collateral_currency);
 
-        // oracle_price is likely USD per unit of collateral (7 decimals)
-        // token_to_usd: collateral_amount * oracle_price / 10^decimals
-        // For simplicity assuming both are 7 decimals
         let collateral_value_usd = (collateral_amount * oracle_price) / 10_000_000;
 
         let required_collateral =
@@ -118,3 +245,4 @@ impl LendingContract {
         position_id
     }
 }
+
