@@ -117,4 +117,22 @@ impl LendingContract {
 
         position_id
     }
+
+    /// Admin-only: approve a token as valid collateral, mapped to its Reflector asset symbol.
+    pub fn whitelist_currency(env: Env, currency: Address, reflector_asset: soroban_sdk::Symbol) {
+        let config = get_config(&env);
+        config.admin.require_auth();
+
+        crate::storage::set_currency_symbol(&env, &currency, &reflector_asset);
+    }
+
+    /// Read-only: checks whether a currency address is currently approved as collateral.
+    pub fn is_currency_whitelisted(env: Env, currency: Address) -> bool {
+        is_currency_whitelisted(&env, &currency)
+    }
+
+    /// Read-only: fetches the Reflector asset symbol mapped to a whitelisted currency address.
+    pub fn get_currency_symbol(env: Env, currency: Address) -> soroban_sdk::Symbol {
+        crate::storage::get_currency_symbol(&env, &currency)
+    }
 }
