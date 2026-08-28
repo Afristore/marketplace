@@ -308,3 +308,289 @@ fn test_borrow_already_filled() {
 
     client.borrow(&1, &borrower, &col_token.address, &120_000_000);
 }
+
+#[test]
+#[should_panic(expected = "Position is not Active")]
+fn test_liquidate_not_active() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let col_token_address = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        crate::storage::set_position(
+            &env,
+            1,
+            &Position {
+                id: 1,
+                listing_id: 1,
+                lender: lender.clone(),
+                borrower: borrower.clone(),
+                nft_contract: Address::generate(&env),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                collateral_currency: col_token_address.clone(),
+                collateral_amount: 120_000_000,
+                interest_schedule_bps: vec![&env, 100],
+                liquidation_threshold_bps: 11000,
+                start_time: 1000,
+                max_duration_secs: 86400 * 30,
+                status: PositionStatus::Liquidated,
+            },
+        );
+    });
+
+    client.liquidate(&1, &None);
+}
+
+#[test]
+fn test_admin_update_bounds_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin: admin.clone(),
+                fee_receiver: Address::generate(&env),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 200,
+                min_buffer_bps: 1000,
+                max_buffer_bps: 5000,
+                min_liq_threshold_bps: 1000,
+                max_liq_threshold_bps: 4000,
+                oracle_address: Address::generate(&env),
+                max_price_staleness_secs: 3600,
+            },
+        );
+    });
+
+    client.admin_update_bounds(&1200, &6000, &1100, &4500);
+
+    let config = env.as_contract(&contract_id, || crate::storage::get_config(&env));
+    assert_eq!(config.min_buffer_bps, 1200);
+    assert_eq!(config.max_buffer_bps, 6000);
+    assert_eq!(config.min_liq_threshold_bps, 1100);
+    assert_eq!(config.max_liq_threshold_bps, 4500);
+}
+
+#[test]
+#[should_panic(expected = "Invalid buffer bounds: min > max")]
+fn test_admin_update_bounds_invalid_buffer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin: admin.clone(),
+                fee_receiver: Address::generate(&env),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 200,
+                min_buffer_bps: 1000,
+                max_buffer_bps: 5000,
+                min_liq_threshold_bps: 1000,
+                max_liq_threshold_bps: 4000,
+                oracle_address: Address::generate(&env),
+                max_price_staleness_secs: 3600,
+            },
+        );
+    });
+
+    client.admin_update_bounds(&6000, &1200, &1100, &4500);
+}
+
+#[test]
+fn test_admin_set_fees_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin: admin.clone(),
+                fee_receiver: Address::generate(&env),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 200,
+                min_buffer_bps: 1000,
+                max_buffer_bps: 5000,
+                min_liq_threshold_bps: 1000,
+                max_liq_threshold_bps: 4000,
+                oracle_address: Address::generate(&env),
+                max_price_staleness_secs: 3600,
+            },
+        );
+    });
+
+    client.admin_set_fees(&300, &400);
+
+    let config = env.as_contract(&contract_id, || crate::storage::get_config(&env));
+    assert_eq!(config.platform_fee_bps, 300);
+    assert_eq!(config.liquidator_fee_bps, 400);
+}
+
+#[test]
+#[should_panic(expected = "Total fees cannot exceed 10000 bps")]
+fn test_admin_set_fees_excessive() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin: admin.clone(),
+                fee_receiver: Address::generate(&env),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 200,
+                min_buffer_bps: 1000,
+                max_buffer_bps: 5000,
+                min_liq_threshold_bps: 1000,
+                max_liq_threshold_bps: 4000,
+                oracle_address: Address::generate(&env),
+                max_price_staleness_secs: 3600,
+            },
+        );
+    });
+
+    client.admin_set_fees(&6000, &5000);
+}
+
+#[test]
+fn test_return_nft_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &token_admin);
+    let (col_token, col_admin) = create_token(&env, &token_admin);
+    let fee_receiver = Address::generate(&env);
+
+    nft_admin.mint(&borrower, &1);
+    col_admin.mint(&contract_id, &100_000_000);
+
+    env.as_contract(&contract_id, || {
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin: Address::generate(&env),
+                fee_receiver: fee_receiver.clone(),
+                platform_fee_bps: 100, // 1%
+                liquidator_fee_bps: 200,
+                min_buffer_bps: 1000,
+                max_buffer_bps: 5000,
+                min_liq_threshold_bps: 1000,
+                max_liq_threshold_bps: 4000,
+                oracle_address: Address::generate(&env),
+                max_price_staleness_secs: 3600,
+            },
+        );
+
+        crate::storage::set_position(
+            &env,
+            1,
+            &Position {
+                id: 1,
+                listing_id: 1,
+                lender: lender.clone(),
+                borrower: borrower.clone(),
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                collateral_currency: col_token.address.clone(),
+                collateral_amount: 100_000_000,
+                interest_schedule_bps: vec![&env, 200], // 2%
+                liquidation_threshold_bps: 11000,
+                start_time: 1000,
+                max_duration_secs: 86400 * 30,
+                status: PositionStatus::Active,
+            },
+        );
+    });
+
+    client.return_nft(&1);
+
+    // NFT transferred back to lender
+    assert_eq!(nft_token.balance(&lender), 1);
+    assert_eq!(nft_token.balance(&borrower), 0);
+
+    // Platform fee = 1% of 100,000,000 = 1,000,000
+    assert_eq!(col_token.balance(&fee_receiver), 1_000_000);
+    // Interest = 2% of 100,000,000 = 2,000,000 to lender
+    assert_eq!(col_token.balance(&lender), 2_000_000);
+    // Remainder = 97,000,000 to borrower
+    assert_eq!(col_token.balance(&borrower), 97_000_000);
+
+    let position = env.as_contract(&contract_id, || crate::storage::get_position(&env, 1));
+    assert_eq!(position.status, PositionStatus::Returned);
+}
+
+#[test]
+#[should_panic(expected = "Term has already expired")]
+fn test_return_nft_expired_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+
+    env.ledger().set_timestamp(1000 + 86400 * 31);
+
+    env.as_contract(&contract_id, || {
+        crate::storage::set_position(
+            &env,
+            1,
+            &Position {
+                id: 1,
+                listing_id: 1,
+                lender: lender.clone(),
+                borrower: borrower.clone(),
+                nft_contract: Address::generate(&env),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                collateral_currency: Address::generate(&env),
+                collateral_amount: 100_000_000,
+                interest_schedule_bps: vec![&env, 200],
+                liquidation_threshold_bps: 11000,
+                start_time: 1000,
+                max_duration_secs: 86400 * 30,
+                status: PositionStatus::Active,
+            },
+        );
+    });
+
+    client.return_nft(&1);
+}
