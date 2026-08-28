@@ -308,3 +308,42 @@ fn test_borrow_already_filled() {
 
     client.borrow(&1, &borrower, &col_token.address, &120_000_000);
 }
+
+#[test]
+#[should_panic(expected = "Position is not Active")]
+fn test_liquidate_not_active() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let col_token_address = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        crate::storage::set_position(
+            &env,
+            1,
+            &Position {
+                id: 1,
+                listing_id: 1,
+                lender: lender.clone(),
+                borrower: borrower.clone(),
+                nft_contract: Address::generate(&env),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                collateral_currency: col_token_address.clone(),
+                collateral_amount: 120_000_000,
+                interest_schedule_bps: vec![&env, 100],
+                liquidation_threshold_bps: 11000,
+                start_time: 1000,
+                max_duration_secs: 86400 * 30,
+                status: PositionStatus::Liquidated,
+            },
+        );
+    });
+
+    client.liquidate(&1, &None);
+}
