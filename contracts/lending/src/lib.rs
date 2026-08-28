@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod contract;
+pub mod interest;
 pub mod oracle;
 pub mod storage;
 pub mod types;
