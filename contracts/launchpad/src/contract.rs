@@ -471,6 +471,8 @@ impl Launchpad {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
 
+        storage::require_approved_currency(&env, &token)?;
+
         let wasm = storage::get_royalty_splitter_wasm_hash(&env).ok_or(Error::WasmHashNotSet)?;
 
         let secure_salt = make_secure_salt(&env, &creator, &salt);
@@ -506,6 +508,8 @@ impl Launchpad {
     ) -> Result<Address, Error> {
         storage::extend_instance_ttl(&env);
         creator.require_auth();
+
+        storage::require_approved_currency(&env, &reward_token)?;
 
         // [FEE] Collect deployment fee (#442) — use globally-set fee token
         let (receiver, fee) = storage::get_platform_fee(&env);
