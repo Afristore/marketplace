@@ -502,3 +502,200 @@ fn test_settle_zero_interest_zero_liquidator_fee() {
     assert_eq!(col_token.balance(&fee_receiver), 1_000_000);
     assert_eq!(col_token.balance(&borrower), 49_000_000);
 }
+
+// ─── Initialize tests ───────────────────────────────────────────────────────
+
+#[test]
+fn test_initialize_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let oracle_address = Address::generate(&env);
+
+    client.initialize(
+        &admin,
+        &fee_receiver,
+        &oracle_address,
+        &100,
+        &500,
+        &12000,
+        &20000,
+        &11000,
+        &11500,
+        &3600,
+    );
+
+    env.as_contract(&contract_id, || {
+        let config = crate::storage::get_config(&env);
+        assert_eq!(config.admin, admin);
+        assert_eq!(config.fee_receiver, fee_receiver);
+        assert_eq!(config.oracle_address, oracle_address);
+        assert_eq!(config.platform_fee_bps, 100);
+        assert_eq!(config.liquidator_fee_bps, 500);
+        assert_eq!(config.min_buffer_bps, 12000);
+        assert_eq!(config.max_buffer_bps, 20000);
+        assert_eq!(config.min_liq_threshold_bps, 11000);
+        assert_eq!(config.max_liq_threshold_bps, 11500);
+        assert_eq!(config.max_price_staleness_secs, 3600);
+    });
+}
+
+#[test]
+#[should_panic(expected = "Already initialized")]
+fn test_initialize_double_init_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let oracle_address = Address::generate(&env);
+
+    client.initialize(
+        &admin,
+        &fee_receiver,
+        &oracle_address,
+        &100,
+        &500,
+        &12000,
+        &20000,
+        &11000,
+        &11500,
+        &3600,
+    );
+
+    client.initialize(
+        &admin,
+        &fee_receiver,
+        &oracle_address,
+        &100,
+        &500,
+        &12000,
+        &20000,
+        &11000,
+        &11500,
+        &3600,
+    );
+}
+
+#[test]
+#[should_panic(
+    expected = "Invalid buffer bounds: min_buffer_bps must be less than max_buffer_bps"
+)]
+fn test_initialize_bad_buffer_bounds_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let oracle_address = Address::generate(&env);
+
+    client.initialize(
+        &admin,
+        &fee_receiver,
+        &oracle_address,
+        &100,
+        &500,
+        &20000, // min >= max
+        &12000,
+        &11000,
+        &11500,
+        &3600,
+    );
+}
+
+#[test]
+#[should_panic(
+    expected = "Invalid liquidation threshold bounds: min_liq_threshold_bps must be less than max_liq_threshold_bps"
+)]
+fn test_initialize_bad_liq_threshold_bounds_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let oracle_address = Address::generate(&env);
+
+    client.initialize(
+        &admin,
+        &fee_receiver,
+        &oracle_address,
+        &100,
+        &500,
+        &12000,
+        &20000,
+        &15000, // min >= max
+        &11000,
+        &3600,
+    );
+}
+
+#[test]
+#[should_panic(
+    expected = "Invalid bounds: max_liq_threshold_bps must be less than min_buffer_bps"
+)]
+fn test_initialize_max_liq_ge_min_buffer_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let oracle_address = Address::generate(&env);
+
+    client.initialize(
+        &admin,
+        &fee_receiver,
+        &oracle_address,
+        &100,
+        &500,
+        &12000, // min_buffer = 12000
+        &20000,
+        &11000,
+        &12500, // max_liq_threshold = 12500 >= min_buffer
+        &3600,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Invalid fees: combined fees must be less than 10000")]
+fn test_initialize_bad_fees_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let oracle_address = Address::generate(&env);
+
+    client.initialize(
+        &admin,
+        &fee_receiver,
+        &oracle_address,
+        &5000, // platform fee
+        &5000, // liquidator fee (5000 + 5000 = 10000 >= 10000)
+        &12000,
+        &20000,
+        &11000,
+        &11500,
+        &3600,
+    );
+}
+

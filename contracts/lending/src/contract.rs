@@ -2,15 +2,67 @@ use soroban_sdk::{contract, contractimpl, token, Address, Env};
 
 use crate::oracle;
 use crate::storage::{
-    get_config, get_listing, is_currency_whitelisted, next_position_id, set_listing, set_position,
+    get_config, get_listing, has_config, is_currency_whitelisted, next_position_id, set_config,
+    set_listing, set_position,
 };
-use crate::types::{ListingStatus, Position, PositionStatus};
+use crate::types::{ListingStatus, PlatformConfig, Position, PositionStatus};
 
 #[contract]
 pub struct LendingContract;
 
 #[contractimpl]
 impl LendingContract {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        fee_receiver: Address,
+        oracle_address: Address,
+        platform_fee_bps: u32,
+        liquidator_fee_bps: u32,
+        min_buffer_bps: u32,
+        max_buffer_bps: u32,
+        min_liq_threshold_bps: u32,
+        max_liq_threshold_bps: u32,
+        max_price_staleness_secs: u64,
+    ) {
+        if has_config(&env) {
+            panic!("Already initialized");
+        }
+
+        admin.require_auth();
+
+        if min_buffer_bps >= max_buffer_bps {
+            panic!("Invalid buffer bounds: min_buffer_bps must be less than max_buffer_bps");
+        }
+
+        if min_liq_threshold_bps >= max_liq_threshold_bps {
+            panic!("Invalid liquidation threshold bounds: min_liq_threshold_bps must be less than max_liq_threshold_bps");
+        }
+
+        if max_liq_threshold_bps >= min_buffer_bps {
+            panic!("Invalid bounds: max_liq_threshold_bps must be less than min_buffer_bps");
+        }
+
+        if platform_fee_bps.saturating_add(liquidator_fee_bps) >= 10000 {
+            panic!("Invalid fees: combined fees must be less than 10000");
+        }
+
+        let config = PlatformConfig {
+            admin,
+            fee_receiver,
+            platform_fee_bps,
+            liquidator_fee_bps,
+            min_buffer_bps,
+            max_buffer_bps,
+            min_liq_threshold_bps,
+            max_liq_threshold_bps,
+            oracle_address,
+            max_price_staleness_secs,
+        };
+
+        set_config(&env, &config);
+    }
+
     pub fn cancel_listing(env: Env, listing_id: u64) {
         let mut listing = get_listing(&env, listing_id);
 
