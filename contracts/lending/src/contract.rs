@@ -1,8 +1,11 @@
 use soroban_sdk::{contract, contractimpl, token, Address, Env};
 
+use crate::interest::accrued_interest_usd;
 use crate::oracle;
+use crate::settlement::settle;
 use crate::storage::{
-    get_config, get_listing, is_currency_whitelisted, next_position_id, set_listing, set_position,
+    get_config, get_listing, get_position, is_currency_whitelisted, next_position_id, set_listing,
+    set_position,
 };
 use crate::types::{ListingStatus, Position, PositionStatus};
 
@@ -116,5 +119,106 @@ impl LendingContract {
             .publish((soroban_sdk::symbol_short!("borrow"), position_id), ());
 
         position_id
+    }
+
+    // ── Liquidate ─────────────────────────────────────────────────────────────
+
+    /// Permissionless settlement for unhealthy or expired positions.
+    ///
+    /// # Liquidator address design
+    ///
+    /// The liquidator is passed explicitly as a function argument and must
+    /// `require_auth()` before the call proceeds.  This is intentional:
+    ///
+    /// - Soroban's host does not expose an `env.invoker()` equivalent in the
+    ///   public API — the canonical way to identify the caller is via an
+    ///   authenticated address argument.
+    /// - Requiring auth on the liquidator prevents griefing attacks where a
+    ///   third party front-runs and redirects the liquidator bounty to an
+    ///   arbitrary address.
+    /// - The function remains *permissionless* in the sense that **any**
+    ///   address can call it when the position is eligible; the auth merely
+    ///   confirms that the liquidator themselves authorised the call.
+    ///
+    /// # Eligibility conditions (either triggers liquidation)
+    ///
+    /// 1. **Term expired** — `now > position.start_time + position.max_duration_secs`
+    /// 2. **Unhealthy**    — `health_factor_bps <= position.liquidation_threshold_bps`
+    ///    where `health_factor_bps = collateral_value_usd * 10_000 / owed_usd`
+    ///
+    /// Healthy positions within their term cause a panic.
+    ///
+    /// # NFT
+    ///
+    /// The NFT is **never touched** by this function.  It remains wherever the
+    /// borrower holds it; the lender's compensation comes from the collateral
+    /// waterfall, not an NFT transfer.
+    pub fn liquidate(env: Env, position_id: u64, liquidator: Address) {
+        // The liquidator explicitly authenticates so the bounty cannot be
+        // redirected by a front-runner.
+        liquidator.require_auth();
+
+        let mut position = get_position(&env, position_id);
+
+        if position.status != PositionStatus::Active {
+            panic!("Position is not Active");
+        }
+
+        let now = env.ledger().timestamp();
+        let config = get_config(&env);
+
+        // ── Eligibility check ─────────────────────────────────────────────────
+        let is_expired = now > position.start_time + position.max_duration_secs;
+
+        let is_unhealthy = if !is_expired {
+            // Collateral value in USD (7-decimal fixed-point, oracle price also 7-dec)
+            let oracle_price =
+                oracle::get_price(&env, &config.oracle_address, &position.collateral_currency);
+
+            let collateral_value_usd =
+                (position.collateral_amount * oracle_price) / 10_000_000;
+
+            // Owed = declared price + interest accrued so far under the
+            // month-based schedule (interest::accrued_interest_usd).
+            let accrued = accrued_interest_usd(&position, now);
+            let owed_usd = position.declared_price_usd + accrued;
+
+            // Health factor expressed in bps (10 000 = 100 %).
+            // Guard against division-by-zero if declared_price is somehow 0.
+            let health_factor_bps = if owed_usd > 0 {
+                collateral_value_usd * 10_000 / owed_usd
+            } else {
+                10_000 // treat as perfectly healthy if nothing is owed
+            };
+
+            health_factor_bps <= (position.liquidation_threshold_bps as i128)
+        } else {
+            false
+        };
+
+        if !is_expired && !is_unhealthy {
+            panic!("Position is healthy; cannot liquidate");
+        }
+
+        // ── Settlement ────────────────────────────────────────────────────────
+        // settle() handles the full collateral waterfall (lender payout,
+        // platform fee, liquidator bounty, borrower remainder).  The NFT is
+        // NOT touched here — it stays with the borrower as per spec.
+        let result = settle(&env, &position, Some(liquidator.clone()), &config);
+
+        // Mark Expired for time-triggered liquidations, Liquidated for
+        // health-triggered ones, matching common DeFi convention.
+        position.status = if is_expired {
+            PositionStatus::Expired
+        } else {
+            PositionStatus::Liquidated
+        };
+        set_position(&env, position_id, &position);
+
+        #[allow(deprecated)]
+        env.events().publish(
+            (soroban_sdk::symbol_short!("liquidate"), position_id),
+            (liquidator, result.lender_payout, result.liquidator_payout, result.borrower_rem),
+        );
     }
 }
