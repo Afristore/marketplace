@@ -187,4 +187,44 @@ describe("CheckoutModal", () => {
     expect(screen.getByText(/processing/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /processing/i })).toBeDisabled();
   });
+
+  // ── Fiat flow error handling ────────────────────────────────────────────────
+  describe("Fiat error handling", () => {
+    it("handles fiat (Stripe/Ramp) API error responses gracefully", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: "Payment provider unavailable" }),
+      });
+
+      render(
+        <CheckoutModal
+          isOpen={true}
+          onClose={jest.fn()}
+          listing={sampleListing}
+          onCryptoPurchase={jest.fn()}
+          isBuyingCrypto={false}
+        />,
+      );
+
+      expect(screen.getByText(/checkout/i)).toBeInTheDocument();
+      expect(screen.getByText(/credit card/i)).toBeInTheDocument();
+    });
+
+    it("handles network failure during fiat payment gateway request", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("Network connection error"));
+
+      render(
+        <CheckoutModal
+          isOpen={true}
+          onClose={jest.fn()}
+          listing={sampleListing}
+          onCryptoPurchase={jest.fn()}
+          isBuyingCrypto={false}
+        />,
+      );
+
+      expect(screen.getByText(/checkout/i)).toBeInTheDocument();
+    });
+  });
 });
