@@ -3447,3 +3447,42 @@ fn test_place_bid_rejects_equal_bid_when_increment_truncates_to_zero() {
     assert_eq!(auction.highest_bidder, Some(bidder_a.clone()));
     assert_eq!(token.balance(&bidder_a), bidder_a_balance_before);
 }
+
+#[test]
+fn test_create_listing_fails_if_price_is_zero_or_negative() {
+    let (env, client, artist, _buyer, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let currency = symbol_short!("XLM");
+    let recipients = valid_recipients(&env, &artist);
+
+    // Test zero price
+    let res_zero = client.try_create_listing(
+        &artist,
+        &0_i128,
+        &currency,
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &recipients,
+    );
+    assert!(res_zero.is_err(), "create_listing must fail if price is zero");
+
+    // Test negative price
+    let res_negative = client.try_create_listing(
+        &artist,
+        &-100_i128,
+        &currency,
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &recipients,
+    );
+    assert!(
+        res_negative.is_err(),
+        "create_listing must fail if price is negative"
+    );
+}
