@@ -117,4 +117,180 @@ impl LendingContract {
 
         position_id
     }
+
+    pub fn liquidate(env: Env, position_id: u64, liquidator: Option<Address>) {
+        let mut position = crate::storage::get_position(&env, position_id);
+
+        if position.status != PositionStatus::Active {
+            panic!("Position is not Active");
+        }
+
+        let config = get_config(&env);
+        let oracle_price = oracle::get_price(&env, &config.oracle_address, &position.collateral_currency);
+        let collateral_value_usd = (position.collateral_amount * oracle_price) / 10_000_000;
+
+        let current_time = env.ledger().timestamp();
+        let is_expired = current_time >= position.start_time + position.max_duration_secs;
+
+        let current_health_bps = if position.declared_price_usd > 0 {
+            ((collateral_value_usd * 10_000) / position.declared_price_usd) as u32
+        } else {
+            0
+        };
+
+        let is_unhealthy = current_health_bps <= position.liquidation_threshold_bps;
+
+        if !is_expired && !is_unhealthy {
+            panic!("Position is neither expired nor unhealthy");
+        }
+
+        if is_expired {
+            position.status = PositionStatus::Expired;
+        } else {
+            position.status = PositionStatus::Liquidated;
+        }
+
+        let collateral_client = token::Client::new(&env, &position.collateral_currency);
+
+        let platform_fee = (position.collateral_amount * (config.platform_fee_bps as i128)) / 10_000;
+        if platform_fee > 0 {
+            collateral_client.transfer(
+                &env.current_contract_address(),
+                &config.fee_receiver,
+                &platform_fee,
+            );
+        }
+
+        let liquidator_payout = if let Some(ref l) = liquidator {
+            let fee = (position.collateral_amount * (config.liquidator_fee_bps as i128)) / 10_000;
+            if fee > 0 {
+                collateral_client.transfer(&env.current_contract_address(), l, &fee);
+            }
+            fee
+        } else {
+            0
+        };
+
+        let remaining_collateral = position.collateral_amount - platform_fee - liquidator_payout;
+        if remaining_collateral > 0 {
+            collateral_client.transfer(
+                &env.current_contract_address(),
+                &position.lender,
+                &remaining_collateral,
+            );
+        }
+
+        // NFT stays with the borrower as required
+
+        set_position(&env, position_id, &position);
+
+        #[allow(deprecated)]
+        env.events()
+            .publish((soroban_sdk::symbol_short!("liquidat"), position_id), ());
+    }
+
+    pub fn admin_update_bounds(
+        env: Env,
+        min_buffer_bps: u32,
+        max_buffer_bps: u32,
+        min_liq_threshold_bps: u32,
+        max_liq_threshold_bps: u32,
+    ) {
+        let mut config = get_config(&env);
+        config.admin.require_auth();
+
+        if min_buffer_bps > max_buffer_bps {
+            panic!("Invalid buffer bounds: min > max");
+        }
+        if min_liq_threshold_bps > max_liq_threshold_bps {
+            panic!("Invalid liquidation threshold bounds: min > max");
+        }
+
+        config.min_buffer_bps = min_buffer_bps;
+        config.max_buffer_bps = max_buffer_bps;
+        config.min_liq_threshold_bps = min_liq_threshold_bps;
+        config.max_liq_threshold_bps = max_liq_threshold_bps;
+
+        crate::storage::set_config(&env, &config);
+    }
+
+    pub fn admin_set_fees(env: Env, platform_fee_bps: u32, liquidator_fee_bps: u32) {
+        let mut config = get_config(&env);
+        config.admin.require_auth();
+
+        if platform_fee_bps + liquidator_fee_bps > 10_000 {
+            panic!("Total fees cannot exceed 10000 bps");
+        }
+
+        config.platform_fee_bps = platform_fee_bps;
+        config.liquidator_fee_bps = liquidator_fee_bps;
+
+        crate::storage::set_config(&env, &config);
+    }
+
+    pub fn return_nft(env: Env, position_id: u64) {
+        let mut position = crate::storage::get_position(&env, position_id);
+
+        position.borrower.require_auth();
+
+        if position.status != PositionStatus::Active {
+            panic!("Position is not Active");
+        }
+
+        let current_time = env.ledger().timestamp();
+        if current_time >= position.start_time + position.max_duration_secs {
+            panic!("Term has already expired");
+        }
+
+        let config = get_config(&env);
+
+        // Transfer NFT from borrower back to lender
+        let nft_client = token::Client::new(&env, &position.nft_contract);
+        nft_client.transfer(
+            &position.borrower,
+            &position.lender,
+            &(position.token_id as i128),
+        );
+
+        let collateral_client = token::Client::new(&env, &position.collateral_currency);
+
+        let platform_fee = (position.collateral_amount * (config.platform_fee_bps as i128)) / 10_000;
+        if platform_fee > 0 {
+            collateral_client.transfer(
+                &env.current_contract_address(),
+                &config.fee_receiver,
+                &platform_fee,
+            );
+        }
+
+        let interest_bps = if !position.interest_schedule_bps.is_empty() {
+            position.interest_schedule_bps.get(0).unwrap()
+        } else {
+            0
+        };
+        let interest_amount = (position.collateral_amount * (interest_bps as i128)) / 10_000;
+        if interest_amount > 0 {
+            collateral_client.transfer(
+                &env.current_contract_address(),
+                &position.lender,
+                &interest_amount,
+            );
+        }
+
+        let remaining_collateral = position.collateral_amount - platform_fee - interest_amount;
+        if remaining_collateral > 0 {
+            collateral_client.transfer(
+                &env.current_contract_address(),
+                &position.borrower,
+                &remaining_collateral,
+            );
+        }
+
+        position.status = PositionStatus::Returned;
+        set_position(&env, position_id, &position);
+
+        #[allow(deprecated)]
+        env.events()
+            .publish((soroban_sdk::symbol_short!("returned"), position_id), ());
+    }
 }
