@@ -125,3 +125,45 @@ model UserPreferences {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
+
+model LendingListing {
+  listingId                 BigInt   @id
+  lender                    String
+  nftContract               String
+  tokenId                   BigInt
+  declaredPriceUsd          Decimal  @db.Decimal(32, 7)
+  interestScheduleBps       Int[]
+  maxDurationDays           Int
+  minCollateralBufferBps    Int
+  liquidationThresholdBps   Int
+  status                    String   // "Open", "Filled", "Cancelled"
+  createdAtLedger           Int
+  updatedAtLedger           Int
+  @@index([lender])
+  @@index([status])
+  @@index([updatedAtLedger])
+}
+
+model LendingPosition {
+  positionId                BigInt   @id
+  listingId                 BigInt
+  borrower                  String
+  lender                    String
+  nftContract               String
+  tokenId                   BigInt
+  declaredPriceUsd          Decimal  @db.Decimal(32, 7)
+  collateralCurrency        String
+  collateralAmount          Decimal  @db.Decimal(32, 7)
+  interestScheduleBps       Int[]
+  liquidationThresholdBps   Int
+  startTime                 BigInt
+  maxDurationSecs           BigInt
+  status                    String   // "Active", "Returned", "Liquidated"
+  createdAtLedger           Int
+  updatedAtLedger           Int
+  @@index([borrower])
+  @@index([lender])
+  @@index([listingId])
+  @@index([status])
+  @@index([updatedAtLedger])
+}
