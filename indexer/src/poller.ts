@@ -240,6 +240,19 @@ export async function revertLedgers(safeAtLedger: number): Promise<void> {
       data: { status: 'Active', updatedAtLedger: safeAtLedger },
     });
 
+    // Reset lending listings and positions created after safe checkpoint
+    await tx.lendingListing.deleteMany({
+      where: { createdAtLedger: { gt: safeAtLedger } },
+    });
+
+    await tx.lendingPosition.deleteMany({
+      where: { createdAtLedger: { gt: safeAtLedger } },
+    });
+
+    await tx.whitelistedCurrency.deleteMany({
+      where: { addedAtLedger: { gt: safeAtLedger } },
+    });
+
     // Reset the sync cursor
     await tx.syncState.update({
       where: { id: 1 },
@@ -637,7 +650,50 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
     return;
   }
 
-  // Update Listing state based on event type
+  // Handle currency whitelist events — these carry no listingId
+  if (eventType === 'CURRENCY_WHITELISTED' || eventType === 'CurrencyWhitelisted') {
+    const address = data.currency?.toString() || data.address?.toString() || data.token?.toString() || '';
+    if (address) {
+      await db.whitelistedCurrency.upsert({
+        where: { address },
+        create: {
+          address,
+          symbol: data.symbol?.toString() || null,
+          name: data.name?.toString() || null,
+          decimals: data.decimals ? Number(data.decimals) : 7,
+          enabled: true,
+          addedAtLedger: ledgerSequence,
+          updatedAtLedger: ledgerSequence,
+        },
+        update: {
+          enabled: true,
+          symbol: data.symbol?.toString() || undefined,
+          updatedAtLedger: ledgerSequence,
+        },
+      });
+    }
+    if (!tx) emitSSEEvent(event);
+    return;
+  }
+
+  if (eventType === 'CURRENCY_REMOVED' || eventType === 'CurrencyRemoved') {
+    const address = data.currency?.toString() || data.address?.toString() || data.token?.toString() || '';
+    if (address) {
+      await db.whitelistedCurrency.updateMany({
+        where: { address },
+        data: {
+          enabled: false,
+          updatedAtLedger: ledgerSequence,
+        },
+      });
+    }
+    if (!tx) emitSSEEvent(event);
+    return;
+  }
+
+  // Update Listing/Position state based on event type
+  // Lending position liquidation carries a position_id mapped to listingId by the parser,
+  // so we guard here for all remaining event types that require an entity id.
   if (!listingId) return;
 
   switch (eventType) {
@@ -962,7 +1018,171 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
       });
       break;
     }
+
+    case 'POSITION_LIQUIDATED':
+    case 'Liquidated': {
+      const posId = BigInt(data.position_id ?? listingId ?? 0);
+      const liquidator = data.liquidator?.toString() || actor;
+      const liquidatorBounty = data.liquidator_bounty?.toString() || data.liquidatorBounty?.toString() || '0';
+      const platformFee = data.platform_fee?.toString() || data.platformFee?.toString() || '0';
+      const lenderPayout = data.lender_payout?.toString() || data.lenderPayout?.toString() || '0';
+      const borrowerRefund = data.borrower_refund?.toString() || data.borrowerRefund?.toString() || '0';
+
+      const { count } = await db.lendingPosition.updateMany({
+        where: { id: posId },
+        data: {
+          status: 'Liquidated',
+          liquidator,
+          liquidatorBounty,
+          platformFee,
+          lenderPayout,
+          borrowerRefund,
+          updatedAtLedger: ledgerSequence,
+        },
+      });
+      if (count === 0) {
+        console.warn(`POSITION_LIQUIDATED: position ${posId} not found at ledger ${ledgerSequence}`);
+      }
+      break;
+    }
+
+    case 'LENDING_LISTING_CREATED': {
+      const id = BigInt(data.listing_id ?? listingId ?? 0);
+      const lender = data.lender?.toString() || actor;
+      const nftContract = data.nft_contract?.toString() || data.collection?.toString() || '';
+      const tokenId = BigInt(data.token_id ?? 0);
+      const declaredPriceUsd = data.declared_price_usd?.toString() || '0';
+      const interestScheduleBps = data.interest_schedule_bps || [];
+      const maxDurationDays = Number(data.max_duration_days ?? 0);
+      const minCollateralBufferBps = Number(data.min_collateral_buffer_bps ?? 0);
+      const liquidationThresholdBps = Number(data.liquidation_threshold_bps ?? 0);
+
+      await db.lendingListing.upsert({
+        where: { id },
+        create: {
+          id,
+          lender,
+          nftContract,
+          collectionAddress: nftContract || null,
+          tokenId,
+          declaredPriceUsd,
+          interestScheduleBps,
+          maxDurationDays,
+          minCollateralBufferBps,
+          liquidationThresholdBps,
+          status: 'Open',
+          createdAtLedger: ledgerSequence,
+          updatedAtLedger: ledgerSequence,
+        },
+        update: {
+          lender,
+          nftContract,
+          collectionAddress: nftContract || null,
+          tokenId,
+          declaredPriceUsd,
+          interestScheduleBps,
+          maxDurationDays,
+          minCollateralBufferBps,
+          liquidationThresholdBps,
+          status: 'Open',
+          updatedAtLedger: ledgerSequence,
+        },
+      });
+      break;
+    }
+
+    case 'LENDING_LISTING_CANCELLED': {
+      const id = BigInt(data.listing_id ?? listingId ?? 0);
+      await db.lendingListing.updateMany({
+        where: { id },
+        data: {
+          status: 'Cancelled',
+          updatedAtLedger: ledgerSequence,
+        },
+      });
+      break;
+    }
+
+    case 'POSITION_OPENED': {
+      const id = BigInt(data.position_id ?? listingId ?? 0);
+      const lId = BigInt(data.listing_id ?? 0);
+      const borrower = data.borrower?.toString() || actor;
+      const lender = data.lender?.toString() || '';
+      const nftContract = data.nft_contract?.toString() || '';
+      const tokenId = BigInt(data.token_id ?? 0);
+      const declaredPriceUsd = data.declared_price_usd?.toString() || '0';
+      const collateralCurrency = data.collateral_currency?.toString() || '';
+      const collateralAmount = data.collateral_amount?.toString() || '0';
+      const interestScheduleBps = data.interest_schedule_bps || [];
+      const liquidationThresholdBps = Number(data.liquidation_threshold_bps ?? 0);
+      const startTime = BigInt(data.start_time ?? 0);
+      const maxDurationSecs = BigInt(data.max_duration_secs ?? 0);
+
+      await db.lendingPosition.upsert({
+        where: { id },
+        create: {
+          id,
+          listingId: lId,
+          lender,
+          borrower,
+          nftContract,
+          tokenId,
+          declaredPriceUsd,
+          collateralCurrency,
+          collateralAmount,
+          interestScheduleBps,
+          liquidationThresholdBps,
+          startTime,
+          maxDurationSecs,
+          status: 'Active',
+          createdAtLedger: ledgerSequence,
+          updatedAtLedger: ledgerSequence,
+        },
+        update: {
+          listingId: lId,
+          lender,
+          borrower,
+          nftContract,
+          tokenId,
+          declaredPriceUsd,
+          collateralCurrency,
+          collateralAmount,
+          interestScheduleBps,
+          liquidationThresholdBps,
+          startTime,
+          maxDurationSecs,
+          status: 'Active',
+          updatedAtLedger: ledgerSequence,
+        },
+      });
+
+      if (lId > 0n) {
+        await db.lendingListing.updateMany({
+          where: { id: lId },
+          data: { status: 'Filled', updatedAtLedger: ledgerSequence },
+        });
+      }
+      break;
+    }
+
+    case 'POSITION_RETURNED': {
+      const posId = BigInt(data.position_id ?? listingId ?? 0);
+      const platformFee = data.platform_fee?.toString() || data.platformFee?.toString() || '0';
+      const borrowerRefund = data.borrower_refund?.toString() || data.borrowerRefund?.toString() || '0';
+
+      await db.lendingPosition.updateMany({
+        where: { id: posId },
+        data: {
+          status: 'Returned',
+          platformFee,
+          borrowerRefund,
+          updatedAtLedger: ledgerSequence,
+        },
+      });
+      break;
+    }
   }
+
 
   // Broadcast to any connected SSE clients after the DB write is complete.
   if (!tx) emitSSEEvent(event);

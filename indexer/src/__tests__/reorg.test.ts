@@ -35,6 +35,15 @@ const mockPrisma: any = vi.hoisted(() => {
     collection: {
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
+    lendingListing: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    lendingPosition: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
+    whitelistedCurrency: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
   };
   mPrisma.$transaction = vi.fn((callback: (tx: typeof mPrisma) => Promise<void>) => callback(mPrisma));
   return mPrisma;

@@ -39,6 +39,9 @@ const mockTx = vi.hoisted(() => ({
     updateMany: vi.fn().mockResolvedValue({}),
   },
   collection: { deleteMany: vi.fn().mockResolvedValue({}) },
+  lendingListing: { deleteMany: vi.fn().mockResolvedValue({}) },
+  lendingPosition: { deleteMany: vi.fn().mockResolvedValue({}) },
+  whitelistedCurrency: { deleteMany: vi.fn().mockResolvedValue({}) },
   syncState: { update: vi.fn().mockResolvedValue({}) },
 }));
 
@@ -62,6 +65,18 @@ const mockPrisma = vi.hoisted(() => ({
   },
   collection: {
     upsert: vi.fn().mockResolvedValue({}),
+  },
+  lendingListing: {
+    upsert: vi.fn().mockResolvedValue({}),
+    updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+  },
+  lendingPosition: {
+    upsert: vi.fn().mockResolvedValue({}),
+    updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+  },
+  whitelistedCurrency: {
+    upsert: vi.fn().mockResolvedValue({}),
+    updateMany: vi.fn().mockResolvedValue({ count: 1 }),
   },
   syncState: {
     findUnique: vi.fn(),
@@ -655,6 +670,87 @@ describe('processEvent — out-of-order events do not throw', () => {
     await expect(
       processEvent(makeEvent('AUCTION_CANCELLED', 99n, 'GA', {}, 500))
     ).resolves.not.toThrow();
+  });
+});
+
+// ── POSITION_LIQUIDATED (#709) ───────────────────────────────────────────────
+
+describe('processEvent — POSITION_LIQUIDATED', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('updates position status to Liquidated and records fees and liquidator', async () => {
+    const data = {
+      position_id: 101,
+      liquidator: 'GA_LIQUIDATOR',
+      liquidator_bounty: '500000',
+      platform_fee: '200000',
+      lender_payout: '10000000',
+      borrower_refund: '100000',
+    };
+
+    await processEvent(makeEvent('POSITION_LIQUIDATED', 101n, 'GA_LIQUIDATOR', data, 700));
+
+    expect(mockPrisma.lendingPosition.updateMany).toHaveBeenCalledOnce();
+    expect(mockPrisma.lendingPosition.updateMany).toHaveBeenCalledWith({
+      where: { id: 101n },
+      data: expect.objectContaining({
+        status: 'Liquidated',
+        liquidator: 'GA_LIQUIDATOR',
+        liquidatorBounty: '500000',
+        platformFee: '200000',
+        lenderPayout: '10000000',
+        borrowerRefund: '100000',
+        updatedAtLedger: 700,
+      }),
+    });
+  });
+});
+
+// ── CURRENCY_WHITELISTED and CURRENCY_REMOVED (#710) ─────────────────────────
+
+describe('processEvent — CURRENCY_WHITELISTED & CURRENCY_REMOVED', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('upserts a whitelisted currency with enabled = true', async () => {
+    const data = {
+      currency: 'CASSET_ADDR',
+      symbol: 'USDC',
+      name: 'USD Coin',
+      decimals: 7,
+    };
+
+    await processEvent(makeEvent('CURRENCY_WHITELISTED', null, 'GA_ADMIN', data, 710));
+
+    expect(mockPrisma.whitelistedCurrency.upsert).toHaveBeenCalledOnce();
+    expect(mockPrisma.whitelistedCurrency.upsert).toHaveBeenCalledWith({
+      where: { address: 'CASSET_ADDR' },
+      create: expect.objectContaining({
+        address: 'CASSET_ADDR',
+        symbol: 'USDC',
+        enabled: true,
+        addedAtLedger: 710,
+      }),
+      update: expect.objectContaining({
+        enabled: true,
+        symbol: 'USDC',
+        updatedAtLedger: 710,
+      }),
+    });
+  });
+
+  it('marks currency as disabled on CURRENCY_REMOVED', async () => {
+    const data = { currency: 'CASSET_ADDR' };
+
+    await processEvent(makeEvent('CURRENCY_REMOVED', null, 'GA_ADMIN', data, 720));
+
+    expect(mockPrisma.whitelistedCurrency.updateMany).toHaveBeenCalledOnce();
+    expect(mockPrisma.whitelistedCurrency.updateMany).toHaveBeenCalledWith({
+      where: { address: 'CASSET_ADDR' },
+      data: expect.objectContaining({
+        enabled: false,
+        updatedAtLedger: 720,
+      }),
+    });
   });
 });
 

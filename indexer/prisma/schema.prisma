@@ -97,6 +97,7 @@ model Collection {
   symbol          String?
   deployedAtLedger Int
   createdAt       DateTime @default(now())
+  lendingListings LendingListing[]
   @@index([creator])
 }
 
@@ -125,3 +126,97 @@ model UserPreferences {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
+
+enum LendingPositionStatus {
+  Active
+  Repaid
+  Liquidated
+  Returned
+  Expired
+}
+
+model LendingListing {
+  id                      BigInt      @id
+  lender                  String
+  nftContract             String
+  collectionAddress       String?
+  collection              Collection? @relation(fields: [collectionAddress], references: [contractAddress])
+  tokenId                 BigInt
+  declaredPriceUsd        Decimal     @db.Decimal(32, 7)
+  interestScheduleBps     Json
+  maxDurationDays         Int
+  minCollateralBufferBps  Int
+  liquidationThresholdBps Int
+  status                  String      // "Open", "Filled", "Cancelled"
+  createdAtLedger         Int
+  updatedAtLedger         Int
+  createdAt               DateTime    @default(now())
+  updatedAt               DateTime    @updatedAt
+
+  @@index([lender])
+  @@index([status])
+  @@index([updatedAtLedger])
+}
+
+model LendingPosition {
+  id                      BigInt                @id
+  listingId               BigInt
+  lender                  String
+  borrower                String
+  nftContract             String
+  tokenId                 BigInt
+  declaredPriceUsd        Decimal               @db.Decimal(32, 7)
+  collateralCurrency      String
+  collateralAmount        Decimal               @db.Decimal(32, 7)
+  interestScheduleBps     Json
+  liquidationThresholdBps Int
+  startTime               BigInt
+  maxDurationSecs         BigInt
+  status                  LendingPositionStatus @default(Active)
+  liquidator              String?
+  liquidatorBounty        Decimal?              @db.Decimal(32, 7)
+  lenderPayout            Decimal?              @db.Decimal(32, 7)
+  platformFee             Decimal?              @db.Decimal(32, 7)
+  borrowerRefund          Decimal?              @db.Decimal(32, 7)
+  createdAtLedger         Int
+  updatedAtLedger         Int
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+
+  @@index([borrower])
+  @@index([lender])
+  @@index([status])
+  @@index([listingId])
+  @@index([updatedAtLedger])
+}
+
+model WhitelistedCurrency {
+  address         String   @id
+  symbol          String?
+  name            String?
+  decimals        Int      @default(7)
+  enabled         Boolean  @default(true)
+  addedAtLedger   Int
+  updatedAtLedger Int
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([enabled])
+}
+
+model LendingConfig {
+  id                    Int      @id @default(1)
+  admin                 String
+  feeReceiver           String
+  platformFeeBps        Int
+  liquidatorFeeBps      Int
+  minBufferBps          Int
+  maxBufferBps          Int
+  minLiqThresholdBps    Int
+  maxLiqThresholdBps    Int
+  oracleAddress         String
+  maxPriceStalenessSecs BigInt
+  updatedAtLedger       Int
+  updatedAt             DateTime @updatedAt
+}
+
