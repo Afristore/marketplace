@@ -675,43 +675,11 @@ fn test_e2e_voluntary_return() {
     // 7. Borrower calls return_nft() — assert exact balances
     env.ledger().with_mut(|l| l.timestamp = 1000 + (90 * 86400)); // Advance to end of term
 
-    // Transfer NFT back from borrower to contract
-    nft_token.transfer(&borrower, &contract_id, &1);
-
     let initial_lender_balance = usdc_token.balance(&lender);
     let initial_fee_receiver_balance = usdc_token.balance(&fee_receiver);
     let initial_borrower_balance = usdc_token.balance(&borrower);
 
-    env.as_contract(&contract_id, || {
-        let pos = crate::storage::get_position(&env, position_id);
-        let config = crate::storage::get_config(&env);
-        let result = crate::settlement::settle(&env, &pos, None, &config);
-
-        // Transfer NFT to lender
-        let nft_client = TokenClient::new(&env, &pos.nft_contract);
-        nft_client.transfer(&contract_id, &pos.lender, &(pos.token_id as i128));
-
-        // Distribute collateral
-        let col_client = TokenClient::new(&env, &pos.collateral_currency);
-        col_client.transfer(&contract_id, &pos.lender, &result.lender_payout);
-        col_client.transfer(&contract_id, &config.fee_receiver, &result.platform_payout);
-        if result.borrower_rem > 0 {
-            col_client.transfer(&contract_id, &pos.borrower, &result.borrower_rem);
-        }
-
-        // Mark position as returned
-        let mut updated_pos = pos.clone();
-        updated_pos.status = PositionStatus::Returned;
-        set_position(&env, position_id, &updated_pos);
-
-        emit_position_returned(
-            &env,
-            position_id,
-            result.accrued_interest_usd as i128,
-            result.platform_fee_usd as i128,
-            result.borrower_rem,
-        );
-    });
+    client.return_nft(&position_id);
 
     // Assert NFT returned to lender
     assert_eq!(nft_token.balance(&lender), 1);
@@ -848,36 +816,7 @@ fn test_e2e_liquidation() {
     let initial_fee_receiver_balance = usdc_token.balance(&fee_receiver);
     let initial_borrower_balance = usdc_token.balance(&borrower);
 
-    env.as_contract(&contract_id, || {
-        let pos = crate::storage::get_position(&env, position_id);
-        let config = crate::storage::get_config(&env);
-        let result = crate::settlement::settle(&env, &pos, Some(liquidator_addr.clone()), &config);
-
-        // NFT stays with borrower (no transfer)
-
-        // Distribute collateral
-        let col_client = TokenClient::new(&env, &pos.collateral_currency);
-        col_client.transfer(&contract_id, &pos.lender, &result.lender_payout);
-        col_client.transfer(&contract_id, &config.fee_receiver, &result.platform_payout);
-        col_client.transfer(&contract_id, &liquidator_addr, &result.liquidator_payout);
-        if result.borrower_rem > 0 {
-            col_client.transfer(&contract_id, &pos.borrower, &result.borrower_rem);
-        }
-
-        // Mark position as liquidated
-        let mut updated_pos = pos.clone();
-        updated_pos.status = PositionStatus::Liquidated;
-        set_position(&env, position_id, &updated_pos);
-
-        emit_position_liquidated(
-            &env,
-            position_id,
-            liquidator_addr.clone(),
-            result.lender_payout,
-            result.liquidator_payout,
-            result.borrower_rem,
-        );
-    });
+    client.liquidate(&position_id, &liquidator_addr);
 
     // Assert NFT stayed with borrower throughout
     assert_eq!(nft_token.balance(&borrower), 1);

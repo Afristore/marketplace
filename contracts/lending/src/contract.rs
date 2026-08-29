@@ -171,4 +171,48 @@ impl LendingContract {
             result.borrower_rem,
         );
     }
+
+    pub fn liquidate(env: Env, position_id: u64, liquidator: Address) {
+        let mut position = get_position(&env, position_id);
+
+        liquidator.require_auth();
+
+        if position.status != PositionStatus::Active {
+            panic!("Position is not Active");
+        }
+
+        let now = env.ledger().timestamp();
+        let config = get_config(&env);
+
+        let mut is_liquidatable = false;
+        
+        if now > position.start_time + position.max_duration_secs {
+            is_liquidatable = true;
+        } else {
+            let accrued = crate::interest::accrued_interest_usd(&position, now);
+            let owed = position.declared_price_usd + accrued;
+            let health_factor = (position.collateral_amount * 10_000) / owed;
+            if health_factor < position.liquidation_threshold_bps as i128 {
+                is_liquidatable = true;
+            }
+        }
+
+        if !is_liquidatable {
+            panic!("Position is healthy");
+        }
+
+        let result = settlement::settle(&env, &position, Some(liquidator.clone()), &config);
+
+        position.status = PositionStatus::Liquidated;
+        set_position(&env, position_id, &position);
+
+        events::emit_position_liquidated(
+            &env,
+            position_id,
+            liquidator,
+            result.lender_payout,
+            result.liquidator_payout,
+            result.borrower_rem,
+        );
+    }
 }
