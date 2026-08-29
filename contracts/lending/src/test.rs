@@ -660,3 +660,98 @@ fn test_return_nft_not_active_panics() {
 
     client.return_nft(&position_id);
 }
+
+// ─── add_collateral tests ─────────────────────────────────────────────────────
+
+use crate::interest::accrued_interest_usd;
+
+/// Reads the stored Position for `position_id`.
+fn read_position(env: &Env, contract_id: &Address, position_id: u64) -> Position {
+    env.as_contract(contract_id, || {
+        crate::storage::get_position(env, position_id)
+    })
+}
+
+/// Health factor = collateral USD value / (owed USD * liquidation threshold),
+/// scaled by 100_000 for precision. Oracle returns 1 USD/token, so the collateral
+/// token value (7-dec fixpoint) equals collateral_amount.
+fn health_factor(env: &Env, contract_id: &Address, position_id: u64, now: u64) -> i128 {
+    let pos = read_position(env, contract_id, position_id);
+    let collateral_value_usd = pos.collateral_amount;
+    let owed_usd = pos.declared_price_usd + accrued_interest_usd(&pos, now);
+    (collateral_value_usd * 100_000) / (owed_usd * (pos.liquidation_threshold_bps as i128))
+}
+
+/// Top-up increases stored collateral and moves tokens from borrower to contract.
+#[test]
+fn test_add_collateral_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let start = 0u64;
+    let (contract_id, client, position_id, _, borrower, _, col_token) =
+        setup_active_position(&env, start);
+
+    // Borrower minted 150M, posted 120M during borrow => 30M held.
+    assert_eq!(col_token.balance(&borrower), 30_000_000);
+
+    client.add_collateral(&position_id, &30_000_000);
+
+    // Collateral moves from borrower to contract.
+    assert_eq!(col_token.balance(&contract_id), 150_000_000);
+    assert_eq!(col_token.balance(&borrower), 0);
+
+    // Stored position collateral_amount is updated.
+    let pos = read_position(&env, &contract_id, position_id);
+    assert_eq!(pos.collateral_amount, 150_000_000);
+    assert_eq!(pos.status, PositionStatus::Active);
+}
+
+/// Top-up increases the position's health factor.
+#[test]
+fn test_add_collateral_improves_health_factor() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let start = 0u64;
+    let (contract_id, client, position_id, _, _, _, _) = setup_active_position(&env, start);
+
+    let before = health_factor(&env, &contract_id, position_id, start);
+    client.add_collateral(&position_id, &30_000_000);
+    let after = health_factor(&env, &contract_id, position_id, start);
+
+    assert!(after > before, "health factor should improve after top-up");
+}
+
+/// Adding collateral to a closed (non-Active) position panics.
+#[test]
+#[should_panic(expected = "Position is not Active")]
+fn test_add_collateral_closed_position_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let start = 0u64;
+    let (contract_id, client, position_id, _, _, _, _) = setup_active_position(&env, start);
+
+    // Mark position as already closed (e.g. Returned).
+    env.as_contract(&contract_id, || {
+        let mut pos = crate::storage::get_position(&env, position_id);
+        pos.status = PositionStatus::Returned;
+        set_position(&env, position_id, &pos);
+    });
+
+    client.add_collateral(&position_id, &10_000_000);
+}
+
+/// Non-positive top-up amounts panic.
+#[test]
+#[should_panic(expected = "Collateral top-up amount must be positive")]
+fn test_add_collateral_zero_amount_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let start = 0u64;
+    let (_, client, position_id, _, _, _, _) = setup_active_position(&env, start);
+
+    client.add_collateral(&position_id, &0);
+}
