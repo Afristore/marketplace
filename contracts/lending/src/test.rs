@@ -503,7 +503,6 @@ fn test_settle_zero_interest_zero_liquidator_fee() {
     assert_eq!(col_token.balance(&borrower), 49_000_000);
 }
 
-
 // ─── End-to-End Lifecycle Tests ──────────────────────────────────────────────
 
 use crate::contract::{LendingContract, LendingContractClient};
@@ -513,7 +512,7 @@ use crate::events::{
 };
 
 /// Scenario A: Voluntary Return
-/// 
+///
 /// Full lifecycle test exercising:
 /// 1. Deploy + initialize contract
 /// 2. Whitelist USDC as collateral
@@ -553,12 +552,12 @@ fn test_e2e_voluntary_return() {
             &PlatformConfig {
                 admin: admin.clone(),
                 fee_receiver: fee_receiver.clone(),
-                platform_fee_bps: 100,          // 1%
-                liquidator_fee_bps: 500,        // 5%
-                min_buffer_bps: 12000,          // 120%
-                max_buffer_bps: 20000,          // 200%
-                min_liq_threshold_bps: 11000,   // 110%
-                max_liq_threshold_bps: 15000,   // 150%
+                platform_fee_bps: 100,        // 1%
+                liquidator_fee_bps: 500,      // 5%
+                min_buffer_bps: 12000,        // 120%
+                max_buffer_bps: 20000,        // 200%
+                min_liq_threshold_bps: 11000, // 110%
+                max_liq_threshold_bps: 15000, // 150%
                 oracle_address: oracle.clone(),
                 max_price_staleness_secs: 3600,
             },
@@ -587,11 +586,11 @@ fn test_e2e_voluntary_return() {
                 lender: lender.clone(),
                 nft_contract: nft_token.address.clone(),
                 token_id: 1,
-                declared_price_usd: 100_000_000,               // 100 USD
-                interest_schedule_bps: vec![&env, 1000],       // 10% for full term
-                max_duration_days: 90,                          // 90 days
-                min_collateral_buffer_bps: 15000,              // 150%
-                liquidation_threshold_bps: 12000,              // 120%
+                declared_price_usd: 100_000_000,         // 100 USD
+                interest_schedule_bps: vec![&env, 1000], // 10% for full term
+                max_duration_days: 90,                   // 90 days
+                min_collateral_buffer_bps: 15000,        // 150%
+                liquidation_threshold_bps: 12000,        // 120%
                 status: ListingStatus::Open,
                 created_at: 1000,
             },
@@ -728,9 +727,9 @@ fn test_e2e_voluntary_return() {
     let fee_received = usdc_token.balance(&fee_receiver) - initial_fee_receiver_balance;
     let borrower_received = usdc_token.balance(&borrower) - initial_borrower_balance;
 
-    assert_eq!(lender_received, 110_000_000);       // Principal + interest
-    assert_eq!(fee_received, 1_100_000);            // Platform fee
-    assert_eq!(borrower_received, 68_900_000);      // Remainder
+    assert_eq!(lender_received, 110_000_000); // Principal + interest
+    assert_eq!(fee_received, 1_100_000); // Platform fee
+    assert_eq!(borrower_received, 68_900_000); // Remainder
 
     // Assert contract balance is zero (all collateral distributed)
     assert_eq!(usdc_token.balance(&contract_id), 0);
@@ -743,7 +742,7 @@ fn test_e2e_voluntary_return() {
 }
 
 /// Scenario B: Health-Factor Liquidation
-/// 
+///
 /// Full lifecycle test exercising:
 /// 1-4. Same as Scenario A
 /// 5. Advance ledger until health factor < liquidation threshold
@@ -776,11 +775,11 @@ fn test_e2e_liquidation() {
             &PlatformConfig {
                 admin: admin.clone(),
                 fee_receiver: fee_receiver.clone(),
-                platform_fee_bps: 100,          // 1%
-                liquidator_fee_bps: 500,        // 5%
+                platform_fee_bps: 100,   // 1%
+                liquidator_fee_bps: 500, // 5%
                 min_buffer_bps: 12000,
                 max_buffer_bps: 20000,
-                min_liq_threshold_bps: 12000,   // 120%
+                min_liq_threshold_bps: 12000, // 120%
                 max_liq_threshold_bps: 15000,
                 oracle_address: oracle.clone(),
                 max_price_staleness_secs: 3600,
@@ -811,8 +810,8 @@ fn test_e2e_liquidation() {
                 declared_price_usd: 100_000_000,
                 interest_schedule_bps: vec![&env, 2000], // 20% for full term (higher rate)
                 max_duration_days: 90,
-                min_collateral_buffer_bps: 12000,        // 120%
-                liquidation_threshold_bps: 12000,        // 120%
+                min_collateral_buffer_bps: 12000, // 120%
+                liquidation_threshold_bps: 12000, // 120%
                 status: ListingStatus::Open,
                 created_at: 1000,
             },
