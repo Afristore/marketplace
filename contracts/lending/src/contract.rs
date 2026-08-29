@@ -1,8 +1,11 @@
 use soroban_sdk::{contract, contractimpl, token, Address, Env};
 
+use crate::events;
 use crate::oracle;
+use crate::settlement;
 use crate::storage::{
-    get_config, get_listing, is_currency_whitelisted, next_position_id, set_listing, set_position,
+    get_config, get_listing, get_position, is_currency_whitelisted, next_position_id, set_listing,
+    set_position,
 };
 use crate::types::{ListingStatus, Position, PositionStatus};
 
@@ -116,5 +119,56 @@ impl LendingContract {
             .publish((soroban_sdk::symbol_short!("borrow"), position_id), ());
 
         position_id
+    }
+
+    /// Borrower voluntarily closes their position before term expiry.
+    ///
+    /// - Requires borrower auth.
+    /// - Panics if the position is not Active.
+    /// - Panics if the loan term has already expired (use liquidate() instead).
+    /// - Transfers the NFT: borrower → contract → lender.
+    /// - Calls settle() with no liquidator; emits position_returned event.
+    pub fn return_nft(env: Env, position_id: u64) {
+        let mut position = get_position(&env, position_id);
+
+        position.borrower.require_auth();
+
+        if position.status != PositionStatus::Active {
+            panic!("Position is not Active");
+        }
+
+        let now = env.ledger().timestamp();
+        let deadline = position.start_time + position.max_duration_secs;
+        if now > deadline {
+            panic!("Loan term has expired; use liquidate()");
+        }
+
+        // Transfer NFT from borrower back to contract, then to lender.
+        let nft_client = token::Client::new(&env, &position.nft_contract);
+        nft_client.transfer(
+            &position.borrower,
+            &env.current_contract_address(),
+            &(position.token_id as i128),
+        );
+        nft_client.transfer(
+            &env.current_contract_address(),
+            &position.lender,
+            &(position.token_id as i128),
+        );
+
+        // Settle collateral waterfall (no liquidator on voluntary return).
+        let config = get_config(&env);
+        let result = settlement::settle(&env, &position, None, &config);
+
+        position.status = PositionStatus::Returned;
+        set_position(&env, position_id, &position);
+
+        events::emit_position_returned(
+            &env,
+            position_id,
+            result.accrued_interest_usd,
+            result.platform_fee_usd,
+            result.borrower_rem,
+        );
     }
 }

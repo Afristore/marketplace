@@ -3,6 +3,7 @@ import { xdr, Address, scValToNative } from '@stellar/stellar-sdk';
 export interface DecodedEvent {
   eventType: string;
   listingId: bigint | null;
+  positionId?: bigint | null;
   actor: string;
   ledgerSequence: number;
   data: any;
@@ -147,6 +148,88 @@ export function parseMarketplaceEvent(
   return {
     eventType: type,
     listingId,
+    actor,
+    ledgerSequence: ledger,
+    data: convertBigInts(nativeData),
+  };
+}
+
+// ── Lending Contract Events ────────────────────────────────────────────────────
+
+const LENDING_TOPIC_MAP: Record<string, string> = {
+  'lst_crtd': 'LENDING_LISTING_CREATED',
+  'lst_cncl': 'LENDING_LISTING_CANCELLED',
+  'pos_open': 'LENDING_POSITION_OPENED',
+  'col_add':  'LENDING_COLLATERAL_ADDED',
+  'pos_ret':  'LENDING_POSITION_RETURNED',
+  'pos_liq':  'LENDING_POSITION_LIQUIDATED',
+  'cancel':   'LENDING_LISTING_CANCELLED',
+  'borrow':   'LENDING_POSITION_OPENED',
+};
+
+export interface LendingDecodedEvent {
+  eventType: string;
+  listingId: bigint | null;
+  positionId: bigint | null;
+  actor: string;
+  ledgerSequence: number;
+  data: any;
+}
+
+export function parseLendingEvent(
+  topics: string[],
+  valueXdr: string,
+  ledger: number
+): LendingDecodedEvent | null {
+  let contractTopic = '';
+  let eventTopic = '';
+
+  try {
+    const rawTopic0 = xdr.ScVal.fromXDR(topics[0], 'base64');
+    contractTopic = scValToNative(rawTopic0);
+  } catch {
+    contractTopic = topics[0] ?? '';
+  }
+
+  if (contractTopic !== 'lending') return null;
+
+  try {
+    const rawTopic1 = xdr.ScVal.fromXDR(topics[1], 'base64');
+    eventTopic = scValToNative(rawTopic1);
+  } catch {
+    eventTopic = topics[1] ?? '';
+  }
+
+  const type = LENDING_TOPIC_MAP[eventTopic];
+  if (!type) return null;
+
+  let nativeData: any;
+  try {
+    const rawVal = xdr.ScVal.fromXDR(valueXdr, 'base64');
+    nativeData = scValToNative(rawVal);
+  } catch {
+    return null;
+  }
+
+  let listingId: bigint | null = null;
+  let positionId: bigint | null = null;
+  let actor: string = '';
+
+  if (nativeData.listing_id !== undefined) {
+    listingId = BigInt(nativeData.listing_id);
+  }
+  if (nativeData.position_id !== undefined) {
+    positionId = BigInt(nativeData.position_id);
+  }
+
+  if (nativeData.lender) actor = nativeData.lender.toString();
+  else if (nativeData.borrower) actor = nativeData.borrower.toString();
+  else if (nativeData.liquidator) actor = nativeData.liquidator.toString();
+
+  return {
+    eventType: type,
+    listingId,
+    positionId,
     actor,
     ledgerSequence: ledger,
     data: convertBigInts(nativeData),

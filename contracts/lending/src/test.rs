@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::*;
-use crate::storage::{set_config, set_currency_symbol, set_listing};
+use crate::storage::{set_config, set_currency_symbol, set_listing, set_position};
 use crate::types::{Listing, ListingStatus, PlatformConfig, PositionStatus};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as TokenAdminClient};
 use soroban_sdk::{
