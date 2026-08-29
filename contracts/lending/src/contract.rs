@@ -1,6 +1,7 @@
 use soroban_sdk::{contract, contractimpl, token, Address, Env};
 
 use crate::events;
+use crate::interest;
 use crate::oracle;
 use crate::settlement;
 use crate::storage::{
@@ -119,6 +120,29 @@ impl LendingContract {
             .publish((soroban_sdk::symbol_short!("borrow"), position_id), ());
 
         position_id
+    }
+
+    /// Read-only view used by keeper bots to decide when to call `liquidate()`.
+    ///
+    /// Returns the position's current collateral-to-debt ratio in basis points:
+    /// `collateral_usd_value * 10_000 / (declared_price_usd + accrued_interest_usd)`.
+    /// Returns `u32::MAX` when the debt (denominator) is zero.
+    pub fn health_factor(env: Env, position_id: u64) -> u32 {
+        let position = get_position(&env, position_id);
+
+        let config = get_config(&env);
+        let oracle_price =
+            oracle::get_price(&env, &config.oracle_address, &position.collateral_currency);
+        let collateral_value_usd = (position.collateral_amount * oracle_price) / 10_000_000;
+
+        let accrued = interest::accrued_interest_usd(&position, env.ledger().timestamp());
+        let denominator = position.declared_price_usd + accrued;
+
+        if denominator == 0 {
+            return u32::MAX;
+        }
+
+        ((collateral_value_usd * 10_000) / denominator) as u32
     }
 
     /// Borrower voluntarily closes their position before term expiry.

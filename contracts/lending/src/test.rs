@@ -917,3 +917,81 @@ fn test_e2e_liquidation() {
         assert_eq!(pos.status, PositionStatus::Liquidated);
     });
 }
+
+// ─── health_factor tests ─────────────────────────────────────────────────────
+
+/// Registers the contract, stores platform config and a single active position,
+/// then returns (contract address, client, position_id).
+fn store_position_for_health_factor<'a>(
+    env: &'a Env,
+    declared_price_usd: i128,
+    collateral_amount: i128,
+    start_time: u64,
+) -> (Address, LendingContractClient<'a>, u64) {
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(env, &contract_id);
+
+    let lender = Address::generate(env);
+    let borrower = Address::generate(env);
+    let fee_receiver = Address::generate(env);
+    let oracle = Address::generate(env);
+    let (col_token, _) = create_token(env, &Address::generate(env));
+
+    env.as_contract(&contract_id, || {
+        set_config(env, &make_config(env, fee_receiver, oracle));
+
+        let mut position =
+            make_position(env, lender, borrower, col_token.address, collateral_amount);
+        position.declared_price_usd = declared_price_usd;
+        position.start_time = start_time;
+        set_position(env, 1, &position);
+    });
+
+    (contract_id, client, 1)
+}
+
+/// Fresh position with 150% collateral must return 15000 bps.
+#[test]
+fn test_health_factor_fresh_position_equals_buffer_bps() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, position_id) =
+        store_position_for_health_factor(&env, 100_000_000, 150_000_000, 0);
+
+    // 150 USD collateral / 100 USD debt at t=0 (no interest) => 150% = 15000 bps.
+    assert_eq!(client.health_factor(&position_id), 15000);
+}
+
+/// Health factor must decrease as interest accrues over time.
+#[test]
+fn test_health_factor_decreases_after_interest_accrues() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+
+    let (_, client, position_id) =
+        store_position_for_health_factor(&env, 100_000_000, 150_000_000, 1000);
+
+    let fresh = client.health_factor(&position_id);
+    assert_eq!(fresh, 15000);
+
+    // Advance 15 days => accrued interest = 10% * 15/30 = 5 USD => owed = 105 USD.
+    env.ledger().with_mut(|l| l.timestamp = 1000 + 15 * 86400);
+
+    let decreased = client.health_factor(&position_id);
+    // 150 / 105 => 142.857...% => 14285 bps.
+    assert_eq!(decreased, 14285);
+    assert!(decreased < fresh);
+}
+
+/// A position with zero debt must report u32::MAX.
+#[test]
+fn test_health_factor_zero_debt_returns_max() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, position_id) = store_position_for_health_factor(&env, 0, 150_000_000, 0);
+
+    assert_eq!(client.health_factor(&position_id), u32::MAX);
+}
