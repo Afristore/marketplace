@@ -1,6 +1,12 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, vec, Env, String, Vec};
 
+mod oracle;
+
+pub use oracle::{
+    get_price, token_to_usd, usd_to_token_amount, OracleConfig, PriceData,
+};
+
 #[contract]
 pub struct Contract;
 
