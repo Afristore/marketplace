@@ -760,8 +760,15 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
   }
 
   // Handle currency whitelist events — these carry no listingId
-  if (eventType === 'CURRENCY_WHITELISTED' || eventType === 'CurrencyWhitelisted') {
-    const address = data.currency?.toString() || data.address?.toString() || data.token?.toString() || '';
+  if (
+    eventType === "CURRENCY_WHITELISTED" ||
+    eventType === "CurrencyWhitelisted"
+  ) {
+    const address =
+      data.currency?.toString() ||
+      data.address?.toString() ||
+      data.token?.toString() ||
+      "";
     if (address) {
       await db.whitelistedCurrency.upsert({
         where: { address },
@@ -785,8 +792,12 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
     return;
   }
 
-  if (eventType === 'CURRENCY_REMOVED' || eventType === 'CurrencyRemoved') {
-    const address = data.currency?.toString() || data.address?.toString() || data.token?.toString() || '';
+  if (eventType === "CURRENCY_REMOVED" || eventType === "CurrencyRemoved") {
+    const address =
+      data.currency?.toString() ||
+      data.address?.toString() ||
+      data.token?.toString() ||
+      "";
     if (address) {
       await db.whitelistedCurrency.updateMany({
         where: { address },
@@ -1182,19 +1193,38 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
         where: { listingId: BigInt(listingId) },
         data: {
           status: "Cancelled",
-    case 'POSITION_LIQUIDATED':
-    case 'Liquidated': {
+          updatedAtLedger: ledgerSequence,
+        },
+      });
+      if (count === 0) {
+        console.warn(
+          `LISTING_CANCELLED: lending listing ${listingId} not found at ledger ${ledgerSequence}`,
+        );
+      }
+      break;
+    }
+
+    case "POSITION_LIQUIDATED":
+    case "Liquidated": {
       const posId = BigInt(data.position_id ?? listingId ?? 0);
       const liquidator = data.liquidator?.toString() || actor;
-      const liquidatorBounty = data.liquidator_bounty?.toString() || data.liquidatorBounty?.toString() || '0';
-      const platformFee = data.platform_fee?.toString() || data.platformFee?.toString() || '0';
-      const lenderPayout = data.lender_payout?.toString() || data.lenderPayout?.toString() || '0';
-      const borrowerRefund = data.borrower_refund?.toString() || data.borrowerRefund?.toString() || '0';
+      const liquidatorBounty =
+        data.liquidator_bounty?.toString() ||
+        data.liquidatorBounty?.toString() ||
+        "0";
+      const platformFee =
+        data.platform_fee?.toString() || data.platformFee?.toString() || "0";
+      const lenderPayout =
+        data.lender_payout?.toString() || data.lenderPayout?.toString() || "0";
+      const borrowerRefund =
+        data.borrower_refund?.toString() ||
+        data.borrowerRefund?.toString() ||
+        "0";
 
       const { count } = await db.lendingPosition.updateMany({
-        where: { id: posId },
+        where: { positionId: posId },
         data: {
-          status: 'Liquidated',
+          status: "Liquidated",
           liquidator,
           liquidatorBounty,
           platformFee,
@@ -1205,9 +1235,8 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
       });
       if (count === 0) {
         console.warn(
-          `LISTING_CANCELLED: lending listing ${listingId} not found at ledger ${ledgerSequence}`,
+          `POSITION_LIQUIDATED: position ${posId} not found at ledger ${ledgerSequence}`,
         );
-        console.warn(`POSITION_LIQUIDATED: position ${posId} not found at ledger ${ledgerSequence}`);
       }
       break;
     }
@@ -1304,16 +1333,21 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
       }
       break;
     }
-    case 'LENDING_LISTING_CREATED': {
+    case "LENDING_LISTING_CREATED": {
       const id = BigInt(data.listing_id ?? listingId ?? 0);
       const lender = data.lender?.toString() || actor;
-      const nftContract = data.nft_contract?.toString() || data.collection?.toString() || '';
+      const nftContract =
+        data.nft_contract?.toString() || data.collection?.toString() || "";
       const tokenId = BigInt(data.token_id ?? 0);
-      const declaredPriceUsd = data.declared_price_usd?.toString() || '0';
+      const declaredPriceUsd = data.declared_price_usd?.toString() || "0";
       const interestScheduleBps = data.interest_schedule_bps || [];
       const maxDurationDays = Number(data.max_duration_days ?? 0);
-      const minCollateralBufferBps = Number(data.min_collateral_buffer_bps ?? 0);
-      const liquidationThresholdBps = Number(data.liquidation_threshold_bps ?? 0);
+      const minCollateralBufferBps = Number(
+        data.min_collateral_buffer_bps ?? 0,
+      );
+      const liquidationThresholdBps = Number(
+        data.liquidation_threshold_bps ?? 0,
+      );
 
       await db.lendingListing.upsert({
         where: { id },
@@ -1328,7 +1362,7 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
           maxDurationDays,
           minCollateralBufferBps,
           liquidationThresholdBps,
-          status: 'Open',
+          status: "Open",
           createdAtLedger: ledgerSequence,
           updatedAtLedger: ledgerSequence,
         },
@@ -1342,37 +1376,39 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
           maxDurationDays,
           minCollateralBufferBps,
           liquidationThresholdBps,
-          status: 'Open',
+          status: "Open",
           updatedAtLedger: ledgerSequence,
         },
       });
       break;
     }
 
-    case 'LENDING_LISTING_CANCELLED': {
+    case "LENDING_LISTING_CANCELLED": {
       const id = BigInt(data.listing_id ?? listingId ?? 0);
       await db.lendingListing.updateMany({
         where: { id },
         data: {
-          status: 'Cancelled',
+          status: "Cancelled",
           updatedAtLedger: ledgerSequence,
         },
       });
       break;
     }
 
-    case 'POSITION_OPENED': {
+    case "POSITION_OPENED": {
       const id = BigInt(data.position_id ?? listingId ?? 0);
       const lId = BigInt(data.listing_id ?? 0);
       const borrower = data.borrower?.toString() || actor;
-      const lender = data.lender?.toString() || '';
-      const nftContract = data.nft_contract?.toString() || '';
+      const lender = data.lender?.toString() || "";
+      const nftContract = data.nft_contract?.toString() || "";
       const tokenId = BigInt(data.token_id ?? 0);
-      const declaredPriceUsd = data.declared_price_usd?.toString() || '0';
-      const collateralCurrency = data.collateral_currency?.toString() || '';
-      const collateralAmount = data.collateral_amount?.toString() || '0';
+      const declaredPriceUsd = data.declared_price_usd?.toString() || "0";
+      const collateralCurrency = data.collateral_currency?.toString() || "";
+      const collateralAmount = data.collateral_amount?.toString() || "0";
       const interestScheduleBps = data.interest_schedule_bps || [];
-      const liquidationThresholdBps = Number(data.liquidation_threshold_bps ?? 0);
+      const liquidationThresholdBps = Number(
+        data.liquidation_threshold_bps ?? 0,
+      );
       const startTime = BigInt(data.start_time ?? 0);
       const maxDurationSecs = BigInt(data.max_duration_secs ?? 0);
 
@@ -1392,7 +1428,7 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
           liquidationThresholdBps,
           startTime,
           maxDurationSecs,
-          status: 'Active',
+          status: "Active",
           createdAtLedger: ledgerSequence,
           updatedAtLedger: ledgerSequence,
         },
@@ -1409,7 +1445,7 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
           liquidationThresholdBps,
           startTime,
           maxDurationSecs,
-          status: 'Active',
+          status: "Active",
           updatedAtLedger: ledgerSequence,
         },
       });
@@ -1417,21 +1453,25 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
       if (lId > 0n) {
         await db.lendingListing.updateMany({
           where: { id: lId },
-          data: { status: 'Filled', updatedAtLedger: ledgerSequence },
+          data: { status: "Filled", updatedAtLedger: ledgerSequence },
         });
       }
       break;
     }
 
-    case 'POSITION_RETURNED': {
+    case "POSITION_RETURNED": {
       const posId = BigInt(data.position_id ?? listingId ?? 0);
-      const platformFee = data.platform_fee?.toString() || data.platformFee?.toString() || '0';
-      const borrowerRefund = data.borrower_refund?.toString() || data.borrowerRefund?.toString() || '0';
+      const platformFee =
+        data.platform_fee?.toString() || data.platformFee?.toString() || "0";
+      const borrowerRefund =
+        data.borrower_refund?.toString() ||
+        data.borrowerRefund?.toString() ||
+        "0";
 
       await db.lendingPosition.updateMany({
         where: { id: posId },
         data: {
-          status: 'Returned',
+          status: "Returned",
           platformFee,
           borrowerRefund,
           updatedAtLedger: ledgerSequence,
@@ -1440,7 +1480,6 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
       break;
     }
   }
-
 
   // Broadcast to any connected SSE clients after the DB write is complete.
   if (!tx) emitSSEEvent(event);

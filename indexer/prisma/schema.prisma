@@ -97,7 +97,6 @@ model Collection {
   symbol          String?
   deployedAtLedger Int
   createdAt       DateTime @default(now())
-  lendingListings LendingListing[]
   @@index([creator])
 }
 
@@ -140,32 +139,6 @@ model LendingListing {
   status                    String   // "Open", "Filled", "Cancelled"
   createdAtLedger           Int
   updatedAtLedger           Int
-enum LendingPositionStatus {
-  Active
-  Repaid
-  Liquidated
-  Returned
-  Expired
-}
-
-model LendingListing {
-  id                      BigInt      @id
-  lender                  String
-  nftContract             String
-  collectionAddress       String?
-  collection              Collection? @relation(fields: [collectionAddress], references: [contractAddress])
-  tokenId                 BigInt
-  declaredPriceUsd        Decimal     @db.Decimal(32, 7)
-  interestScheduleBps     Json
-  maxDurationDays         Int
-  minCollateralBufferBps  Int
-  liquidationThresholdBps Int
-  status                  String      // "Open", "Filled", "Cancelled"
-  createdAtLedger         Int
-  updatedAtLedger         Int
-  createdAt               DateTime    @default(now())
-  updatedAt               DateTime    @updatedAt
-
   @@index([lender])
   @@index([status])
   @@index([updatedAtLedger])
@@ -186,42 +159,17 @@ model LendingPosition {
   startTime                 BigInt
   maxDurationSecs           BigInt
   status                    String   // "Active", "Returned", "Liquidated"
+  liquidator                String?
+  liquidatorBounty          Decimal? @db.Decimal(32, 7)
+  lenderPayout              Decimal? @db.Decimal(32, 7)
+  platformFee               Decimal? @db.Decimal(32, 7)
+  borrowerRefund            Decimal? @db.Decimal(32, 7)
   createdAtLedger           Int
   updatedAtLedger           Int
   @@index([borrower])
   @@index([lender])
   @@index([listingId])
   @@index([status])
-  @@index([updatedAtLedger])
-}
-  id                      BigInt                @id
-  listingId               BigInt
-  lender                  String
-  borrower                String
-  nftContract             String
-  tokenId                 BigInt
-  declaredPriceUsd        Decimal               @db.Decimal(32, 7)
-  collateralCurrency      String
-  collateralAmount        Decimal               @db.Decimal(32, 7)
-  interestScheduleBps     Json
-  liquidationThresholdBps Int
-  startTime               BigInt
-  maxDurationSecs         BigInt
-  status                  LendingPositionStatus @default(Active)
-  liquidator              String?
-  liquidatorBounty        Decimal?              @db.Decimal(32, 7)
-  lenderPayout            Decimal?              @db.Decimal(32, 7)
-  platformFee             Decimal?              @db.Decimal(32, 7)
-  borrowerRefund          Decimal?              @db.Decimal(32, 7)
-  createdAtLedger         Int
-  updatedAtLedger         Int
-  createdAt               DateTime              @default(now())
-  updatedAt               DateTime              @updatedAt
-
-  @@index([borrower])
-  @@index([lender])
-  @@index([status])
-  @@index([listingId])
   @@index([updatedAtLedger])
 }
 
