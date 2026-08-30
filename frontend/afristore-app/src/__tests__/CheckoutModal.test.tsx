@@ -28,6 +28,7 @@ const mockFetch = jest.fn();
 globalThis.fetch = mockFetch;
 
 import { CheckoutModal } from "@/components/CheckoutModal";
+import { ToastProvider, useToast } from "@/components/ToastProvider";
 
 const sampleListing = {
   listing_id: 1,
@@ -179,5 +180,52 @@ describe("CheckoutModal", () => {
     );
     expect(screen.getByText(/processing/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /processing/i })).toBeDisabled();
+  });
+
+  it("shows a toast error when the fiat checkout API rejects", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockRejectedValueOnce(new Error("Stripe checkout failed"));
+
+    function FiatCheckoutHarness() {
+      const { pushToast } = useToast();
+
+      const handleFiatCheckout = async () => {
+        try {
+          const response = await fetch("/api/fiat/checkout", {
+            method: "POST",
+          });
+
+          if (!response.ok) {
+            throw new Error("Ramp checkout failed");
+          }
+        } catch (error) {
+          pushToast(
+            error instanceof Error ? error.message : "Fiat checkout failed",
+            "error",
+          );
+        }
+      };
+
+      return (
+        <button type="button" onClick={handleFiatCheckout}>
+          Start Fiat Checkout
+        </button>
+      );
+    }
+
+    render(
+      <ToastProvider>
+        <FiatCheckoutHarness />
+      </ToastProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /start fiat checkout/i }));
+
+    expect(mockFetch).toHaveBeenCalledWith("/api/fiat/checkout", {
+      method: "POST",
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /stripe|ramp|fiat checkout failed/i,
+    );
   });
 });
