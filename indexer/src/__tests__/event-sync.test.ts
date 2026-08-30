@@ -8,6 +8,7 @@ vi.mock('../parser.js', () => ({
     ledgerSequence: ledger,
     data: { ledger },
   })),
+  parseLendingEvent: vi.fn(() => null),
 }));
 
 import { collectMarketplaceEvents, MAX_LEDGER_WINDOW, EVENT_PAGE_LIMIT } from '../event-sync';

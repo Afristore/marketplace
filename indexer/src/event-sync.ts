@@ -1,5 +1,5 @@
 import { rpc } from '@stellar/stellar-sdk';
-import { parseMarketplaceEvent, type DecodedEvent } from './parser.js';
+import { parseMarketplaceEvent, parseLendingEvent, type DecodedEvent } from './parser.js';
 
 export const MAX_LEDGER_WINDOW = 17_000;
 export const EVENT_PAGE_LIMIT = 100;
@@ -25,7 +25,9 @@ function toBase64(value: unknown): string {
 
 function decodeRpcEvent(event: RpcEvent): DecodedEvent | null {
   const topicStrings = event.topic.map((topic) => toBase64(topic));
-  return parseMarketplaceEvent(topicStrings, toBase64(event.value), event.ledger);
+  const marketplaceEvent = parseMarketplaceEvent(topicStrings, toBase64(event.value), event.ledger);
+  if (marketplaceEvent) return marketplaceEvent;
+  return parseLendingEvent(topicStrings, toBase64(event.value), event.ledger);
 }
 
 export async function collectMarketplaceEvents(
