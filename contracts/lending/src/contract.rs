@@ -150,6 +150,42 @@ impl LendingContract {
         position_id
     }
 
+    /// Borrower tops up collateral on an active position to improve its health factor.
+    ///
+    /// - Requires borrower auth.
+    /// - Panics if the position is not Active.
+    /// - Panics if the top-up amount is not positive.
+    /// - Transfers the extra collateral tokens from borrower to the contract.
+    /// - Increments `position.collateral_amount`; emits the `collateral_added` event.
+    pub fn add_collateral(env: Env, position_id: u64, amount: i128) {
+        let mut position = get_position(&env, position_id);
+
+        position.borrower.require_auth();
+
+        if position.status != PositionStatus::Active {
+            panic!("Position is not Active");
+        }
+
+        if amount <= 0 {
+            panic!("Collateral top-up amount must be positive");
+        }
+
+        // Transfer additional collateral from borrower to contract.
+        let collateral_client = token::Client::new(&env, &position.collateral_currency);
+        collateral_client.transfer(&position.borrower, &env.current_contract_address(), &amount);
+
+        position.collateral_amount += amount;
+        set_position(&env, position_id, &position);
+
+        events::emit_collateral_added(
+            &env,
+            position_id,
+            position.borrower.clone(),
+            amount,
+            position.collateral_amount,
+        );
+    }
+
     /// Borrower voluntarily closes their position before term expiry.
     ///
     /// - Requires borrower auth.
