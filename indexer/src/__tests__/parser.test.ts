@@ -54,6 +54,12 @@ describe('parseMarketplaceEvent — topic mapping', () => {
     ['ofr_rjct', 'OFFER_REJECTED'],
     ['ofr_wdrn', 'OFFER_WITHDRAWN'],
     ['auc_crtd', 'AUCTION_CREATED'],
+    ['pos_liq', 'POSITION_LIQUIDATED'],
+    ['Liquidated', 'POSITION_LIQUIDATED'],
+    ['cur_wl', 'CURRENCY_WHITELISTED'],
+    ['CurrencyWhitelisted', 'CURRENCY_WHITELISTED'],
+    ['cur_rmv', 'CURRENCY_REMOVED'],
+    ['CurrencyRemoved', 'CURRENCY_REMOVED'],
   ];
 
   for (const [symbol, expectedType] of cases) {

@@ -17,7 +17,6 @@ import {
   createWalletSSEConnection,
   WalletEvent,
   getWalletPreferences,
-  WalletPreferences,
 } from "@/lib/indexer";
 
 const SETTINGS_KEY = "afristore_settings";
@@ -44,6 +43,32 @@ function loadSettings(): SettingsState {
   } catch {
     return defaultSettings;
   }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Read-state persistence (per wallet) via localStorage
+// ─────────────────────────────────────────────────────────────
+
+const READ_IDS_KEY_PREFIX = "afristore_read_notifications:";
+
+function getReadIds(publicKey: string): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const stored = localStorage.getItem(READ_IDS_KEY_PREFIX + publicKey);
+    return stored ? new Set<string>(JSON.parse(stored)) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveReadIds(publicKey: string, ids: Set<string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(
+      READ_IDS_KEY_PREFIX + publicKey,
+      JSON.stringify([...ids]),
+    );
+  } catch {}
 }
 
 export interface NotificationsState {
@@ -99,6 +124,43 @@ export function NotificationsProvider({
   const [settings, setSettings] = useState<SettingsState>(loadSettings);
 
   const sseConnectionRef = useRef<{ close: () => void } | null>(null);
+
+  // Fetch initial notifications from API
+  useEffect(() => {
+    if (!publicKey) {
+      setNotifications([]);
+      return;
+    }
+
+    let cancelled = false;
+    const fetchInitial = async () => {
+      try {
+        const res = await fetch(`/api/notifications?address=${publicKey}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+
+        const list: WalletEvent[] = data.notifications || [];
+        const readIds = getReadIds(publicKey);
+
+        // Apply read status based on localStorage
+        const processed = list.map((n) => ({
+          ...n,
+          read: n.read || readIds.has(n.id),
+        }));
+
+        setNotifications(processed);
+      } catch (err) {
+        console.error("Failed to load initial notifications:", err);
+      }
+    };
+
+    fetchInitial();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [publicKey]);
 
   // Load preferences from indexer when wallet connects
   useEffect(() => {
@@ -183,8 +245,15 @@ export function NotificationsProvider({
         if (prev.some((n) => n.id === event.id)) {
           return prev;
         }
+
+        const readIds = getReadIds(publicKey);
+        const processedEvent = {
+          ...event,
+          read: event.read || readIds.has(event.id),
+        };
+
         // Keep only last 100 notifications
-        const updated = [event, ...prev].slice(0, 100);
+        const updated = [processedEvent, ...prev].slice(0, 100);
         return updated;
       });
     };
@@ -228,7 +297,14 @@ export function NotificationsProvider({
         if (prev.some((n) => n.id === event.id)) {
           return prev;
         }
-        const updated = [event, ...prev].slice(0, 100);
+
+        const readIds = getReadIds(publicKey);
+        const processedEvent = {
+          ...event,
+          read: event.read || readIds.has(event.id),
+        };
+
+        const updated = [processedEvent, ...prev].slice(0, 100);
         return updated;
       });
     };
@@ -244,29 +320,69 @@ export function NotificationsProvider({
     );
   }, [settings, publicKey]);
 
-  const addNotification = useCallback((event: WalletEvent) => {
-    if (shouldFilterEvent(event, settings)) {
-      return;
-    }
+  const addNotification = useCallback(
+    (event: WalletEvent) => {
+      if (shouldFilterEvent(event, settings)) {
+        return;
+      }
+
+      setNotifications((prev) => {
+        if (prev.some((n) => n.id === event.id)) {
+          return prev;
+        }
+
+        const readIds = getReadIds(publicKey!);
+        const processedEvent = {
+          ...event,
+          read: event.read || readIds.has(event.id),
+        };
+
+        const updated = [processedEvent, ...prev].slice(0, 100);
+        return updated;
+      });
+    },
+    [settings, publicKey],
+  );
+
+  const markAsRead = useCallback(
+    (eventId: string) => {
+      if (!publicKey) return;
+      setNotifications((prev) => {
+        const updated = prev.map((n) =>
+          n.id === eventId ? { ...n, read: true } : n,
+        );
+        const readIds = getReadIds(publicKey);
+        readIds.add(eventId);
+        saveReadIds(publicKey, readIds);
+        return updated;
+      });
+    },
+    [publicKey],
+  );
+
+  const markAllAsRead = useCallback(async () => {
+    if (!publicKey) return;
 
     setNotifications((prev) => {
-      if (prev.some((n) => n.id === event.id)) {
-        return prev;
-      }
-      const updated = [event, ...prev].slice(0, 100);
+      const updated = prev.map((n) => ({ ...n, read: true }));
+      const readIds = getReadIds(publicKey);
+      prev.forEach((n) => readIds.add(n.id));
+      saveReadIds(publicKey, readIds);
       return updated;
     });
-  }, [settings]);
 
-  const markAsRead = useCallback((eventId: string) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === eventId ? { ...n, read: true } : n)),
-    );
-  }, []);
-
-  const markAllAsRead = useCallback(() => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-  }, []);
+    try {
+      await fetch(`/api/notifications/read?address=${publicKey}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (err) {
+      console.error(
+        "Failed to mark all notifications as read on backend:",
+        err,
+      );
+    }
+  }, [publicKey]);
 
   const clearNotifications = useCallback(() => {
     setNotifications([]);

@@ -114,6 +114,7 @@ export function registerE2eMockListingsOnWindow(): void {
     resetE2eMockCollections();
     resetE2eMockSplitters();
     resetE2eMockStaking();
+    resetE2eMockLending();
   };
 
   window.__E2E_SEED_STAKING_POOL__ = e2eMockSeedStakingPool;
@@ -402,5 +403,64 @@ export function e2eMockClaimRewards(userPublicKey: string): number {
     s.rewards_earned = "0";
   }
   return rewards;
+}
+
+// ── Lending admin mocks ───────────────────────────────────────
+
+export interface E2eMockLendingBounds {
+  minBufferBps: number;
+  maxBufferBps: number;
+  minLiqThresholdBps: number;
+  maxLiqThresholdBps: number;
+}
+
+/** Well-known mock protocol admin, matching the read-only caller key. */
+export const E2E_MOCK_LENDING_ADMIN =
+  "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+
+const whitelistedCurrencies = new Set<string>();
+const currencySymbols = new Map<string, string>();
+let lendingBounds: E2eMockLendingBounds = {
+  minBufferBps: 12000,
+  maxBufferBps: 20000,
+  minLiqThresholdBps: 10500,
+  maxLiqThresholdBps: 12000,
+};
+
+export function resetE2eMockLending(): void {
+  whitelistedCurrencies.clear();
+  currencySymbols.clear();
+  lendingBounds = {
+    minBufferBps: 12000,
+    maxBufferBps: 20000,
+    minLiqThresholdBps: 10500,
+    maxLiqThresholdBps: 12000,
+  };
+}
+
+export function e2eMockWhitelistCurrency(
+  currencyAddress: string,
+  symbol: string,
+): void {
+  consumeForcedRejection();
+  whitelistedCurrencies.add(currencyAddress);
+  currencySymbols.set(currencyAddress, symbol);
+}
+
+export function e2eMockWhitelistedCurrencies(): string[] {
+  return Array.from(whitelistedCurrencies.values());
+}
+
+export function e2eMockUpdateBounds(bounds: E2eMockLendingBounds): void {
+  consumeForcedRejection();
+  lendingBounds = { ...bounds };
+}
+
+export function e2eMockLendingBounds(): E2eMockLendingBounds {
+  return { ...lendingBounds };
+}
+
+export function e2eMockLendingAdmin(): string {
+  return E2E_MOCK_LENDING_ADMIN;
 }
 

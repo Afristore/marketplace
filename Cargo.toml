@@ -8,6 +8,7 @@ members = [
     "contracts/lazy_mint_erc1155",
     "contracts/royalty-splitter",
     "contracts/nft-staking",
+    "contracts/lending",
 ]
 resolver = "2"
 

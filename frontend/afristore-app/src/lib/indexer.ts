@@ -503,6 +503,7 @@ export interface WalletEvent {
   message: string;
   timestamp: number;
   read: boolean;
+  link?: string;
   data?: Record<string, unknown>;
 }
 
@@ -551,6 +552,7 @@ export function createWalletSSEConnection(
             message: rawData.message || "",
             timestamp: rawData.timestamp || Date.now(),
             read: false,
+            link: rawData.link,
             data: rawData.data,
           };
           onEvent(event);
