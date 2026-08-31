@@ -252,6 +252,25 @@ fn test_create_listing_zero_price() {
     );
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_create_listing_negative_price() {
+    let (env, client, artist, _, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    client.create_listing(
+        &artist,
+        &-10_000_000_i128,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &valid_recipients(&env, &artist),
+    );
+}
+
+
 // #[test] // Deprecated in V2 architecture
 #[should_panic(expected = "Error(Contract, #1)")]
 fn test_create_listing_empty_cid() {
@@ -3401,3 +3420,46 @@ fn test_place_bid_smallest_increment_edge_cases() {
         "Highest bidder must update to bidder_b"
     );
 }
+
+// ── Issue #652: Test create_listing fails if price is zero or negative ───
+
+#[test]
+fn test_create_listing_fails_if_price_zero_or_negative() {
+    let (env, client, artist, _, token_id, contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    // Test zero price fails with InvalidPrice (Contract, #2)
+    env.as_contract(&contract_id, || {
+        let res = client.try_create_listing(
+            &artist,
+            &0_i128,
+            &symbol_short!("XLM"),
+            &token_id,
+            &collection_id,
+            &1u64,
+            &1u64,
+            &valid_recipients(&env, &artist),
+        );
+        assert!(res.is_err(), "create_listing must fail when price is zero");
+    });
+
+    // Test negative price fails with InvalidPrice (Contract, #2)
+    env.as_contract(&contract_id, || {
+        let res = client.try_create_listing(
+            &artist,
+            &-5_000_000_i128,
+            &symbol_short!("XLM"),
+            &token_id,
+            &collection_id,
+            &1u64,
+            &1u64,
+            &valid_recipients(&env, &artist),
+        );
+        assert!(res.is_err(), "create_listing must fail when price is negative");
+    });
+
+    // Verify expected state: no listing was created
+    assert_eq!(client.get_total_listings(), 0);
+}
+
