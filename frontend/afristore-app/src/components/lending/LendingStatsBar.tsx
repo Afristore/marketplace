@@ -2,10 +2,9 @@
 // components/lending/LendingStatsBar.tsx
 // ─────────────────────────────────────────────────────────────
 // Horizontal bar of protocol-wide lending metrics: Total Value
-// Locked, Active Loans and Volume. Consumes `useLendingStats`
-// (`@/hooks/useLendingStats`); TVL and Volume arrive as bigint
-// USD in the protocol's 7-decimal fixed-point form, Active Loans
-// as a plain count.
+// Locked, Active Loans and 24h Volume. Consumes `useLendingStats`
+// (`@/hooks/useLendingStats`); TVL and Volume arrive as plain
+// numbers denominated in XLM, Active Loans as a plain count.
 //
 // States:
 //   loading  → all three tiles show a pulsing skeleton
@@ -18,23 +17,17 @@
 
 import clsx from "clsx";
 import { HandCoins, Landmark, TrendingUp } from "lucide-react";
-import { USD_DECIMALS } from "@/lib/lendingMath";
 import { useLendingStats } from "@/hooks/useLendingStats";
 
 const EM_DASH = "—";
 
-/** Render 7-decimal fixed-point USD as a compact string, e.g. 1_250_000_0000000n -> "$1.3M". */
-function formatUsdCompact(value: bigint): string {
-  const sign = value < 0n ? "-" : "";
-  const abs = value < 0n ? -value : value;
-  const whole = Number(abs / USD_DECIMALS);
-  const frac = Number(abs % USD_DECIMALS) / Number(USD_DECIMALS);
-  const dollars = whole + frac;
+/** Render an XLM amount compactly, e.g. 1250000 -> "1.3M XLM". */
+function formatXlmCompact(value: number): string {
   const formatted = Intl.NumberFormat("en-US", {
     notation: "compact",
     maximumFractionDigits: 1,
-  }).format(dollars);
-  return `$${sign}${formatted}`;
+  }).format(value);
+  return `${formatted} XLM`;
 }
 
 /** Render a plain count with thousands separators, e.g. 1234 -> "1,234". */
@@ -48,9 +41,9 @@ interface LendingStatsBarProps {
 }
 
 export function LendingStatsBar({ className }: LendingStatsBarProps) {
-  const { stats, loading, error } = useLendingStats();
+  const { stats, isLoading, error } = useLendingStats();
 
-  const state = loading
+  const state = isLoading
     ? "loading"
     : error
       ? "error"
@@ -70,9 +63,7 @@ export function LendingStatsBar({ className }: LendingStatsBarProps) {
           label="Total Value Locked"
           testId="stat-tvl"
           loading={state === "loading"}
-          value={
-            state === "ready" ? formatUsdCompact(stats!.tvlUsd) : EM_DASH
-          }
+          value={state === "ready" ? formatXlmCompact(stats!.tvl) : EM_DASH}
         />
         <StatTile
           icon={<HandCoins size={18} />}
@@ -85,11 +76,11 @@ export function LendingStatsBar({ className }: LendingStatsBarProps) {
         />
         <StatTile
           icon={<TrendingUp size={18} />}
-          label="Volume"
+          label="24h Volume"
           testId="stat-volume"
           loading={state === "loading"}
           value={
-            state === "ready" ? formatUsdCompact(stats!.volumeUsd) : EM_DASH
+            state === "ready" ? formatXlmCompact(stats!.volume24h) : EM_DASH
           }
         />
       </div>

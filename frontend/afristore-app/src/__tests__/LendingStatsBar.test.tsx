@@ -1,19 +1,19 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
-import { USD_DECIMALS } from "@/lib/lendingMath";
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
 let mockStatsState: {
   stats: {
-    tvlUsd: bigint;
+    tvl: number;
+    volume24h: number;
     activeLoans: number;
-    volumeUsd: bigint;
+    updatedAt: string | null;
   } | null;
-  loading: boolean;
+  isLoading: boolean;
   error: string | null;
-  refetch: () => void;
+  refresh: () => void;
 };
 
 jest.mock("@/hooks/useLendingStats", () => ({
@@ -28,13 +28,14 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockStatsState = {
     stats: {
-      tvlUsd: 1_500_000n * USD_DECIMALS,
+      tvl: 1_500_000,
       activeLoans: 1234,
-      volumeUsd: 3_400_000n * USD_DECIMALS,
+      volume24h: 3_400_000,
+      updatedAt: "2026-08-31T12:00:00.000Z",
     },
-    loading: false,
+    isLoading: false,
     error: null,
-    refetch: jest.fn(),
+    refresh: jest.fn(),
   };
 });
 
@@ -45,33 +46,36 @@ describe("LendingStatsBar", () => {
       expect(bar()).toHaveAttribute("data-state", "ready");
       expect(screen.getByText("Total Value Locked")).toBeInTheDocument();
       expect(screen.getByText("Active Loans")).toBeInTheDocument();
-      expect(screen.getByText("Volume")).toBeInTheDocument();
+      expect(screen.getByText("24h Volume")).toBeInTheDocument();
     });
 
-    it("formats TVL as a compact USD amount", () => {
+    it("formats TVL as a compact XLM amount", () => {
       render(<LendingStatsBar />);
-      expect(screen.getByTestId("stat-tvl")).toHaveTextContent("$1.5M");
+      expect(screen.getByTestId("stat-tvl")).toHaveTextContent("1.5M XLM");
     });
 
-    it("formats Volume as a compact USD amount", () => {
+    it("formats Volume as a compact XLM amount", () => {
       render(<LendingStatsBar />);
-      expect(screen.getByTestId("stat-volume")).toHaveTextContent("$3.4M");
+      expect(screen.getByTestId("stat-volume")).toHaveTextContent("3.4M XLM");
     });
 
     it("formats Active Loans as a grouped plain count", () => {
       render(<LendingStatsBar />);
-      expect(screen.getByTestId("stat-active-loans")).toHaveTextContent("1,234");
+      expect(screen.getByTestId("stat-active-loans")).toHaveTextContent(
+        "1,234",
+      );
     });
 
-    it("formats small USD amounts without a compact suffix", () => {
+    it("formats small XLM amounts without a compact suffix", () => {
       mockStatsState.stats = {
-        tvlUsd: 950n * USD_DECIMALS,
+        tvl: 950,
         activeLoans: 0,
-        volumeUsd: 0n,
+        volume24h: 0,
+        updatedAt: null,
       };
       render(<LendingStatsBar />);
-      expect(screen.getByTestId("stat-tvl")).toHaveTextContent("$950");
-      expect(screen.getByTestId("stat-volume")).toHaveTextContent("$0");
+      expect(screen.getByTestId("stat-tvl")).toHaveTextContent("950 XLM");
+      expect(screen.getByTestId("stat-volume")).toHaveTextContent("0 XLM");
     });
   });
 
@@ -79,9 +83,9 @@ describe("LendingStatsBar", () => {
     beforeEach(() => {
       mockStatsState = {
         stats: null,
-        loading: true,
+        isLoading: true,
         error: null,
-        refetch: jest.fn(),
+        refresh: jest.fn(),
       };
     });
 
@@ -89,7 +93,9 @@ describe("LendingStatsBar", () => {
       render(<LendingStatsBar />);
       expect(bar()).toHaveAttribute("data-state", "loading");
       expect(screen.getByTestId("stat-tvl-skeleton")).toBeInTheDocument();
-      expect(screen.getByTestId("stat-active-loans-skeleton")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("stat-active-loans-skeleton"),
+      ).toBeInTheDocument();
       expect(screen.getByTestId("stat-volume-skeleton")).toBeInTheDocument();
     });
 
@@ -104,9 +110,9 @@ describe("LendingStatsBar", () => {
     beforeEach(() => {
       mockStatsState = {
         stats: null,
-        loading: false,
+        isLoading: false,
         error: "HTTP 500",
-        refetch: jest.fn(),
+        refresh: jest.fn(),
       };
     });
 
@@ -130,9 +136,9 @@ describe("LendingStatsBar", () => {
     it("renders placeholders without a status line", () => {
       mockStatsState = {
         stats: null,
-        loading: false,
+        isLoading: false,
         error: null,
-        refetch: jest.fn(),
+        refresh: jest.fn(),
       };
       render(<LendingStatsBar />);
       expect(bar()).toHaveAttribute("data-state", "empty");
