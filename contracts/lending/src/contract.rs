@@ -4,8 +4,8 @@ use crate::events;
 use crate::oracle;
 use crate::settlement;
 use crate::storage::{
-    extend_instance_ttl, get_config, get_listing, get_position, is_currency_whitelisted,
-    next_position_id, set_currency_symbol, set_listing, set_position,
+    extend_instance_ttl, get_config, get_currency_symbol, get_listing, get_position,
+    is_currency_whitelisted, next_position_id, set_currency_symbol, set_listing, set_position,
 };
 use crate::types::{ListingStatus, Position, PositionStatus};
 
@@ -17,6 +17,7 @@ impl LendingContract {
     /// Admin-only: approve a token as valid collateral, mapped to its Reflector asset symbol.
     ///
     /// - Requires `config.admin` auth; non-admin callers panic.
+    /// - Returns early if the currency is already whitelisted with the same symbol.
     /// - Verifies `currency` is a real token contract by probing `decimals()`.
     /// - Records the currency → Reflector symbol mapping via `set_currency_symbol()`.
     ///   The currency then reads back as whitelisted through `is_currency_whitelisted()`.
@@ -25,6 +26,12 @@ impl LendingContract {
 
         let config = get_config(&env);
         config.admin.require_auth();
+
+        if is_currency_whitelisted(&env, &currency)
+            && get_currency_symbol(&env, &currency) == reflector_asset
+        {
+            return;
+        }
 
         // Sanity-check that `currency` points at a real token contract.
         let _ = token::Client::new(&env, &currency).decimals();
@@ -75,6 +82,10 @@ impl LendingContract {
 
         if listing.status != ListingStatus::Open {
             panic!("Listing is not Open");
+        }
+
+        if listing.max_duration_days == 0 {
+            panic!("max_duration_days must be greater than zero");
         }
 
         if !is_currency_whitelisted(&env, &collateral_currency) {
@@ -128,9 +139,13 @@ impl LendingContract {
 
         set_position(&env, position_id, &position);
 
-        #[allow(deprecated)]
-        env.events()
-            .publish((soroban_sdk::symbol_short!("borrow"), position_id), ());
+        events::emit_position_opened(
+            &env,
+            position_id,
+            listing_id,
+            borrower.clone(),
+            collateral_amount,
+        );
 
         position_id
     }
@@ -200,8 +215,9 @@ impl LendingContract {
             panic!("Amount must be greater than zero");
         }
 
+        let contract_address = env.current_contract_address();
         let collateral_client = token::Client::new(&env, &position.collateral_currency);
-        collateral_client.transfer(&position.borrower, &env.current_contract_address(), &amount);
+        collateral_client.transfer(&position.borrower, &contract_address, &amount);
         position.collateral_amount += amount;
         set_position(&env, position_id, &position);
 
