@@ -95,10 +95,10 @@ impl LendingContract {
         let config = get_config(&env);
         let oracle_price = oracle::get_price(&env, &config.oracle_address, &collateral_currency);
 
-        // oracle_price is likely USD per unit of collateral (7 decimals)
-        // token_to_usd: collateral_amount * oracle_price / 10^decimals
-        // For simplicity assuming both are 7 decimals
-        let collateral_value_usd = (collateral_amount * oracle_price) / 10_000_000;
+        let collateral_client = token::Client::new(&env, &collateral_currency);
+        let decimals = collateral_client.decimals();
+        let divisor = 10_i128.pow(decimals);
+        let collateral_value_usd = (collateral_amount * oracle_price) / divisor;
 
         let required_collateral =
             (listing.declared_price_usd * (listing.min_collateral_buffer_bps as i128)) / 10_000;
@@ -109,7 +109,6 @@ impl LendingContract {
 
         // Transfer collateral from borrower to contract
         let contract_address = env.current_contract_address();
-        let collateral_client = token::Client::new(&env, &collateral_currency);
         collateral_client.transfer(&borrower, &contract_address, &collateral_amount);
 
         // Transfer NFT from contract to borrower

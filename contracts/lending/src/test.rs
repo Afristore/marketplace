@@ -1123,7 +1123,6 @@ fn test_whitelist_currency_non_admin_panics() {
     let (col_token, _) = create_token(&env, &admin);
 
     seed_config(&env, &contract_id, &admin);
-
     // No auth is mocked, so `config.admin.require_auth()` fails.
     client.whitelist_currency(&col_token.address, &Symbol::new(&env, "USDC"));
 }
@@ -1206,4 +1205,298 @@ fn test_whitelist_currency_update_reflector_symbol() {
             updated_symbol
         );
     });
+}
+
+// ─── Mock token supporting arbitrary decimals (6, 7, 18) ────────────────────
+
+#[soroban_sdk::contract]
+pub struct MockDecimalToken;
+
+#[soroban_sdk::contracttype]
+pub enum MockDecimalTokenKey {
+    Decimals,
+    Balance(Address),
+}
+
+#[soroban_sdk::contractimpl]
+impl MockDecimalToken {
+    pub fn initialize(env: Env, decimals: u32) {
+        env.storage()
+            .instance()
+            .set(&MockDecimalTokenKey::Decimals, &decimals);
+    }
+
+    pub fn decimals(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&MockDecimalTokenKey::Decimals)
+            .unwrap_or(7)
+    }
+
+    pub fn mint(env: Env, to: Address, amount: i128) {
+        let current: i128 = env
+            .storage()
+            .persistent()
+            .get(&MockDecimalTokenKey::Balance(to.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&MockDecimalTokenKey::Balance(to), &(current + amount));
+    }
+
+    pub fn balance(env: Env, id: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&MockDecimalTokenKey::Balance(id))
+            .unwrap_or(0)
+    }
+
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+        let from_bal: i128 = env
+            .storage()
+            .persistent()
+            .get(&MockDecimalTokenKey::Balance(from.clone()))
+            .unwrap_or(0);
+        if from_bal < amount {
+            panic!("MockDecimalToken: insufficient balance");
+        }
+        env.storage()
+            .persistent()
+            .set(&MockDecimalTokenKey::Balance(from), &(from_bal - amount));
+        let to_bal: i128 = env
+            .storage()
+            .persistent()
+            .get(&MockDecimalTokenKey::Balance(to.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&MockDecimalTokenKey::Balance(to), &(to_bal + amount));
+    }
+}
+
+fn setup_borrow_listing(
+    env: &Env,
+    _contract_id: &Address,
+    lender: &Address,
+    nft_token: &TokenClient,
+    col_address: &Address,
+    symbol: &str,
+) {
+    let admin = Address::generate(env);
+    let oracle_address = Address::generate(env);
+
+    set_config(
+        env,
+        &PlatformConfig {
+            admin: admin.clone(),
+            fee_receiver: admin.clone(),
+            platform_fee_bps: 100,
+            liquidator_fee_bps: 500,
+            min_buffer_bps: 12000,
+            max_buffer_bps: 20000,
+            min_liq_threshold_bps: 11000,
+            max_liq_threshold_bps: 15000,
+            oracle_address,
+            max_price_staleness_secs: 3600,
+        },
+    );
+
+    let sym = Symbol::new(env, symbol);
+    set_currency_symbol(env, col_address, &sym);
+
+    set_listing(
+        env,
+        1,
+        &Listing {
+            id: 1,
+            lender: lender.clone(),
+            nft_contract: nft_token.address.clone(),
+            token_id: 1,
+            declared_price_usd: 100_000_000, // 100 USD (7 decimals)
+            interest_schedule_bps: vec![env, 100],
+            max_duration_days: 30,
+            min_collateral_buffer_bps: 12000, // 120% => 120 USD required
+            liquidation_threshold_bps: 11000,
+            status: ListingStatus::Open,
+            created_at: 1000,
+        },
+    );
+}
+
+#[test]
+fn test_borrow_token_6_decimals_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 2000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    nft_admin.mint(&contract_id, &1);
+
+    // 6-decimal token (e.g. USDC, 1 token = 1_000_000 units)
+    let col_id = env.register(MockDecimalToken, ());
+    let mock_client = MockDecimalTokenClient::new(&env, &col_id);
+    mock_client.initialize(&6);
+
+    let one_token_6 = 1_000_000_i128;
+    // Mint 15 USDC (15 * 10^6 = 15_000_000) to borrower
+    mock_client.mint(&borrower, &(15 * one_token_6));
+
+    env.as_contract(&contract_id, || {
+        setup_borrow_listing(&env, &contract_id, &lender, &nft_token, &col_id, "USDC");
+    });
+
+    // 12 USD required collateral (120% of 10 USD) = 12 * 10^6 = 12_000_000 base units
+    let position_id = client.borrow(&1, &borrower, &col_id, &(12 * one_token_6));
+
+    assert_eq!(position_id, 1);
+    assert_eq!(nft_token.balance(&borrower), 1);
+    assert_eq!(mock_client.balance(&contract_id), 12 * one_token_6);
+    assert_eq!(mock_client.balance(&borrower), 3 * one_token_6);
+}
+
+#[test]
+#[should_panic(expected = "Under-collateralized")]
+fn test_borrow_token_6_decimals_undercollateralized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    nft_admin.mint(&contract_id, &1);
+
+    let col_id = env.register(MockDecimalToken, ());
+    let mock_client = MockDecimalTokenClient::new(&env, &col_id);
+    mock_client.initialize(&6);
+
+    mock_client.mint(&borrower, &15_000_000);
+
+    env.as_contract(&contract_id, || {
+        setup_borrow_listing(&env, &contract_id, &lender, &nft_token, &col_id, "USDC");
+    });
+
+    // 11.999999 USDC < 12 USD required
+    client.borrow(&1, &borrower, &col_id, &11_999_999);
+}
+
+#[test]
+fn test_borrow_token_18_decimals_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 2000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    nft_admin.mint(&contract_id, &1);
+
+    // 18-decimal token (e.g. DAI / wrapped ETH, 1 token = 10^18 units)
+    let col_id = env.register(MockDecimalToken, ());
+    let mock_client = MockDecimalTokenClient::new(&env, &col_id);
+    mock_client.initialize(&18);
+
+    let one_token_18 = 1_000_000_000_000_000_000_i128;
+    // Mint 15 tokens (15 * 10^18)
+    mock_client.mint(&borrower, &(15 * one_token_18));
+
+    env.as_contract(&contract_id, || {
+        setup_borrow_listing(&env, &contract_id, &lender, &nft_token, &col_id, "DAI");
+    });
+
+    // 12 USD required collateral (120% of 10 USD) = 12 * 10^18 base units
+    let col_amount = 12 * one_token_18;
+    let position_id = client.borrow(&1, &borrower, &col_id, &col_amount);
+
+    assert_eq!(position_id, 1);
+    assert_eq!(nft_token.balance(&borrower), 1);
+    assert_eq!(mock_client.balance(&contract_id), col_amount);
+    assert_eq!(mock_client.balance(&borrower), 3 * one_token_18);
+}
+
+#[test]
+#[should_panic(expected = "Under-collateralized")]
+fn test_borrow_token_18_decimals_undercollateralized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    nft_admin.mint(&contract_id, &1);
+
+    let col_id = env.register(MockDecimalToken, ());
+    let mock_client = MockDecimalTokenClient::new(&env, &col_id);
+    mock_client.initialize(&18);
+
+    let one_token_18 = 1_000_000_000_000_000_000_i128;
+    mock_client.mint(&borrower, &(15 * one_token_18));
+
+    env.as_contract(&contract_id, || {
+        setup_borrow_listing(&env, &contract_id, &lender, &nft_token, &col_id, "DAI");
+    });
+
+    // 11.9 tokens < 12 USD required
+    let col_amount = (119 * one_token_18) / 10;
+    client.borrow(&1, &borrower, &col_id, &col_amount);
+}
+
+#[test]
+fn test_borrow_token_7_decimals_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 2000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    nft_admin.mint(&contract_id, &1);
+
+    // 7-decimal token (1 token = 10^7 units)
+    let col_id = env.register(MockDecimalToken, ());
+    let mock_client = MockDecimalTokenClient::new(&env, &col_id);
+    mock_client.initialize(&7);
+
+    let one_token_7 = 10_000_000_i128;
+    mock_client.mint(&borrower, &(15 * one_token_7));
+
+    env.as_contract(&contract_id, || {
+        setup_borrow_listing(&env, &contract_id, &lender, &nft_token, &col_id, "XLM");
+    });
+
+    // 12 USD required collateral = 12 * 10^7 base units
+    let col_amount = 12 * one_token_7;
+    let position_id = client.borrow(&1, &borrower, &col_id, &col_amount);
+
+    assert_eq!(position_id, 1);
+    assert_eq!(nft_token.balance(&borrower), 1);
+    assert_eq!(mock_client.balance(&contract_id), col_amount);
+    assert_eq!(mock_client.balance(&borrower), 3 * one_token_7);
 }
