@@ -11,6 +11,11 @@ jest.mock("@/context/WalletContext", () => ({
     disconnect: jest.fn(),
     isWrongNetwork: false,
     status: "disconnected",
+    notifications: {
+      notifications: [],
+      unreadCount: 0,
+      markAllAsRead: jest.fn(),
+    },
   }),
 }));
 

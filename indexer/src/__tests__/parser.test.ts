@@ -54,6 +54,12 @@ describe('parseMarketplaceEvent — topic mapping', () => {
     ['ofr_rjct', 'OFFER_REJECTED'],
     ['ofr_wdrn', 'OFFER_WITHDRAWN'],
     ['auc_crtd', 'AUCTION_CREATED'],
+    ['pos_liq', 'POSITION_LIQUIDATED'],
+    ['Liquidated', 'POSITION_LIQUIDATED'],
+    ['cur_wl', 'CURRENCY_WHITELISTED'],
+    ['CurrencyWhitelisted', 'CURRENCY_WHITELISTED'],
+    ['cur_rmv', 'CURRENCY_REMOVED'],
+    ['CurrencyRemoved', 'CURRENCY_REMOVED'],
   ];
 
   for (const [symbol, expectedType] of cases) {
@@ -167,6 +173,60 @@ describe('parseMarketplaceEvent — actor priority', () => {
   it('leaves actor as empty string when no known actor field present', () => {
     setupMocks('lst_updt', { listing_id: 1n, new_price: 500n });
     expect(parseMarketplaceEvent(['t'], 'v', 1)!.actor).toBe('');
+  });
+});
+
+// ── malformed / unrecognized events ──────────────────────────────────────────
+
+describe('parseMarketplaceEvent — malformed / unrecognized events', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockFromXDR.mockReturnValue({});
+  });
+
+  it('returns null when topics array is empty', () => {
+    // topics[0] is undefined → XDR parse fails → raw fallback is undefined
+    // → not in TOPIC_MAP → returns null
+    expect(parseMarketplaceEvent([], 'value_xdr', 1)).toBeNull();
+  });
+
+  it('returns null when topics[0] is undefined', () => {
+    expect(parseMarketplaceEvent([undefined as unknown as string], 'value_xdr', 1)).toBeNull();
+  });
+
+  it('returns null when value XDR is malformed (fromXDR throws)', () => {
+    // Topic parsing succeeds
+    mockFromXDR
+      .mockImplementationOnce(() => ({}))   // topic XDR
+      .mockImplementationOnce(() => { throw new Error('bad value XDR'); }); // value XDR
+    mockScValToNative.mockReturnValueOnce('lst_crtd'); // topic only, value never reached
+
+    expect(parseMarketplaceEvent(['topic_xdr'], 'BAD_VALUE_XDR', 1)).toBeNull();
+  });
+
+  it('returns null when value XDR is an empty string', () => {
+    mockFromXDR
+      .mockImplementationOnce(() => ({}))   // topic XDR
+      .mockImplementationOnce(() => { throw new Error('empty value XDR'); }); // value XDR
+    mockScValToNative.mockReturnValueOnce('lst_crtd');
+
+    expect(parseMarketplaceEvent(['topic_xdr'], '', 1)).toBeNull();
+  });
+
+  it('returns null when scValToNative throws on value parsing', () => {
+    mockFromXDR.mockReturnValueOnce({});   // topic XDR
+    mockScValToNative
+      .mockReturnValueOnce('lst_crtd')     // topic symbol
+      .mockImplementationOnce(() => { throw new Error('scValToNative failed'); }); // value
+
+    expect(parseMarketplaceEvent(['topic_xdr'], 'value_xdr', 1)).toBeNull();
+  });
+
+  it('returns null when topic XDR fails and raw fallback is unrecognized', () => {
+    mockFromXDR.mockImplementationOnce(() => { throw new Error('bad topic XDR'); });
+    // No scValToNative call for topic because the catch block uses raw fallback
+
+    expect(parseMarketplaceEvent(['unknown_raw_topic'], 'value_xdr', 1)).toBeNull();
   });
 });
 

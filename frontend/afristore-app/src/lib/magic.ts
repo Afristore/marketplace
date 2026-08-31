@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import { Magic } from "magic-sdk";
+import { isE2eMockChain } from "@/lib/e2e-chain-mock";
 
 const MAGIC_API_KEY = process.env.NEXT_PUBLIC_MAGIC_API_KEY;
 
@@ -14,10 +15,21 @@ if (!MAGIC_API_KEY) {
 
 let magicInstance: Magic | null = null;
 
+const E2E_LOGIN_KEY = "e2e_magic_logged_in";
+const E2E_EMAIL_KEY = "e2e_magic_email";
+const E2E_ADDRESS_KEY = "e2e_magic_public_address";
+const E2E_MOCK_PUBLIC_ADDRESS =
+  "GBVFEOFMZAUI7WVPDMGTQZ3BO63BKGKVFKFKMLMDAZDCIYB2MZZXKVW";
+
 /**
  * Get or create the Magic instance
  */
 export function getMagicInstance(): Magic {
+  if (isE2eMockChain()) {
+    throw new Error(
+      "Magic SDK is unavailable in E2E mock mode.",
+    );
+  }
   if (!magicInstance && MAGIC_API_KEY) {
     magicInstance = new Magic(MAGIC_API_KEY);
   }
@@ -39,6 +51,10 @@ export interface MagicAccount {
  * Check if user is logged in with Magic
  */
 export async function isMagicLoggedIn(): Promise<boolean> {
+  if (isE2eMockChain()) {
+    if (typeof window === "undefined") return false;
+    return sessionStorage.getItem(E2E_LOGIN_KEY) === "true";
+  }
   try {
     const magic = getMagicInstance();
     return await magic.user.isLoggedIn();
@@ -52,16 +68,24 @@ export async function isMagicLoggedIn(): Promise<boolean> {
  * Login with email using Magic Link
  */
 export async function loginWithMagicLink(email: string): Promise<MagicAccount> {
+  if (isE2eMockChain()) {
+    const account: MagicAccount = {
+      email,
+      publicAddress: E2E_MOCK_PUBLIC_ADDRESS,
+      isLoggedIn: true,
+    };
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem(E2E_LOGIN_KEY, "true");
+      sessionStorage.setItem(E2E_EMAIL_KEY, email);
+      sessionStorage.setItem(E2E_ADDRESS_KEY, E2E_MOCK_PUBLIC_ADDRESS);
+    }
+    return account;
+  }
   try {
     const magic = getMagicInstance();
-
-    // Send magic link to email
-    const didToken = await magic.auth.loginWithMagicLink({ email });
-
-    // Get user metadata
+    await magic.auth.loginWithMagicLink({ email });
     const userMetadata = await magic.user.getInfo();
 
-    // The Magic SDK might return different property names
     const publicAddress =
       (userMetadata as any).publicAddress ||
       (userMetadata as any).walletAddress ||
@@ -86,10 +110,22 @@ export async function loginWithMagicLink(email: string): Promise<MagicAccount> {
  * Login with passkey using Magic
  */
 export async function loginWithPasskey(): Promise<MagicAccount> {
+  if (isE2eMockChain()) {
+    const account: MagicAccount = {
+      email: "passkey-user",
+      publicAddress: E2E_MOCK_PUBLIC_ADDRESS,
+      isLoggedIn: true,
+    };
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem(E2E_LOGIN_KEY, "true");
+      sessionStorage.setItem(E2E_EMAIL_KEY, "passkey-user");
+      sessionStorage.setItem(E2E_ADDRESS_KEY, E2E_MOCK_PUBLIC_ADDRESS);
+    }
+    return account;
+  }
   try {
     const magic = getMagicInstance();
 
-    // Attempt passkey login (if available)
     let didToken;
     try {
       didToken = await (magic.auth as any).loginWithPasskey?.();
@@ -97,10 +133,8 @@ export async function loginWithPasskey(): Promise<MagicAccount> {
       throw new Error("Passkey login is not available or failed");
     }
 
-    // Get user metadata
     const userMetadata = await magic.user.getInfo();
 
-    // The Magic SDK might return different property names
     const publicAddress =
       (userMetadata as any).publicAddress ||
       (userMetadata as any).walletAddress ||
@@ -125,6 +159,16 @@ export async function loginWithPasskey(): Promise<MagicAccount> {
  * Get current Magic user metadata
  */
 export async function getMagicUserMetadata(): Promise<MagicAccount | null> {
+  if (isE2eMockChain()) {
+    if (typeof window === "undefined") return null;
+    const isLoggedIn = sessionStorage.getItem(E2E_LOGIN_KEY) === "true";
+    if (!isLoggedIn) return null;
+    return {
+      email: sessionStorage.getItem(E2E_EMAIL_KEY) || "unknown",
+      publicAddress: sessionStorage.getItem(E2E_ADDRESS_KEY) || "",
+      isLoggedIn: true,
+    };
+  }
   try {
     const magic = getMagicInstance();
     const isLoggedIn = await magic.user.isLoggedIn();
@@ -135,7 +179,6 @@ export async function getMagicUserMetadata(): Promise<MagicAccount | null> {
 
     const userMetadata = await magic.user.getInfo();
 
-    // The Magic SDK might return different property names
     const publicAddress =
       (userMetadata as any).publicAddress ||
       (userMetadata as any).walletAddress ||
@@ -157,6 +200,14 @@ export async function getMagicUserMetadata(): Promise<MagicAccount | null> {
  * Logout from Magic
  */
 export async function logoutFromMagic(): Promise<void> {
+  if (isE2eMockChain()) {
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem(E2E_LOGIN_KEY);
+      sessionStorage.removeItem(E2E_EMAIL_KEY);
+      sessionStorage.removeItem(E2E_ADDRESS_KEY);
+    }
+    return;
+  }
   try {
     const magic = getMagicInstance();
     await magic.user.logout();

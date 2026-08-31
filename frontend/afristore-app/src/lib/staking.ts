@@ -13,6 +13,18 @@ import {
 import { config } from "./config";
 import { getConnectedPublicKey, signWithFreighter } from "./freighter";
 import { mapSorobanErrorMessage } from "./errors";
+import {
+  isE2eMockChain,
+  e2eMockStake,
+  e2eMockUnstake,
+  e2eMockClaimRewards,
+  e2eMockCalculateRewards,
+  e2eMockGetStakingPoolConfig,
+  e2eMockTotalStaked,
+  e2eMockGetUserStakes,
+  e2eMockGetStakedPosition,
+  registerE2eMockListingsOnWindow,
+} from "./e2e-chain-mock";
 
 export interface StakedPosition {
   owner: string;
@@ -142,6 +154,11 @@ export async function stake(
   tokenId: number,
   poolContractId?: string,
 ): Promise<void> {
+  if (isE2eMockChain()) {
+    if (typeof window !== "undefined") registerE2eMockListingsOnWindow();
+    e2eMockStake(userPublicKey, tokenAddress, tokenId);
+    return;
+  }
   const args: xdr.ScVal[] = [
     new Address(userPublicKey).toScVal(),
     new Address(tokenAddress).toScVal(),
@@ -156,6 +173,11 @@ export async function unstake(
   tokenId: number,
   poolContractId?: string,
 ): Promise<void> {
+  if (isE2eMockChain()) {
+    if (typeof window !== "undefined") registerE2eMockListingsOnWindow();
+    e2eMockUnstake(userPublicKey, tokenAddress, tokenId);
+    return;
+  }
   const args: xdr.ScVal[] = [
     new Address(userPublicKey).toScVal(),
     new Address(tokenAddress).toScVal(),
@@ -168,6 +190,10 @@ export async function claimRewards(
   userPublicKey: string,
   poolContractId?: string,
 ): Promise<number> {
+  if (isE2eMockChain()) {
+    if (typeof window !== "undefined") registerE2eMockListingsOnWindow();
+    return e2eMockClaimRewards(userPublicKey);
+  }
   const args: xdr.ScVal[] = [new Address(userPublicKey).toScVal()];
   const retVal = await invokeStakingContract(
     userPublicKey,
@@ -185,6 +211,17 @@ export async function getStakedPosition(
   tokenId: number,
   poolContractId?: string,
 ): Promise<StakedPosition | null> {
+  if (isE2eMockChain()) {
+    const pos = e2eMockGetStakedPosition(userPublicKey, tokenAddress, tokenId);
+    if (!pos) return null;
+    return {
+      owner: pos.owner,
+      token_address: pos.token_address,
+      token_id: pos.token_id,
+      staked_at: pos.staked_at,
+      rewards_earned: pos.rewards_earned,
+    };
+  }
   const caller = await getConnectedPublicKey();
   const pk = caller ?? userPublicKey;
   const retVal = await invokeStakingContract(
@@ -214,6 +251,15 @@ export async function getUserStakes(
   userPublicKey: string,
   poolContractId?: string,
 ): Promise<StakedPosition[]> {
+  if (isE2eMockChain()) {
+    return e2eMockGetUserStakes(userPublicKey).map((p) => ({
+      owner: p.owner,
+      token_address: p.token_address,
+      token_id: p.token_id,
+      staked_at: p.staked_at,
+      rewards_earned: p.rewards_earned,
+    }));
+  }
   const caller = await getConnectedPublicKey();
   const pk = caller ?? userPublicKey;
   const retVal = await invokeStakingContract(
@@ -237,6 +283,9 @@ export async function calculateRewards(
   userPublicKey: string,
   poolContractId?: string,
 ): Promise<number> {
+  if (isE2eMockChain()) {
+    return e2eMockCalculateRewards(userPublicKey);
+  }
   const caller = await getConnectedPublicKey();
   const pk = caller ?? userPublicKey;
   const retVal = await invokeStakingContract(
@@ -252,6 +301,7 @@ export async function calculateRewards(
 export async function isStakingPaused(
   poolContractId?: string,
 ): Promise<boolean> {
+  if (isE2eMockChain()) return false;
   const caller = await getConnectedPublicKey();
   if (!caller) return false;
   const retVal = await invokeStakingContract(
@@ -265,6 +315,9 @@ export async function isStakingPaused(
 }
 
 export async function totalStaked(poolContractId?: string): Promise<number> {
+  if (isE2eMockChain()) {
+    return e2eMockTotalStaked(poolContractId || "");
+  }
   const caller = await getConnectedPublicKey();
   if (!caller) return 0;
   const retVal = await invokeStakingContract(
@@ -280,6 +333,14 @@ export async function totalStaked(poolContractId?: string): Promise<number> {
 export async function getStakingPoolConfig(
   poolContractId: string,
 ): Promise<StakingPoolConfig> {
+  if (isE2eMockChain()) {
+    const mock = e2eMockGetStakingPoolConfig(poolContractId);
+    return {
+      nftAddress: mock.nftAddress,
+      rewardToken: mock.rewardToken,
+      rewardRate: mock.rewardRate,
+    };
+  }
   const DUMMY_KEY =
     "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
 

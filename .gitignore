@@ -30,3 +30,14 @@ Thumbs.db
 **/test_snapshots/
 **/issues.md
 fix.md
+
+# mimo AI tooling outputs
+.mimo/
+**/.mimo/
+mimo-session*.json
+mimo-context*.json
+mimo_*.log
+.mimoignore
+
+issue.md
+pr.md

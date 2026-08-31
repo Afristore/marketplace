@@ -525,6 +525,31 @@ fn update_royalty_changes_receiver_and_bps() {
     assert_eq!(bps, 250u32);
 }
 
+#[test]
+fn update_royalty_fails_if_not_creator() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+
+    let contract_id = env.register(NormalNFT721, ());
+    let client = NormalNFT721Client::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let royalty_receiver = Address::generate(&env);
+
+    client.initialize(
+        &creator,
+        &String::from_str(&env, "Test Collection 721"),
+        &String::from_str(&env, "T721"),
+        &1_000u64,
+        &500u32,
+        &royalty_receiver,
+    );
+
+    let new_receiver = Address::generate(&env);
+    let result = client.try_update_royalty(&new_receiver, &250u32);
+    assert!(result.is_err());
+}
+
 // ── Balance corruption fix test ───────────────────────────────────────────────
 
 #[test]

@@ -29,12 +29,14 @@ model Listing {
   amount          Int      @default(1)
   token           String
   metadataCid     String?
+  category        String?  // Art category denormalized from IPFS metadata for server-side filtering
   status          String   // "Active", "Sold", "Cancelled", "Auction"
   recipients      Json?
   createdAtLedger Int
   updatedAtLedger Int
   @@index([artist])
   @@index([status])
+  @@index([category])
   @@index([updatedAtLedger])
 }
 
@@ -123,3 +125,81 @@ model UserPreferences {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 }
+
+model LendingListing {
+  listingId                 BigInt   @id
+  lender                    String
+  nftContract               String
+  tokenId                   BigInt
+  declaredPriceUsd          Decimal  @db.Decimal(32, 7)
+  interestScheduleBps       Int[]
+  maxDurationDays           Int
+  minCollateralBufferBps    Int
+  liquidationThresholdBps   Int
+  status                    String   // "Open", "Filled", "Cancelled"
+  createdAtLedger           Int
+  updatedAtLedger           Int
+  @@index([lender])
+  @@index([status])
+  @@index([updatedAtLedger])
+}
+
+model LendingPosition {
+  positionId                BigInt   @id
+  listingId                 BigInt
+  borrower                  String
+  lender                    String
+  nftContract               String
+  tokenId                   BigInt
+  declaredPriceUsd          Decimal  @db.Decimal(32, 7)
+  collateralCurrency        String
+  collateralAmount          Decimal  @db.Decimal(32, 7)
+  interestScheduleBps       Int[]
+  liquidationThresholdBps   Int
+  startTime                 BigInt
+  maxDurationSecs           BigInt
+  status                    String   // "Active", "Returned", "Liquidated"
+  liquidator                String?
+  liquidatorBounty          Decimal? @db.Decimal(32, 7)
+  lenderPayout              Decimal? @db.Decimal(32, 7)
+  platformFee               Decimal? @db.Decimal(32, 7)
+  borrowerRefund            Decimal? @db.Decimal(32, 7)
+  createdAtLedger           Int
+  updatedAtLedger           Int
+  @@index([borrower])
+  @@index([lender])
+  @@index([listingId])
+  @@index([status])
+  @@index([updatedAtLedger])
+}
+
+model WhitelistedCurrency {
+  address         String   @id
+  symbol          String?
+  name            String?
+  decimals        Int      @default(7)
+  enabled         Boolean  @default(true)
+  addedAtLedger   Int
+  updatedAtLedger Int
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([enabled])
+}
+
+model LendingConfig {
+  id                    Int      @id @default(1)
+  admin                 String
+  feeReceiver           String
+  platformFeeBps        Int
+  liquidatorFeeBps      Int
+  minBufferBps          Int
+  maxBufferBps          Int
+  minLiqThresholdBps    Int
+  maxLiqThresholdBps    Int
+  oracleAddress         String
+  maxPriceStalenessSecs BigInt
+  updatedAtLedger       Int
+  updatedAt             DateTime @updatedAt
+}
+

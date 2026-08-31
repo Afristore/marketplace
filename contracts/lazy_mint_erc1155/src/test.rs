@@ -621,3 +621,24 @@ fn burn_with_missing_total_supply_key_returns_zero_not_amount() {
     // total_supply must be 0, not 3 (the old unwrap_or(amount) result).
     assert_eq!(client.total_supply(&token_id), 0u128);
 }
+
+#[test]
+fn update_royalty_changes_receiver_and_bps() {
+    let (env, client, _, _, _) = setup_env();
+    env.mock_all_auths();
+    let new_receiver = Address::generate(&env);
+
+    client.update_royalty(&new_receiver, &250u32);
+    let (recv, bps) = client.royalty_info();
+    assert_eq!(recv, new_receiver);
+    assert_eq!(bps, 250u32);
+}
+
+#[test]
+fn update_royalty_fails_if_not_creator() {
+    let (env, client, _, _, _) = setup_env();
+    // Do NOT call env.mock_all_auths()
+    let new_receiver = Address::generate(&env);
+    let result = client.try_update_royalty(&new_receiver, &250u32);
+    assert!(result.is_err());
+}

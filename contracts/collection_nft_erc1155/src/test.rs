@@ -273,3 +273,37 @@ fn burn_with_missing_total_supply_key_returns_zero_not_amount() {
     // total_supply must be 0, not 3 (the old unwrap_or(amount) result).
     assert_eq!(client.total_supply(&token_id), 0u128);
 }
+
+#[test]
+fn update_royalty_changes_receiver_and_bps() {
+    let (env, client, _, _) = setup();
+    let new_receiver = Address::generate(&env);
+
+    client.update_royalty(&new_receiver, &250u32);
+    let (recv, bps) = client.royalty_info();
+    assert_eq!(recv, new_receiver);
+    assert_eq!(bps, 250u32);
+}
+
+#[test]
+fn update_royalty_fails_if_not_creator() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+
+    let contract_id = env.register(NormalNFT1155, ());
+    let client = NormalNFT1155Client::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let royalty_receiver = Address::generate(&env);
+
+    client.initialize(
+        &creator,
+        &String::from_str(&env, "Test 1155"),
+        &500u32,
+        &royalty_receiver,
+    );
+
+    let new_receiver = Address::generate(&env);
+    let result = client.try_update_royalty(&new_receiver, &250u32);
+    assert!(result.is_err());
+}

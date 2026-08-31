@@ -25,6 +25,9 @@ import {
   e2eMockBuyArtwork,
   getE2eMockListings,
   registerE2eMockListingsOnWindow,
+  e2eMockPlaceBid,
+  e2eMockFinalizeAuction,
+  getE2eMockAuction,
 } from "./e2e-chain-mock";
 import {
   DEFAULT_TOKEN,
@@ -616,6 +619,11 @@ export async function placeBid(
   auctionId: number,
   amountXlm: number,
 ): Promise<boolean> {
+  if (isE2eMockChain()) {
+    if (typeof window !== "undefined") registerE2eMockListingsOnWindow();
+    return e2eMockPlaceBid(bidderPublicKey, auctionId, amountXlm);
+  }
+
   const amountStroops = xlmToStroops(amountXlm);
 
   const args: xdr.ScVal[] = [
@@ -635,6 +643,11 @@ export async function finalizeAuction(
   callerPublicKey: string,
   auctionId: number,
 ): Promise<boolean> {
+  if (isE2eMockChain()) {
+    if (typeof window !== "undefined") registerE2eMockListingsOnWindow();
+    return e2eMockFinalizeAuction(callerPublicKey, auctionId);
+  }
+
   const args: xdr.ScVal[] = [
     new Address(callerPublicKey).toScVal(),
     nativeToScVal(BigInt(auctionId), { type: "u64" }),
@@ -648,6 +661,11 @@ export async function finalizeAuction(
  * get_auction — Fetch a single auction by ID (read-only).
  */
 export async function getAuction(auctionId: number): Promise<Auction> {
+  if (isE2eMockChain()) {
+    if (typeof window !== "undefined") registerE2eMockListingsOnWindow();
+    return getE2eMockAuction(auctionId);
+  }
+
   const callerPublicKey = await getReadOnlyCallerPublicKey();
 
   const args: xdr.ScVal[] = [nativeToScVal(BigInt(auctionId), { type: "u64" })];

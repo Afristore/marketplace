@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { X, CreditCard, Wallet, Loader2 } from "lucide-react";
+import { X, CreditCard, Wallet, Loader2, CheckCircle } from "lucide-react";
 import { Listing, stroopsToXlm } from "@/lib/contract";
 import posthog from "posthog-js";
 
@@ -24,12 +24,19 @@ export function CheckoutModal({
 }: CheckoutModalProps) {
   const [method, setMethod] = useState<"crypto" | "fiat">("crypto");
   const [quantity, setQuantity] = useState(1);
+  const [purchased, setPurchased] = useState(false);
 
   if (!isOpen) return null;
 
   const priceXlm = Number(stroopsToXlm(listing.price));
   const totalPriceXlm = priceXlm * quantity;
   const estimatedFiat = (totalPriceXlm * 0.12).toFixed(2);
+
+  const handleClose = () => {
+    setPurchased(false);
+    setQuantity(1);
+    onClose();
+  };
 
   const handleCryptoPurchase = async () => {
     const success = await onCryptoPurchase();
@@ -41,15 +48,48 @@ export function CheckoutModal({
         method: "crypto",
       });
       onPurchased?.();
-      onClose();
+      setPurchased(true);
     }
   };
+
+  if (purchased) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div
+          className="absolute inset-0 bg-midnight-950/80 backdrop-blur-sm"
+          onClick={handleClose}
+        />
+        <div
+          data-testid="purchase-success-modal"
+          className="relative flex w-full max-w-md flex-col items-center gap-6 overflow-hidden rounded-3xl bg-white p-10 text-center shadow-2xl animate-scale-in"
+        >
+          <div className="rounded-full bg-green-50 p-4">
+            <CheckCircle size={56} className="text-green-500" />
+          </div>
+          <div className="space-y-2">
+            <h2 className="font-display text-2xl font-bold text-gray-900">
+              Purchase Successful!
+            </h2>
+            <p className="font-inter text-gray-500">
+              You now own this artwork for {totalPriceXlm} XLM.
+            </p>
+          </div>
+          <button
+            onClick={handleClose}
+            className="w-full rounded-2xl bg-brand-500 py-4 text-lg font-bold text-white shadow-lg shadow-brand-500/20 transition-all hover:bg-brand-600"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
         className="absolute inset-0 bg-midnight-950/80 backdrop-blur-sm"
-        onClick={onClose}
+        onClick={handleClose}
       />
       <div className="relative w-full max-w-md overflow-hidden rounded-3xl bg-white shadow-2xl animate-scale-in">
         {/* Header */}
@@ -58,7 +98,7 @@ export function CheckoutModal({
             Checkout
           </h2>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="rounded-full p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-900 transition"
           >
             <X size={20} />
