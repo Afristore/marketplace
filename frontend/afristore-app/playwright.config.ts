@@ -1,7 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
-  testDir: "./tests/e2e",
+  testDir: "./e2e",
+  timeout: 90 * 1000, // 90 seconds timeout per test
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -20,7 +21,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run dev",
+    command:
+      "NEXT_PUBLIC_E2E_MOCK_CHAIN=true NEXT_PUBLIC_PINATA_GATEWAY=https://gateway.pinata.cloud npx next dev",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,

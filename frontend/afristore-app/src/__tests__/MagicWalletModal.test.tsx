@@ -17,17 +17,19 @@ let mockError: string | null = null;
 let mockEmail: string | null = null;
 let mockPublicAddress: string | null = null;
 
-jest.mock("@/hooks/useMagicWallet", () => ({
-  useMagicWallet: () => ({
-    status: mockStatus,
-    isConnecting: false,
-    error: mockError,
-    email: mockEmail,
-    publicAddress: mockPublicAddress,
-    loginWithEmail: mockLoginWithEmail,
-    loginWithPasskey: mockLoginWithPasskey,
-    logout: mockLogout,
-    refresh: mockRefresh,
+jest.mock("@/context/WalletContext", () => ({
+  useWalletContext: () => ({
+    magic: {
+      status: mockStatus,
+      isConnecting: false,
+      error: mockError,
+      email: mockEmail,
+      publicAddress: mockPublicAddress,
+      loginWithEmail: mockLoginWithEmail,
+      loginWithPasskey: mockLoginWithPasskey,
+      logout: mockLogout,
+      refresh: mockRefresh,
+    },
   }),
 }));
 

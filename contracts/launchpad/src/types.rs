@@ -11,6 +11,8 @@ pub enum Error {
     StakingPoolAlreadyExists = 5,
     PlatformFeeTokenNotSet = 6,
     InvalidCurrency = 7,
+    EmptyName = 8,
+    SymbolTooLong = 9,
 }
 
 /// Which of the four collection types was deployed.

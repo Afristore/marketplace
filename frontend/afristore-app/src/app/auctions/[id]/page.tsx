@@ -128,6 +128,7 @@ export default function AuctionDetailPage() {
   const [activeTab, setActiveTab] = useState<"details" | "bids">("details");
   const [bidAmountXlm, setBidAmountXlm] = useState("");
   const [bidSuccess, setBidSuccess] = useState(false);
+  const [outbidNotice, setOutbidNotice] = useState<string | null>(null);
   const [finalizeSuccess, setFinalizeSuccess] = useState(false);
 
   const { bid, isBidding, error: bidError } = usePlaceBid(publicKey);
@@ -166,10 +167,18 @@ export default function AuctionDetailPage() {
     if (!auction) return;
     const amountXlm = parseFloat(bidAmountXlm);
     if (!amountXlm || amountXlm <= 0) return;
+    const previousBidder = auction.highest_bidder;
     const ok = await bid(auction.auction_id, amountXlm);
     if (ok) {
       setBidSuccess(true);
       setBidAmountXlm("");
+      if (previousBidder && previousBidder !== publicKey) {
+        setOutbidNotice(
+          `Outbid notification: Outbid previous bidder (${previousBidder.slice(0, 8)}…)`,
+        );
+      } else {
+        setOutbidNotice(null);
+      }
       setTimeout(() => setBidSuccess(false), 3000);
       loadData();
     }
@@ -189,8 +198,11 @@ export default function AuctionDetailPage() {
   const isActive = auction?.status === "Active";
   const isFinalized = auction?.status === "Finalized";
   const isCancelled = auction?.status === "Cancelled";
-  const canFinalize = isActive && isExpired;
+  const isOwn = auction ? publicKey === auction.creator : false;
+  const canFinalize = isActive && isExpired && isOwn;
   const canBid = isActive && !isExpired;
+  const minutesRemaining = auction ? Math.floor(Math.max(0, auction.end_time - now) / 60) : 0;
+  const isEndingSoon = isActive && !isExpired && minutesRemaining > 0 && minutesRemaining <= 60;
 
   const imageUrl = metadata?.image ? cidToGatewayUrl(metadata.image) : null;
   const highestBidXlm = auction ? stroopsToXlm(auction.highest_bid) : "0";
@@ -303,6 +315,12 @@ export default function AuctionDetailPage() {
                   Time Remaining
                 </p>
                 <Countdown endTime={auction.end_time} />
+                {isEndingSoon && (
+                  <div className="mt-3 flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-sm font-bold text-red-600 animate-pulse border border-red-200">
+                    <Clock size={14} />
+                    Ending Soon — {minutesRemaining} min remaining
+                  </div>
+                )}
               </div>
             )}
 
@@ -369,6 +387,14 @@ export default function AuctionDetailPage() {
                 {bidSuccess && (
                   <p className="flex items-center gap-1 text-xs text-green-600">
                     <CheckCircle2 size={13} /> Bid placed successfully!
+                  </p>
+                )}
+                {outbidNotice && (
+                  <p
+                    data-testid="outbid-notification"
+                    className="flex items-center gap-1 text-xs text-amber-600 font-medium"
+                  >
+                    <AlertCircle size={13} /> {outbidNotice}
                   </p>
                 )}
               </div>

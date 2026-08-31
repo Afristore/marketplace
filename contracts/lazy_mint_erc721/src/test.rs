@@ -292,3 +292,53 @@ fn test_voucher_expired_returns_proper_error() {
 
     assert_eq!(result, Err(Ok(Error::VoucherExpired)));
 }
+
+#[test]
+fn update_royalty_changes_receiver_and_bps() {
+    let (env, client, creator) = setup_test();
+    let pubkey = BytesN::from_array(&env, &[0u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+
+    client.initialize(
+        &creator,
+        &pubkey,
+        &String::from_str(&env, "Token Name"),
+        &String::from_str(&env, "TKN"),
+        &1000u64,
+        &500u32,
+        &royalty_receiver,
+    );
+
+    let new_receiver = Address::generate(&env);
+    client.update_royalty(&new_receiver, &250u32);
+    let (recv, bps) = client.royalty_info();
+    assert_eq!(recv, new_receiver);
+    assert_eq!(bps, 250u32);
+}
+
+#[test]
+fn update_royalty_fails_if_not_creator() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+
+    let contract_id = env.register(LazyMint721, ());
+    let client = LazyMint721Client::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let pubkey = BytesN::from_array(&env, &[0u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+
+    client.initialize(
+        &creator,
+        &pubkey,
+        &String::from_str(&env, "Token Name"),
+        &String::from_str(&env, "TKN"),
+        &1000u64,
+        &500u32,
+        &royalty_receiver,
+    );
+
+    let new_receiver = Address::generate(&env);
+    let result = client.try_update_royalty(&new_receiver, &250u32);
+    assert!(result.is_err());
+}

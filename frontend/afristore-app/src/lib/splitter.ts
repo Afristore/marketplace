@@ -12,6 +12,10 @@ import {
 import { config } from "./config";
 import { signWithFreighter } from "./freighter";
 import { mapSorobanErrorMessage } from "./errors";
+import {
+  e2eMockDeployRoyaltySplitter,
+  isE2eMockChain,
+} from "./e2e-chain-mock";
 
 export interface SplitterRecipient {
   address: string;
@@ -105,6 +109,10 @@ export async function deployRoyaltySplitter(
   deployerPublicKey: string,
   recipients: SplitterRecipient[],
 ): Promise<string> {
+  if (isE2eMockChain()) {
+    return e2eMockDeployRoyaltySplitter(deployerPublicKey, recipients);
+  }
+
   const wasmHashHex = config.splitterWasmHash;
   if (!wasmHashHex) {
     throw new Error(

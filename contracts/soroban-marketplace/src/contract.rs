@@ -603,14 +603,18 @@ impl MarketplaceContract {
         }
 
         // Enforce minimum bid increment to prevent griefing.
-        // If there's an existing bid, the new bid must be at least 5% higher.
-        // Otherwise, it must meet the reserve price.
+        // If there's an existing bid, the new bid must be strictly greater than
+        // the current highest bid AND at least 5% higher. Otherwise, it must
+        // meet the reserve price.
         let min_bid = if auction.highest_bid > 0 {
             auction.highest_bid + (auction.highest_bid * 5 / 100)
         } else {
             auction.reserve_price
         };
-        if amount < min_bid {
+        // The `amount <= auction.highest_bid` guard closes the griefing gap where
+        // `highest_bid * 5 / 100` truncates to 0 for small bids, making
+        // `min_bid == highest_bid` and allowing a replacement at the same price.
+        if amount <= auction.highest_bid || amount < min_bid {
             panic_with_error!(&env, MarketplaceError::BidTooLow)
         }
 

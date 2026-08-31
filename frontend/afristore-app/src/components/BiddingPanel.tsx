@@ -69,12 +69,13 @@ export function BiddingPanel({
     error: finalizeError,
   } = useFinalizeAuction(publicKey);
 
-  const { days, hours, minutes, seconds, isExpired } = useCountdown(
+  const { days, hours, minutes, seconds, remaining, isExpired } = useCountdown(
     auction.end_time,
   );
 
   const [bidAmount, setBidAmount] = useState("");
   const [bidSuccess, setBidSuccess] = useState(false);
+  const [outbidNotice, setOutbidNotice] = useState<string | null>(null);
 
   const currentBidXlm = parseFloat(stroopsToXlm(auction.highest_bid));
   const reserveXlm = parseFloat(stroopsToXlm(auction.reserve_price));
@@ -86,7 +87,9 @@ export function BiddingPanel({
   const isOwn = publicKey === auction.creator;
   const isActive = auction.status === "Active";
   const canBid = isActive && !isExpired && !isOwn;
-  const canFinalize = isActive && isExpired;
+  const canFinalize = isActive && isExpired && isOwn;
+  const minutesRemaining = Math.floor(remaining / 60);
+  const isEndingSoon = isActive && !isExpired && minutesRemaining > 0 && minutesRemaining <= 60;
 
   const bidValidation = useMemo(() => {
     const amount = parseFloat(bidAmount);
@@ -103,10 +106,18 @@ export function BiddingPanel({
     const amount = parseFloat(bidAmount);
     if (isNaN(amount) || bidValidation) return;
 
+    const previousBidder = auction.highest_bidder;
     const success = await bid(auction.auction_id, amount);
     if (success) {
       setBidSuccess(true);
       setBidAmount("");
+      if (previousBidder && previousBidder !== publicKey) {
+        setOutbidNotice(
+          `Outbid notification: Outbid previous bidder ${truncateAddress(previousBidder)}`,
+        );
+      } else {
+        setOutbidNotice(null);
+      }
       onBidPlaced?.();
     }
   };
@@ -145,9 +156,21 @@ export function BiddingPanel({
         {isActive && isExpired && (
           <span className="text-xs font-semibold text-red-500">Expired</span>
         )}
+
+        {isEndingSoon && (
+          <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-600 animate-pulse">
+            Ending Soon
+          </span>
+        )}
       </div>
 
-      {/* Countdown (large display for active auctions) */}
+      {/* Ending Soon / Countdown (large display for active auctions) */}
+      {isEndingSoon && (
+        <div className="flex items-center justify-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-sm font-bold text-red-600 animate-pulse border border-red-200">
+          <Clock size={14} />
+          Ending Soon — {minutesRemaining} min remaining
+        </div>
+      )}
       {isActive && !isExpired && (
         <div className="grid grid-cols-4 gap-2 text-center">
           {[
@@ -205,6 +228,17 @@ export function BiddingPanel({
         <div className="flex items-center gap-2 rounded-lg bg-green-100 px-3 py-2 text-sm font-medium text-green-700">
           <CheckCircle size={16} />
           Bid placed successfully!
+        </div>
+      )}
+
+      {/* Outbid notification */}
+      {outbidNotice && (
+        <div
+          data-testid="outbid-notification"
+          className="flex items-center gap-2 rounded-lg bg-amber-100 px-3 py-2 text-sm font-medium text-amber-800"
+        >
+          <AlertCircle size={16} />
+          {outbidNotice}
         </div>
       )}
 

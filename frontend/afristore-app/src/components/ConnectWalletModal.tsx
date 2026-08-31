@@ -39,6 +39,10 @@ export function ConnectWalletModal({
 
   const [showMagicModal, setShowMagicModal] = useState(false);
 
+  const isE2E =
+    typeof process !== "undefined" &&
+    process.env.NEXT_PUBLIC_E2E_MOCK_CHAIN === "true";
+
   // Give auto-detection some time before showing "Not Installed"
   useEffect(() => {
     if (status !== "NOT_INSTALLED") {
@@ -49,10 +53,14 @@ export function ConnectWalletModal({
     return () => clearTimeout(timer);
   }, [status]);
 
-  // Close when connected
+  // Close when connected (Freighter or Magic)
   useEffect(() => {
     if (status === "CONNECTED" && hasStartedConnect) {
       posthog.capture("Wallet Connected");
+      const timer = setTimeout(onClose, 1000);
+      return () => clearTimeout(timer);
+    }
+    if (status === "MAGIC_CONNECTED") {
       const timer = setTimeout(onClose, 1000);
       return () => clearTimeout(timer);
     }
@@ -207,10 +215,11 @@ export function ConnectWalletModal({
                   </button>
 
                   <button
-                    disabled
-                    className="group relative flex w-full items-center gap-4 rounded-2xl border-2 border-gray-100 p-4 opacity-60 cursor-not-allowed transition-all duration-300"
+                    disabled={!isE2E}
+                    onClick={() => setShowMagicModal(true)}
+                    className="group relative flex w-full items-center gap-4 rounded-2xl border-2 border-gray-100 p-4 hover:border-brand-300 hover:bg-brand-50/30 transition-all duration-300 disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gray-200 text-gray-400">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-brand-100 text-brand-600 group-hover:bg-brand-500 group-hover:text-white transition-colors">
                       <Mail size={24} />
                     </div>
                     <div className="text-left">
@@ -219,9 +228,11 @@ export function ConnectWalletModal({
                       </p>
                       <p className="text-xs text-gray-500">Email or Passkey</p>
                     </div>
-                    <span className="absolute right-4 text-[10px] font-bold uppercase tracking-wider text-brand-600 bg-brand-100 px-2 py-0.5 rounded-full">
-                      Coming Soon
-                    </span>
+                    {!isE2E && (
+                      <span className="absolute right-4 text-[10px] font-bold uppercase tracking-wider text-brand-600 bg-brand-100 px-2 py-0.5 rounded-full">
+                        Coming Soon
+                      </span>
+                    )}
                   </button>
 
                   <div className="relative py-2">

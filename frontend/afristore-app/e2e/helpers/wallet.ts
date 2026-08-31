@@ -10,7 +10,7 @@ export async function connectFreighterWallet(
   await page.waitForLoadState("domcontentloaded");
 
   const shortKey = `${publicKey.slice(0, 4)}…${publicKey.slice(-4)}`;
-  await expect(page.getByText(shortKey)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(shortKey).first()).toBeVisible({ timeout: 15_000 });
 }
 
 export async function openNewListingTab(page: Page) {
