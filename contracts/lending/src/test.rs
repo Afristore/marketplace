@@ -94,6 +94,69 @@ fn test_cancel_listing_not_open() {
 }
 
 #[test]
+#[should_panic(expected = "max_duration_days must be greater than zero")]
+fn test_borrow_zero_max_duration_days_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 2000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let oracle_address = Address::generate(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    let (col_token, col_admin) = create_token(&env, &admin);
+
+    nft_admin.mint(&contract_id, &1);
+    col_admin.mint(&borrower, &150_000_000);
+
+    env.as_contract(&contract_id, || {
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin: admin.clone(),
+                fee_receiver: admin.clone(),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 500,
+                min_buffer_bps: 12000,
+                max_buffer_bps: 20000,
+                min_liq_threshold_bps: 11000,
+                max_liq_threshold_bps: 15000,
+                oracle_address: oracle_address.clone(),
+                max_price_staleness_secs: 3600,
+            },
+        );
+
+        let sym = Symbol::new(&env, "USDC");
+        set_currency_symbol(&env, &col_token.address, &sym);
+
+        set_listing(
+            &env,
+            1,
+            &Listing {
+                id: 1,
+                lender: lender.clone(),
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                interest_schedule_bps: vec![&env, 100],
+                max_duration_days: 0,
+                min_collateral_buffer_bps: 12000,
+                liquidation_threshold_bps: 11000,
+                status: ListingStatus::Open,
+                created_at: 1000,
+            },
+        );
+    });
+
+    client.borrow(&1, &borrower, &col_token.address, &120_000_000);
+}
+
+#[test]
 fn test_borrow_success() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1060,9 +1123,88 @@ fn test_whitelist_currency_non_admin_panics() {
     let (col_token, _) = create_token(&env, &admin);
 
     seed_config(&env, &contract_id, &admin);
-
     // No auth is mocked, so `config.admin.require_auth()` fails.
     client.whitelist_currency(&col_token.address, &Symbol::new(&env, "USDC"));
+}
+
+/// Successive calls to whitelist_currency with the same currency and symbol are idempotent.
+#[test]
+fn test_whitelist_currency_successive_calls_no_redundant_overwrites() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let (col_token, _) = create_token(&env, &admin);
+
+    seed_config(&env, &contract_id, &admin);
+
+    let reflector_asset = Symbol::new(&env, "USDC");
+
+    // First whitelist call
+    client.whitelist_currency(&col_token.address, &reflector_asset);
+
+    env.as_contract(&contract_id, || {
+        assert!(crate::storage::is_currency_whitelisted(
+            &env,
+            &col_token.address
+        ));
+        assert_eq!(
+            crate::storage::get_currency_symbol(&env, &col_token.address),
+            reflector_asset
+        );
+    });
+
+    // Successive identical call should succeed without error and leave state unchanged
+    client.whitelist_currency(&col_token.address, &reflector_asset);
+
+    env.as_contract(&contract_id, || {
+        assert!(crate::storage::is_currency_whitelisted(
+            &env,
+            &col_token.address
+        ));
+        assert_eq!(
+            crate::storage::get_currency_symbol(&env, &col_token.address),
+            reflector_asset
+        );
+    });
+}
+
+/// Updating a whitelisted currency with a new symbol updates the mapping.
+#[test]
+fn test_whitelist_currency_update_reflector_symbol() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let (col_token, _) = create_token(&env, &admin);
+
+    seed_config(&env, &contract_id, &admin);
+
+    let initial_symbol = Symbol::new(&env, "USDC_OLD");
+    client.whitelist_currency(&col_token.address, &initial_symbol);
+
+    env.as_contract(&contract_id, || {
+        assert_eq!(
+            crate::storage::get_currency_symbol(&env, &col_token.address),
+            initial_symbol
+        );
+    });
+
+    let updated_symbol = Symbol::new(&env, "USDC_NEW");
+    client.whitelist_currency(&col_token.address, &updated_symbol);
+
+    env.as_contract(&contract_id, || {
+        assert_eq!(
+            crate::storage::get_currency_symbol(&env, &col_token.address),
+            updated_symbol
+        );
+    });
 }
 
 // ─── Mock token supporting arbitrary decimals (6, 7, 18) ────────────────────
@@ -1117,7 +1259,7 @@ impl MockDecimalToken {
             .get(&MockDecimalTokenKey::Balance(from.clone()))
             .unwrap_or(0);
         if from_bal < amount {
-            panic!("insufficient balance");
+            panic!("MockDecimalToken: insufficient balance");
         }
         env.storage()
             .persistent()
