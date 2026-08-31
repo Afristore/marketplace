@@ -21,6 +21,7 @@ jest.mock("lucide-react", () =>
       "DollarSign",
       "Lock",
       "ArrowRight",
+      "CheckCircle",
     ].map((name) => [name, () => <span />]),
   ),
 );
