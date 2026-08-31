@@ -15,6 +15,8 @@ jest.mock("lucide-react", () =>
       "CreditCard",
       "Wallet",
       "CheckCircle2",
+      "AlertCircle",
+      "Info",
       "Loader2",
       "DollarSign",
       "Lock",
