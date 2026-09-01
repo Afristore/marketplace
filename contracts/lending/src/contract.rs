@@ -4,10 +4,8 @@ use crate::events;
 use crate::oracle;
 use crate::settlement;
 use crate::storage::{
-    get_config, get_listing, has_config, is_currency_whitelisted, next_position_id, set_config,
-    set_listing, set_position,
-    extend_instance_ttl, get_config, get_listing, get_position, is_currency_whitelisted,
-    next_position_id, set_listing, set_position,
+    extend_instance_ttl, get_config, get_listing, get_position, has_config,
+    is_currency_whitelisted, next_position_id, set_config, set_listing, set_position,
 };
 use crate::types::{ListingStatus, PlatformConfig, Position, PositionStatus};
 
