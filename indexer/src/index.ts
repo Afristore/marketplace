@@ -43,8 +43,8 @@ app.get('/metrics', handleMetrics);
 // Apply rate limiting to all other routes
 app.use(rateLimiter);
 
-// API Routes
-app.use('/', routes);
+// API Routes (mounted under /api)
+app.use('/api', routes);
 
 // Health check
 app.get('/health', (req: express.Request, res: express.Response) => {

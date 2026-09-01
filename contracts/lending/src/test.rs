@@ -11,6 +11,8 @@ use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as TokenAdmin
 use soroban_sdk::{
     testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke},
     vec, Address, Env, IntoVal, String,
+    testutils::{Address as _, Ledger},
+    vec, Address, Env, Symbol,
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -940,6 +942,70 @@ fn test_return_nft_happy_path() {
 #[test]
 #[should_panic(expected = "Position has expired; must be liquidated")]
 fn test_return_nft_after_expiry_panics() {
+#[should_panic(expected = "max_duration_days must be greater than zero")]
+fn test_borrow_zero_max_duration_days_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 2000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let oracle_address = Address::generate(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    let (col_token, col_admin) = create_token(&env, &admin);
+
+    nft_admin.mint(&contract_id, &1);
+    col_admin.mint(&borrower, &150_000_000);
+
+    env.as_contract(&contract_id, || {
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin: admin.clone(),
+                fee_receiver: admin.clone(),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 500,
+                min_buffer_bps: 12000,
+                max_buffer_bps: 20000,
+                min_liq_threshold_bps: 11000,
+                max_liq_threshold_bps: 15000,
+                oracle_address: oracle_address.clone(),
+                max_price_staleness_secs: 3600,
+            },
+        );
+
+        let sym = Symbol::new(&env, "USDC");
+        set_currency_symbol(&env, &col_token.address, &sym);
+
+        set_listing(
+            &env,
+            1,
+            &Listing {
+                id: 1,
+                lender: lender.clone(),
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                interest_schedule_bps: vec![&env, 100],
+                max_duration_days: 0,
+                min_collateral_buffer_bps: 12000,
+                liquidation_threshold_bps: 11000,
+                status: ListingStatus::Open,
+                created_at: 1000,
+            },
+        );
+    });
+
+    client.borrow(&1, &borrower, &col_token.address, &120_000_000);
+}
+
+#[test]
+fn test_borrow_success() {
     let env = Env::default();
     env.mock_all_auths();
     // Advance time past the 30-day window.
@@ -980,6 +1046,8 @@ fn test_return_nft_after_expiry_panics() {
 
     client.return_nft(&1);
 }
+        let sym = Symbol::new(&env, "USDC");
+        set_currency_symbol(&env, &col_token.address, &sym);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Liquidation
@@ -1089,6 +1157,8 @@ fn test_liquidate_unhealthy_position() {
         190_000_000,
         20000, // 200% threshold — collateral 190 USD < threshold 200 USD → unhealthy
     );
+        let sym = Symbol::new(&env, "USDC");
+        set_currency_symbol(&env, &col_token.address, &sym);
 
     client.liquidate(&1, &liquidator);
 
@@ -1400,7 +1470,7 @@ fn test_e2e_voluntary_return() {
 
     // 2. Whitelist USDC as collateral
     env.as_contract(&contract_id, || {
-        let sym = String::from_str(&env, "USDC");
+        let sym = Symbol::new(&env, "USDC");
         set_currency_symbol(&env, &usdc_token.address, &sym);
     });
 
@@ -1533,8 +1603,8 @@ fn test_e2e_voluntary_return() {
         emit_position_returned(
             &env,
             position_id,
-            result.accrued_interest_usd as i128,
-            result.platform_fee_usd as i128,
+            result.accrued_interest_usd,
+            result.platform_fee_usd,
             result.borrower_rem,
         );
     });
@@ -1615,7 +1685,7 @@ fn test_e2e_liquidation() {
 
     // 2. Whitelist USDC
     env.as_contract(&contract_id, || {
-        let sym = String::from_str(&env, "USDC");
+        let sym = Symbol::new(&env, "USDC");
         set_currency_symbol(&env, &usdc_token.address, &sym);
     });
 
@@ -1714,10 +1784,10 @@ fn test_e2e_liquidation() {
     let borrower_received = usdc_token.balance(&borrower) - initial_borrower_balance;
 
     // Allow small rounding tolerance (within 1000 units = 0.0001 USD)
-    assert!(lender_received >= 102_400_000 && lender_received <= 102_500_000);
-    assert!(liquidator_received >= 5_100_000 && liquidator_received <= 5_150_000);
-    assert!(fee_received >= 1_020_000 && fee_received <= 1_030_000);
-    assert!(borrower_received >= 13_400_000 && borrower_received <= 13_450_000);
+    assert!((102_400_000..=102_500_000).contains(&lender_received));
+    assert!((5_100_000..=5_150_000).contains(&liquidator_received));
+    assert!((1_020_000..=1_030_000).contains(&fee_received));
+    assert!((13_400_000..=13_450_000).contains(&borrower_received));
 
     // Platform received its fee
     assert!(fee_received > 0);
@@ -1832,4 +1902,446 @@ fn test_storage_ttl_extension_and_persistence() {
         assert_eq!(position.borrower, borrower);
         assert_eq!(position.status, PositionStatus::Active);
     });
+}
+
+// ─── whitelist_currency tests ────────────────────────────────────────────────
+
+fn seed_config(env: &Env, contract_id: &Address, admin: &Address) {
+    env.as_contract(contract_id, || {
+        set_config(
+            env,
+            &PlatformConfig {
+                admin: admin.clone(),
+                fee_receiver: admin.clone(),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 500,
+                min_buffer_bps: 12000,
+                max_buffer_bps: 20000,
+                min_liq_threshold_bps: 11000,
+                max_liq_threshold_bps: 15000,
+                oracle_address: Address::generate(env),
+                max_price_staleness_secs: 3600,
+            },
+        );
+    });
+}
+
+/// Happy path: admin whitelists a real token, mapped to its Reflector symbol.
+#[test]
+fn test_whitelist_currency_admin_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let (col_token, _) = create_token(&env, &admin);
+
+    seed_config(&env, &contract_id, &admin);
+
+    let reflector_asset = Symbol::new(&env, "USDC");
+    client.whitelist_currency(&col_token.address, &reflector_asset);
+
+    env.as_contract(&contract_id, || {
+        assert!(crate::storage::is_currency_whitelisted(
+            &env,
+            &col_token.address
+        ));
+        assert_eq!(
+            crate::storage::get_currency_symbol(&env, &col_token.address),
+            reflector_asset
+        );
+    });
+}
+
+/// Non-admin caller cannot whitelist a currency.
+#[test]
+#[should_panic]
+fn test_whitelist_currency_non_admin_panics() {
+    let env = Env::default();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let (col_token, _) = create_token(&env, &admin);
+
+    seed_config(&env, &contract_id, &admin);
+    // No auth is mocked, so `config.admin.require_auth()` fails.
+    client.whitelist_currency(&col_token.address, &Symbol::new(&env, "USDC"));
+}
+
+/// Successive calls to whitelist_currency with the same currency and symbol are idempotent.
+#[test]
+fn test_whitelist_currency_successive_calls_no_redundant_overwrites() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let (col_token, _) = create_token(&env, &admin);
+
+    seed_config(&env, &contract_id, &admin);
+
+    let reflector_asset = Symbol::new(&env, "USDC");
+
+    // First whitelist call
+    client.whitelist_currency(&col_token.address, &reflector_asset);
+
+    env.as_contract(&contract_id, || {
+        assert!(crate::storage::is_currency_whitelisted(
+            &env,
+            &col_token.address
+        ));
+        assert_eq!(
+            crate::storage::get_currency_symbol(&env, &col_token.address),
+            reflector_asset
+        );
+    });
+
+    // Successive identical call should succeed without error and leave state unchanged
+    client.whitelist_currency(&col_token.address, &reflector_asset);
+
+    env.as_contract(&contract_id, || {
+        assert!(crate::storage::is_currency_whitelisted(
+            &env,
+            &col_token.address
+        ));
+        assert_eq!(
+            crate::storage::get_currency_symbol(&env, &col_token.address),
+            reflector_asset
+        );
+    });
+}
+
+/// Updating a whitelisted currency with a new symbol updates the mapping.
+#[test]
+fn test_whitelist_currency_update_reflector_symbol() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let (col_token, _) = create_token(&env, &admin);
+
+    seed_config(&env, &contract_id, &admin);
+
+    let initial_symbol = Symbol::new(&env, "USDC_OLD");
+    client.whitelist_currency(&col_token.address, &initial_symbol);
+
+    env.as_contract(&contract_id, || {
+        assert_eq!(
+            crate::storage::get_currency_symbol(&env, &col_token.address),
+            initial_symbol
+        );
+    });
+
+    let updated_symbol = Symbol::new(&env, "USDC_NEW");
+    client.whitelist_currency(&col_token.address, &updated_symbol);
+
+    env.as_contract(&contract_id, || {
+        assert_eq!(
+            crate::storage::get_currency_symbol(&env, &col_token.address),
+            updated_symbol
+        );
+    });
+}
+
+// ─── Mock token supporting arbitrary decimals (6, 7, 18) ────────────────────
+
+#[soroban_sdk::contract]
+pub struct MockDecimalToken;
+
+#[soroban_sdk::contracttype]
+pub enum MockDecimalTokenKey {
+    Decimals,
+    Balance(Address),
+}
+
+#[soroban_sdk::contractimpl]
+impl MockDecimalToken {
+    pub fn initialize(env: Env, decimals: u32) {
+        env.storage()
+            .instance()
+            .set(&MockDecimalTokenKey::Decimals, &decimals);
+    }
+
+    pub fn decimals(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&MockDecimalTokenKey::Decimals)
+            .unwrap_or(7)
+    }
+
+    pub fn mint(env: Env, to: Address, amount: i128) {
+        let current: i128 = env
+            .storage()
+            .persistent()
+            .get(&MockDecimalTokenKey::Balance(to.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&MockDecimalTokenKey::Balance(to), &(current + amount));
+    }
+
+    pub fn balance(env: Env, id: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&MockDecimalTokenKey::Balance(id))
+            .unwrap_or(0)
+    }
+
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        from.require_auth();
+        let from_bal: i128 = env
+            .storage()
+            .persistent()
+            .get(&MockDecimalTokenKey::Balance(from.clone()))
+            .unwrap_or(0);
+        if from_bal < amount {
+            panic!("MockDecimalToken: insufficient balance");
+        }
+        env.storage()
+            .persistent()
+            .set(&MockDecimalTokenKey::Balance(from), &(from_bal - amount));
+        let to_bal: i128 = env
+            .storage()
+            .persistent()
+            .get(&MockDecimalTokenKey::Balance(to.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&MockDecimalTokenKey::Balance(to), &(to_bal + amount));
+    }
+}
+
+fn setup_borrow_listing(
+    env: &Env,
+    _contract_id: &Address,
+    lender: &Address,
+    nft_token: &TokenClient,
+    col_address: &Address,
+    symbol: &str,
+) {
+    let admin = Address::generate(env);
+    let oracle_address = Address::generate(env);
+
+    set_config(
+        env,
+        &PlatformConfig {
+            admin: admin.clone(),
+            fee_receiver: admin.clone(),
+            platform_fee_bps: 100,
+            liquidator_fee_bps: 500,
+            min_buffer_bps: 12000,
+            max_buffer_bps: 20000,
+            min_liq_threshold_bps: 11000,
+            max_liq_threshold_bps: 15000,
+            oracle_address,
+            max_price_staleness_secs: 3600,
+        },
+    );
+
+    let sym = Symbol::new(env, symbol);
+    set_currency_symbol(env, col_address, &sym);
+
+    set_listing(
+        env,
+        1,
+        &Listing {
+            id: 1,
+            lender: lender.clone(),
+            nft_contract: nft_token.address.clone(),
+            token_id: 1,
+            declared_price_usd: 100_000_000, // 100 USD (7 decimals)
+            interest_schedule_bps: vec![env, 100],
+            max_duration_days: 30,
+            min_collateral_buffer_bps: 12000, // 120% => 120 USD required
+            liquidation_threshold_bps: 11000,
+            status: ListingStatus::Open,
+            created_at: 1000,
+        },
+    );
+}
+
+#[test]
+fn test_borrow_token_6_decimals_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 2000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    nft_admin.mint(&contract_id, &1);
+
+    // 6-decimal token (e.g. USDC, 1 token = 1_000_000 units)
+    let col_id = env.register(MockDecimalToken, ());
+    let mock_client = MockDecimalTokenClient::new(&env, &col_id);
+    mock_client.initialize(&6);
+
+    let one_token_6 = 1_000_000_i128;
+    // Mint 15 USDC (15 * 10^6 = 15_000_000) to borrower
+    mock_client.mint(&borrower, &(15 * one_token_6));
+
+    env.as_contract(&contract_id, || {
+        setup_borrow_listing(&env, &contract_id, &lender, &nft_token, &col_id, "USDC");
+    });
+
+    // 12 USD required collateral (120% of 10 USD) = 12 * 10^6 = 12_000_000 base units
+    let position_id = client.borrow(&1, &borrower, &col_id, &(12 * one_token_6));
+
+    assert_eq!(position_id, 1);
+    assert_eq!(nft_token.balance(&borrower), 1);
+    assert_eq!(mock_client.balance(&contract_id), 12 * one_token_6);
+    assert_eq!(mock_client.balance(&borrower), 3 * one_token_6);
+}
+
+#[test]
+#[should_panic(expected = "Under-collateralized")]
+fn test_borrow_token_6_decimals_undercollateralized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    nft_admin.mint(&contract_id, &1);
+
+    let col_id = env.register(MockDecimalToken, ());
+    let mock_client = MockDecimalTokenClient::new(&env, &col_id);
+    mock_client.initialize(&6);
+
+    mock_client.mint(&borrower, &15_000_000);
+
+    env.as_contract(&contract_id, || {
+        setup_borrow_listing(&env, &contract_id, &lender, &nft_token, &col_id, "USDC");
+    });
+
+    // 11.999999 USDC < 12 USD required
+    client.borrow(&1, &borrower, &col_id, &11_999_999);
+}
+
+#[test]
+fn test_borrow_token_18_decimals_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 2000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    nft_admin.mint(&contract_id, &1);
+
+    // 18-decimal token (e.g. DAI / wrapped ETH, 1 token = 10^18 units)
+    let col_id = env.register(MockDecimalToken, ());
+    let mock_client = MockDecimalTokenClient::new(&env, &col_id);
+    mock_client.initialize(&18);
+
+    let one_token_18 = 1_000_000_000_000_000_000_i128;
+    // Mint 15 tokens (15 * 10^18)
+    mock_client.mint(&borrower, &(15 * one_token_18));
+
+    env.as_contract(&contract_id, || {
+        setup_borrow_listing(&env, &contract_id, &lender, &nft_token, &col_id, "DAI");
+    });
+
+    // 12 USD required collateral (120% of 10 USD) = 12 * 10^18 base units
+    let col_amount = 12 * one_token_18;
+    let position_id = client.borrow(&1, &borrower, &col_id, &col_amount);
+
+    assert_eq!(position_id, 1);
+    assert_eq!(nft_token.balance(&borrower), 1);
+    assert_eq!(mock_client.balance(&contract_id), col_amount);
+    assert_eq!(mock_client.balance(&borrower), 3 * one_token_18);
+}
+
+#[test]
+#[should_panic(expected = "Under-collateralized")]
+fn test_borrow_token_18_decimals_undercollateralized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    nft_admin.mint(&contract_id, &1);
+
+    let col_id = env.register(MockDecimalToken, ());
+    let mock_client = MockDecimalTokenClient::new(&env, &col_id);
+    mock_client.initialize(&18);
+
+    let one_token_18 = 1_000_000_000_000_000_000_i128;
+    mock_client.mint(&borrower, &(15 * one_token_18));
+
+    env.as_contract(&contract_id, || {
+        setup_borrow_listing(&env, &contract_id, &lender, &nft_token, &col_id, "DAI");
+    });
+
+    // 11.9 tokens < 12 USD required
+    let col_amount = (119 * one_token_18) / 10;
+    client.borrow(&1, &borrower, &col_id, &col_amount);
+}
+
+#[test]
+fn test_borrow_token_7_decimals_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 2000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    nft_admin.mint(&contract_id, &1);
+
+    // 7-decimal token (1 token = 10^7 units)
+    let col_id = env.register(MockDecimalToken, ());
+    let mock_client = MockDecimalTokenClient::new(&env, &col_id);
+    mock_client.initialize(&7);
+
+    let one_token_7 = 10_000_000_i128;
+    mock_client.mint(&borrower, &(15 * one_token_7));
+
+    env.as_contract(&contract_id, || {
+        setup_borrow_listing(&env, &contract_id, &lender, &nft_token, &col_id, "XLM");
+    });
+
+    // 12 USD required collateral = 12 * 10^7 base units
+    let col_amount = 12 * one_token_7;
+    let position_id = client.borrow(&1, &borrower, &col_id, &col_amount);
+
+    assert_eq!(position_id, 1);
+    assert_eq!(nft_token.balance(&borrower), 1);
+    assert_eq!(mock_client.balance(&contract_id), col_amount);
+    assert_eq!(mock_client.balance(&borrower), 3 * one_token_7);
 }
