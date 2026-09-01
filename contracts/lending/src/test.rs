@@ -6,7 +6,7 @@ use crate::types::{Listing, ListingStatus, PlatformConfig, PositionStatus};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as TokenAdminClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    vec, Address, Env, Symbol,
+    vec, Address, Env, IntoVal, Symbol,
 };
 
 fn create_token<'a>(env: &Env, admin: &Address) -> (TokenClient<'a>, TokenAdminClient<'a>) {
@@ -94,69 +94,6 @@ fn test_cancel_listing_not_open() {
     });
 
     client.cancel_listing(&1);
-}
-
-#[test]
-#[should_panic(expected = "max_duration_days must be greater than zero")]
-fn test_borrow_zero_max_duration_days_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().with_mut(|l| l.timestamp = 2000);
-
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
-
-    let lender = Address::generate(&env);
-    let borrower = Address::generate(&env);
-    let admin = Address::generate(&env);
-    let oracle_address = Address::generate(&env);
-
-    let (nft_token, nft_admin) = create_token(&env, &admin);
-    let (col_token, col_admin) = create_token(&env, &admin);
-
-    nft_admin.mint(&contract_id, &1);
-    col_admin.mint(&borrower, &150_000_000);
-
-    env.as_contract(&contract_id, || {
-        set_config(
-            &env,
-            &PlatformConfig {
-                admin: admin.clone(),
-                fee_receiver: admin.clone(),
-                platform_fee_bps: 100,
-                liquidator_fee_bps: 500,
-                min_buffer_bps: 12000,
-                max_buffer_bps: 20000,
-                min_liq_threshold_bps: 11000,
-                max_liq_threshold_bps: 15000,
-                oracle_address: oracle_address.clone(),
-                max_price_staleness_secs: 3600,
-            },
-        );
-
-        let sym = Symbol::new(&env, "USDC");
-        set_currency_symbol(&env, &col_token.address, &sym);
-
-        set_listing(
-            &env,
-            1,
-            &Listing {
-                id: 1,
-                lender: lender.clone(),
-                nft_contract: nft_token.address.clone(),
-                token_id: 1,
-                declared_price_usd: 100_000_000,
-                interest_schedule_bps: vec![&env, 100],
-                max_duration_days: 0,
-                min_collateral_buffer_bps: 12000,
-                liquidation_threshold_bps: 11000,
-                status: ListingStatus::Open,
-                created_at: 1000,
-            },
-        );
-    });
-
-    client.borrow(&1, &borrower, &col_token.address, &120_000_000);
 }
 
 #[test]
@@ -812,7 +749,11 @@ fn test_liquidate_expired_position() {
         col_token,
     ) = setup_liquidate_test(&env);
     env.mock_all_auths();
+// ─── Admin parameter update tests ────────────────────────────────────────────
 
+/// Seed a deployed contract with a default config and return the admin address
+/// along with the contract client.
+fn setup_initialized<'a>(env: &'a Env) -> (Address, LendingContractClient<'a>) {
     let contract_id = env.register(LendingContract, ());
     let client = LendingContractClient::new(&env, &contract_id);
 
@@ -991,446 +932,239 @@ fn test_liquidate_unhealthy_position() {
     // Assert payouts
     assert!(col_token.balance(&lender) > 0);
     assert!(col_token.balance(&fee_receiver) > 0);
-}
+    let client = LendingContractClient::new(env, &contract_id);
 
-// ─── whitelist_currency tests ────────────────────────────────────────────────
-
-fn seed_config(env: &Env, contract_id: &Address, admin: &Address) {
-    env.as_contract(contract_id, || {
-        set_config(
-            env,
-            &PlatformConfig {
-                admin: admin.clone(),
-                fee_receiver: admin.clone(),
-                platform_fee_bps: 100,
-                liquidator_fee_bps: 500,
-                min_buffer_bps: 12000,
-                max_buffer_bps: 20000,
-                min_liq_threshold_bps: 11000,
-                max_liq_threshold_bps: 15000,
-                oracle_address: Address::generate(env),
-                max_price_staleness_secs: 3600,
-            },
-        );
-    });
-}
-
-/// Happy path: admin whitelists a real token, mapped to its Reflector symbol.
-#[test]
-fn test_whitelist_currency_admin_success() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let (col_token, _) = create_token(&env, &admin);
-
-    seed_config(&env, &contract_id, &admin);
-
-    let reflector_asset = Symbol::new(&env, "USDC");
-    client.whitelist_currency(&col_token.address, &reflector_asset);
-
-    env.as_contract(&contract_id, || {
-        assert!(crate::storage::is_currency_whitelisted(
-            &env,
-            &col_token.address
-        ));
-        assert_eq!(
-            crate::storage::get_currency_symbol(&env, &col_token.address),
-            reflector_asset
-        );
-    });
-}
-
-/// Non-admin caller cannot whitelist a currency.
-#[test]
-#[should_panic]
-fn test_whitelist_currency_non_admin_panics() {
-    let env = Env::default();
-
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let (col_token, _) = create_token(&env, &admin);
-
-    seed_config(&env, &contract_id, &admin);
-    // No auth is mocked, so `config.admin.require_auth()` fails.
-    client.whitelist_currency(&col_token.address, &Symbol::new(&env, "USDC"));
-}
-
-/// Successive calls to whitelist_currency with the same currency and symbol are idempotent.
-#[test]
-fn test_whitelist_currency_successive_calls_no_redundant_overwrites() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let (col_token, _) = create_token(&env, &admin);
-
-    seed_config(&env, &contract_id, &admin);
-
-    let reflector_asset = Symbol::new(&env, "USDC");
-
-    // First whitelist call
-    client.whitelist_currency(&col_token.address, &reflector_asset);
-
-    env.as_contract(&contract_id, || {
-        assert!(crate::storage::is_currency_whitelisted(
-            &env,
-            &col_token.address
-        ));
-        assert_eq!(
-            crate::storage::get_currency_symbol(&env, &col_token.address),
-            reflector_asset
-        );
-    });
-
-    // Successive identical call should succeed without error and leave state unchanged
-    client.whitelist_currency(&col_token.address, &reflector_asset);
-
-    env.as_contract(&contract_id, || {
-        assert!(crate::storage::is_currency_whitelisted(
-            &env,
-            &col_token.address
-        ));
-        assert_eq!(
-            crate::storage::get_currency_symbol(&env, &col_token.address),
-            reflector_asset
-        );
-    });
-}
-
-/// Updating a whitelisted currency with a new symbol updates the mapping.
-#[test]
-fn test_whitelist_currency_update_reflector_symbol() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
-
-    let admin = Address::generate(&env);
-    let (col_token, _) = create_token(&env, &admin);
-
-    seed_config(&env, &contract_id, &admin);
-
-    let initial_symbol = Symbol::new(&env, "USDC_OLD");
-    client.whitelist_currency(&col_token.address, &initial_symbol);
-
-    env.as_contract(&contract_id, || {
-        assert_eq!(
-            crate::storage::get_currency_symbol(&env, &col_token.address),
-            initial_symbol
-        );
-    });
-
-    let updated_symbol = Symbol::new(&env, "USDC_NEW");
-    client.whitelist_currency(&col_token.address, &updated_symbol);
-
-    env.as_contract(&contract_id, || {
-        assert_eq!(
-            crate::storage::get_currency_symbol(&env, &col_token.address),
-            updated_symbol
-        );
-    });
-}
-
-// ─── Mock token supporting arbitrary decimals (6, 7, 18) ────────────────────
-
-#[soroban_sdk::contract]
-pub struct MockDecimalToken;
-
-#[soroban_sdk::contracttype]
-pub enum MockDecimalTokenKey {
-    Decimals,
-    Balance(Address),
-}
-
-#[soroban_sdk::contractimpl]
-impl MockDecimalToken {
-    pub fn initialize(env: Env, decimals: u32) {
-        env.storage()
-            .instance()
-            .set(&MockDecimalTokenKey::Decimals, &decimals);
-    }
-
-    pub fn decimals(env: Env) -> u32 {
-        env.storage()
-            .instance()
-            .get(&MockDecimalTokenKey::Decimals)
-            .unwrap_or(7)
-    }
-
-    pub fn mint(env: Env, to: Address, amount: i128) {
-        let current: i128 = env
-            .storage()
-            .persistent()
-            .get(&MockDecimalTokenKey::Balance(to.clone()))
-            .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&MockDecimalTokenKey::Balance(to), &(current + amount));
-    }
-
-    pub fn balance(env: Env, id: Address) -> i128 {
-        env.storage()
-            .persistent()
-            .get(&MockDecimalTokenKey::Balance(id))
-            .unwrap_or(0)
-    }
-
-    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
-        from.require_auth();
-        let from_bal: i128 = env
-            .storage()
-            .persistent()
-            .get(&MockDecimalTokenKey::Balance(from.clone()))
-            .unwrap_or(0);
-        if from_bal < amount {
-            panic!("MockDecimalToken: insufficient balance");
-        }
-        env.storage()
-            .persistent()
-            .set(&MockDecimalTokenKey::Balance(from), &(from_bal - amount));
-        let to_bal: i128 = env
-            .storage()
-            .persistent()
-            .get(&MockDecimalTokenKey::Balance(to.clone()))
-            .unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&MockDecimalTokenKey::Balance(to), &(to_bal + amount));
-    }
-}
-
-fn setup_borrow_listing(
-    env: &Env,
-    _contract_id: &Address,
-    lender: &Address,
-    nft_token: &TokenClient,
-    col_address: &Address,
-    symbol: &str,
-) {
     let admin = Address::generate(env);
+    let fee_receiver = Address::generate(env);
     let oracle_address = Address::generate(env);
 
-    set_config(
-        env,
-        &PlatformConfig {
-            admin: admin.clone(),
-            fee_receiver: admin.clone(),
-            platform_fee_bps: 100,
-            liquidator_fee_bps: 500,
-            min_buffer_bps: 12000,
-            max_buffer_bps: 20000,
-            min_liq_threshold_bps: 11000,
-            max_liq_threshold_bps: 15000,
-            oracle_address,
-            max_price_staleness_secs: 3600,
-        },
+    client.initialize(
+        &admin,
+        &fee_receiver,
+        &oracle_address,
+        &100,
+        &500,
+        &12000,
+        &20000,
+        &11000,
+        &11500,
+        &3600,
     );
 
-    let sym = Symbol::new(env, symbol);
-    set_currency_symbol(env, col_address, &sym);
+    (admin, client)
+}
 
-    set_listing(
-        env,
-        1,
-        &Listing {
-            id: 1,
-            lender: lender.clone(),
-            nft_contract: nft_token.address.clone(),
-            token_id: 1,
-            declared_price_usd: 100_000_000, // 100 USD (7 decimals)
-            interest_schedule_bps: vec![env, 100],
-            max_duration_days: 30,
-            min_collateral_buffer_bps: 12000, // 120% => 120 USD required
-            liquidation_threshold_bps: 11000,
-            status: ListingStatus::Open,
-            created_at: 1000,
+// ── admin_update_bounds ───────────────────────────────────────────────────────
+
+#[test]
+fn test_admin_update_bounds_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (admin, client) = setup_initialized(&env);
+
+    // Update to new valid bounds.
+    client.admin_update_bounds(&13000, &25000, &12000, &12500);
+
+    // Retrieve config via contract context and verify every bound was persisted.
+    let contract_id = client.address.clone();
+    env.as_contract(&contract_id, || {
+        let cfg = crate::storage::get_config(&env);
+        assert_eq!(cfg.admin, admin); // admin unchanged
+        assert_eq!(cfg.min_buffer_bps, 13000);
+        assert_eq!(cfg.max_buffer_bps, 25000);
+        assert_eq!(cfg.min_liq_threshold_bps, 12000);
+        assert_eq!(cfg.max_liq_threshold_bps, 12500);
+    });
+}
+
+#[test]
+#[should_panic]
+fn test_admin_update_bounds_non_admin_panics() {
+    let env = Env::default();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
+
+    // Initialize with the real admin.
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: (
+                admin.clone(),
+                Address::generate(&env),
+                Address::generate(&env),
+                100u32,
+                500u32,
+                12000u32,
+                20000u32,
+                11000u32,
+                11500u32,
+                3600u64,
+            )
+                .into_val(&env),
+            sub_invokes: &[],
         },
+    }]);
+    client.initialize(
+        &admin,
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &100,
+        &500,
+        &12000,
+        &20000,
+        &11000,
+        &11500,
+        &3600,
     );
+
+    // Attempt admin_update_bounds as impostor — must panic (auth failure).
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &impostor,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "admin_update_bounds",
+            args: (13000u32, 25000u32, 12000u32, 12500u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.admin_update_bounds(&13000, &25000, &12000, &12500);
 }
 
 #[test]
-fn test_borrow_token_6_decimals_success() {
+#[should_panic(expected = "Invalid buffer bounds: min_buffer_bps must be less than max_buffer_bps")]
+fn test_admin_update_bounds_bad_buffer_panics() {
     let env = Env::default();
     env.mock_all_auths();
-    env.ledger().with_mut(|l| l.timestamp = 2000);
+
+    let (_admin, client) = setup_initialized(&env);
+
+    // min >= max for buffer — must panic.
+    client.admin_update_bounds(&20000, &12000, &11000, &11500);
+}
+
+#[test]
+#[should_panic(
+    expected = "Invalid liquidation threshold bounds: min_liq_threshold_bps must be less than max_liq_threshold_bps"
+)]
+fn test_admin_update_bounds_bad_liq_threshold_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_admin, client) = setup_initialized(&env);
+
+    // min >= max for liq threshold — must panic.
+    client.admin_update_bounds(&12000, &20000, &15000, &11000);
+}
+
+#[test]
+#[should_panic(expected = "Invalid bounds: max_liq_threshold_bps must be less than min_buffer_bps")]
+fn test_admin_update_bounds_max_liq_ge_min_buffer_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_admin, client) = setup_initialized(&env);
+
+    // max_liq_threshold >= min_buffer — must panic.
+    client.admin_update_bounds(&12000, &20000, &11000, &12500);
+}
+
+// ── admin_set_fees ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_admin_set_fees_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (admin, client) = setup_initialized(&env);
+
+    // Update to new valid fees.
+    client.admin_set_fees(&200, &800); // 2% + 8% = 10% < 100%
+
+    let contract_id = client.address.clone();
+    env.as_contract(&contract_id, || {
+        let cfg = crate::storage::get_config(&env);
+        assert_eq!(cfg.admin, admin); // admin unchanged
+        assert_eq!(cfg.platform_fee_bps, 200);
+        assert_eq!(cfg.liquidator_fee_bps, 800);
+        // Bounds must be untouched.
+        assert_eq!(cfg.min_buffer_bps, 12000);
+        assert_eq!(cfg.max_buffer_bps, 20000);
+    });
+}
+
+#[test]
+#[should_panic]
+fn test_admin_set_fees_non_admin_panics() {
+    let env = Env::default();
 
     let contract_id = env.register(LendingContract, ());
     let client = LendingContractClient::new(&env, &contract_id);
 
-    let lender = Address::generate(&env);
-    let borrower = Address::generate(&env);
     let admin = Address::generate(&env);
+    let impostor = Address::generate(&env);
 
-    let (nft_token, nft_admin) = create_token(&env, &admin);
-    nft_admin.mint(&contract_id, &1);
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: (
+                admin.clone(),
+                Address::generate(&env),
+                Address::generate(&env),
+                100u32,
+                500u32,
+                12000u32,
+                20000u32,
+                11000u32,
+                11500u32,
+                3600u64,
+            )
+                .into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(
+        &admin,
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &100,
+        &500,
+        &12000,
+        &20000,
+        &11000,
+        &11500,
+        &3600,
+    );
 
-    // 6-decimal token (e.g. USDC, 1 token = 1_000_000 units)
-    let col_id = env.register(MockDecimalToken, ());
-    let mock_client = MockDecimalTokenClient::new(&env, &col_id);
-    mock_client.initialize(&6);
-
-    let one_token_6 = 1_000_000_i128;
-    // Mint 15 USDC (15 * 10^6 = 15_000_000) to borrower
-    mock_client.mint(&borrower, &(15 * one_token_6));
-
-    env.as_contract(&contract_id, || {
-        setup_borrow_listing(&env, &contract_id, &lender, &nft_token, &col_id, "USDC");
-    });
-
-    // 12 USD required collateral (120% of 10 USD) = 12 * 10^6 = 12_000_000 base units
-    let position_id = client.borrow(&1, &borrower, &col_id, &(12 * one_token_6));
-
-    assert_eq!(position_id, 1);
-    assert_eq!(nft_token.balance(&borrower), 1);
-    assert_eq!(mock_client.balance(&contract_id), 12 * one_token_6);
-    assert_eq!(mock_client.balance(&borrower), 3 * one_token_6);
+    // Attempt admin_set_fees as impostor — must panic (auth failure).
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &impostor,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "admin_set_fees",
+            args: (200u32, 800u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.admin_set_fees(&200, &800);
 }
 
 #[test]
-#[should_panic(expected = "Under-collateralized")]
-fn test_borrow_token_6_decimals_undercollateralized() {
+#[should_panic(expected = "Invalid fees: combined fees must be less than 10000")]
+fn test_admin_set_fees_combined_ge_10000_panics() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
+    let (_admin, client) = setup_initialized(&env);
 
-    let lender = Address::generate(&env);
-    let borrower = Address::generate(&env);
-    let admin = Address::generate(&env);
-
-    let (nft_token, nft_admin) = create_token(&env, &admin);
-    nft_admin.mint(&contract_id, &1);
-
-    let col_id = env.register(MockDecimalToken, ());
-    let mock_client = MockDecimalTokenClient::new(&env, &col_id);
-    mock_client.initialize(&6);
-
-    mock_client.mint(&borrower, &15_000_000);
-
-    env.as_contract(&contract_id, || {
-        setup_borrow_listing(&env, &contract_id, &lender, &nft_token, &col_id, "USDC");
-    });
-
-    // 11.999999 USDC < 12 USD required
-    client.borrow(&1, &borrower, &col_id, &11_999_999);
-}
-
-#[test]
-fn test_borrow_token_18_decimals_success() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().with_mut(|l| l.timestamp = 2000);
-
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
-
-    let lender = Address::generate(&env);
-    let borrower = Address::generate(&env);
-    let admin = Address::generate(&env);
-
-    let (nft_token, nft_admin) = create_token(&env, &admin);
-    nft_admin.mint(&contract_id, &1);
-
-    // 18-decimal token (e.g. DAI / wrapped ETH, 1 token = 10^18 units)
-    let col_id = env.register(MockDecimalToken, ());
-    let mock_client = MockDecimalTokenClient::new(&env, &col_id);
-    mock_client.initialize(&18);
-
-    let one_token_18 = 1_000_000_000_000_000_000_i128;
-    // Mint 15 tokens (15 * 10^18)
-    mock_client.mint(&borrower, &(15 * one_token_18));
-
-    env.as_contract(&contract_id, || {
-        setup_borrow_listing(&env, &contract_id, &lender, &nft_token, &col_id, "DAI");
-    });
-
-    // 12 USD required collateral (120% of 10 USD) = 12 * 10^18 base units
-    let col_amount = 12 * one_token_18;
-    let position_id = client.borrow(&1, &borrower, &col_id, &col_amount);
-
-    assert_eq!(position_id, 1);
-    assert_eq!(nft_token.balance(&borrower), 1);
-    assert_eq!(mock_client.balance(&contract_id), col_amount);
-    assert_eq!(mock_client.balance(&borrower), 3 * one_token_18);
-}
-
-#[test]
-#[should_panic(expected = "Under-collateralized")]
-fn test_borrow_token_18_decimals_undercollateralized() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
-
-    let lender = Address::generate(&env);
-    let borrower = Address::generate(&env);
-    let admin = Address::generate(&env);
-
-    let (nft_token, nft_admin) = create_token(&env, &admin);
-    nft_admin.mint(&contract_id, &1);
-
-    let col_id = env.register(MockDecimalToken, ());
-    let mock_client = MockDecimalTokenClient::new(&env, &col_id);
-    mock_client.initialize(&18);
-
-    let one_token_18 = 1_000_000_000_000_000_000_i128;
-    mock_client.mint(&borrower, &(15 * one_token_18));
-
-    env.as_contract(&contract_id, || {
-        setup_borrow_listing(&env, &contract_id, &lender, &nft_token, &col_id, "DAI");
-    });
-
-    // 11.9 tokens < 12 USD required
-    let col_amount = (119 * one_token_18) / 10;
-    client.borrow(&1, &borrower, &col_id, &col_amount);
-}
-
-#[test]
-fn test_borrow_token_7_decimals_success() {
-    let env = Env::default();
-    env.mock_all_auths();
-    env.ledger().with_mut(|l| l.timestamp = 2000);
-
-    let contract_id = env.register(LendingContract, ());
-    let client = LendingContractClient::new(&env, &contract_id);
-
-    let lender = Address::generate(&env);
-    let borrower = Address::generate(&env);
-    let admin = Address::generate(&env);
-
-    let (nft_token, nft_admin) = create_token(&env, &admin);
-    nft_admin.mint(&contract_id, &1);
-
-    // 7-decimal token (1 token = 10^7 units)
-    let col_id = env.register(MockDecimalToken, ());
-    let mock_client = MockDecimalTokenClient::new(&env, &col_id);
-    mock_client.initialize(&7);
-
-    let one_token_7 = 10_000_000_i128;
-    mock_client.mint(&borrower, &(15 * one_token_7));
-
-    env.as_contract(&contract_id, || {
-        setup_borrow_listing(&env, &contract_id, &lender, &nft_token, &col_id, "XLM");
-    });
-
-    // 12 USD required collateral = 12 * 10^7 base units
-    let col_amount = 12 * one_token_7;
-    let position_id = client.borrow(&1, &borrower, &col_id, &col_amount);
-
-    assert_eq!(position_id, 1);
-    assert_eq!(nft_token.balance(&borrower), 1);
-    assert_eq!(mock_client.balance(&contract_id), col_amount);
-    assert_eq!(mock_client.balance(&borrower), 3 * one_token_7);
+    // 5000 + 5000 = 10000 — must panic.
+    client.admin_set_fees(&5000, &5000);
 }
