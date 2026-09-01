@@ -1,11 +1,9 @@
 use soroban_sdk::{contract, contractimpl, token, Address, Env};
 
-use crate::events;
 use crate::oracle;
-use crate::settlement;
 use crate::storage::{
-    extend_instance_ttl, get_config, get_listing, get_position, has_config,
-    is_currency_whitelisted, next_position_id, set_config, set_listing, set_position,
+    get_config, get_listing, has_config, is_currency_whitelisted, next_position_id, set_config,
+    set_listing, set_position,
 };
 use crate::types::{ListingStatus, PlatformConfig, Position, PositionStatus};
 
@@ -66,7 +64,6 @@ impl LendingContract {
     }
 
     pub fn cancel_listing(env: Env, listing_id: u64) {
-        extend_instance_ttl(&env);
         let mut listing = get_listing(&env, listing_id);
 
         listing.lender.require_auth();
@@ -76,11 +73,10 @@ impl LendingContract {
         }
 
         // Return NFT to lender
-        let contract_address = env.current_contract_address();
         let nft_client = token::Client::new(&env, &listing.nft_contract);
         // Assuming NFT uses the standard token interface for transfer
         nft_client.transfer(
-            &contract_address,
+            &env.current_contract_address(),
             &listing.lender,
             &(listing.token_id as i128),
         );
@@ -101,7 +97,6 @@ impl LendingContract {
         collateral_currency: Address,
         collateral_amount: i128,
     ) -> u64 {
-        extend_instance_ttl(&env);
         borrower.require_auth();
 
         let mut listing = get_listing(&env, listing_id);
@@ -130,13 +125,20 @@ impl LendingContract {
         }
 
         // Transfer collateral from borrower to contract
-        let contract_address = env.current_contract_address();
         let collateral_client = token::Client::new(&env, &collateral_currency);
-        collateral_client.transfer(&borrower, &contract_address, &collateral_amount);
+        collateral_client.transfer(
+            &borrower,
+            &env.current_contract_address(),
+            &collateral_amount,
+        );
 
         // Transfer NFT from contract to borrower
         let nft_client = token::Client::new(&env, &listing.nft_contract);
-        nft_client.transfer(&contract_address, &borrower, &(listing.token_id as i128));
+        nft_client.transfer(
+            &env.current_contract_address(),
+            &borrower,
+            &(listing.token_id as i128),
+        );
 
         listing.status = ListingStatus::Filled;
         set_listing(&env, listing_id, &listing);
@@ -166,58 +168,5 @@ impl LendingContract {
             .publish((soroban_sdk::symbol_short!("borrow"), position_id), ());
 
         position_id
-    }
-
-    /// Borrower voluntarily closes their position before term expiry.
-    ///
-    /// - Requires borrower auth.
-    /// - Panics if the position is not Active.
-    /// - Panics if the loan term has already expired (use liquidate() instead).
-    /// - Transfers the NFT: borrower → contract → lender.
-    /// - Calls settle() with no liquidator; emits position_returned event.
-    pub fn return_nft(env: Env, position_id: u64) {
-        extend_instance_ttl(&env);
-        let mut position = get_position(&env, position_id);
-
-        position.borrower.require_auth();
-
-        if position.status != PositionStatus::Active {
-            panic!("Position is not Active");
-        }
-
-        let now = env.ledger().timestamp();
-        let deadline = position.start_time + position.max_duration_secs;
-        if now > deadline {
-            panic!("Loan term has expired; use liquidate()");
-        }
-
-        // Transfer NFT from borrower back to contract, then to lender.
-        let contract_address = env.current_contract_address();
-        let nft_client = token::Client::new(&env, &position.nft_contract);
-        nft_client.transfer(
-            &position.borrower,
-            &contract_address,
-            &(position.token_id as i128),
-        );
-        nft_client.transfer(
-            &contract_address,
-            &position.lender,
-            &(position.token_id as i128),
-        );
-
-        // Settle collateral waterfall (no liquidator on voluntary return).
-        let config = get_config(&env);
-        let result = settlement::settle(&env, &position, None, &config);
-
-        position.status = PositionStatus::Returned;
-        set_position(&env, position_id, &position);
-
-        events::emit_position_returned(
-            &env,
-            position_id,
-            result.accrued_interest_usd,
-            result.platform_fee_usd,
-            result.borrower_rem,
-        );
     }
 }
