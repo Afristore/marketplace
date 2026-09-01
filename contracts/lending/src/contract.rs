@@ -109,7 +109,11 @@ impl LendingContract {
 
         // Escrow the NFT from the lender into the contract.
         let nft_client = token::Client::new(&env, &nft_contract);
-        nft_client.transfer(&lender, &env.current_contract_address(), &(token_id as i128));
+        nft_client.transfer(
+            &lender,
+            &env.current_contract_address(),
+            &(token_id as i128),
+        );
 
         let listing_id = next_listing_id(&env);
         let listing = Listing {

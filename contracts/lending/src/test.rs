@@ -3,7 +3,10 @@
 use super::*;
 use crate::interest::accrued_interest_usd;
 use crate::settlement::settle;
-use crate::storage::{get_config, get_listing, get_position, set_config, set_currency_symbol, set_listing, set_position};
+use crate::storage::{
+    get_config, get_listing, get_position, set_config, set_currency_symbol, set_listing,
+    set_position,
+};
 use crate::types::{Listing, ListingStatus, PlatformConfig, Position, PositionStatus};
 use crate::storage::{set_config, set_currency_symbol, set_listing, set_position};
 use crate::types::{Listing, ListingStatus, PlatformConfig, PositionStatus};
@@ -32,8 +35,8 @@ fn make_config(env: &Env, fee_receiver: Address, oracle: Address) -> PlatformCon
     PlatformConfig {
         admin: Address::generate(env),
         fee_receiver,
-        platform_fee_bps: 100,    // 1%
-        liquidator_fee_bps: 500,  // 5%
+        platform_fee_bps: 100,   // 1%
+        liquidator_fee_bps: 500, // 5%
         min_buffer_bps: 12000,
         max_buffer_bps: 20000,
         min_liq_threshold_bps: 11000,
@@ -158,21 +161,35 @@ fn test_initialize_double_init_panics() {
     let oracle_address = Address::generate(&env);
 
     client.initialize(
-        &admin, &fee_receiver, &oracle_address,
-        &100, &500, &12000, &20000, &11000, &11500, &3600,
+        &admin,
+        &fee_receiver,
+        &oracle_address,
+        &100,
+        &500,
+        &12000,
+        &20000,
+        &11000,
+        &11500,
+        &3600,
     );
 
     // Second call must panic.
     client.initialize(
-        &admin, &fee_receiver, &oracle_address,
-        &100, &500, &12000, &20000, &11000, &11500, &3600,
+        &admin,
+        &fee_receiver,
+        &oracle_address,
+        &100,
+        &500,
+        &12000,
+        &20000,
+        &11000,
+        &11500,
+        &3600,
     );
 }
 
 #[test]
-#[should_panic(
-    expected = "Invalid buffer bounds: min_buffer_bps must be less than max_buffer_bps"
-)]
+#[should_panic(expected = "Invalid buffer bounds: min_buffer_bps must be less than max_buffer_bps")]
 fn test_initialize_bad_buffer_bounds_panics() {
     let env = Env::default();
     env.mock_all_auths();
@@ -184,10 +201,12 @@ fn test_initialize_bad_buffer_bounds_panics() {
         &Address::generate(&env),
         &Address::generate(&env),
         &Address::generate(&env),
-        &100, &500,
+        &100,
+        &500,
         &20000, // min >= max – invalid
         &12000,
-        &11000, &11500,
+        &11000,
+        &11500,
         &3600,
     );
 }
@@ -207,8 +226,10 @@ fn test_initialize_bad_liq_threshold_bounds_panics() {
         &Address::generate(&env),
         &Address::generate(&env),
         &Address::generate(&env),
-        &100, &500,
-        &12000, &20000,
+        &100,
+        &500,
+        &12000,
+        &20000,
         &15000, // min >= max – invalid
         &11000,
         &3600,
@@ -216,9 +237,7 @@ fn test_initialize_bad_liq_threshold_bounds_panics() {
 }
 
 #[test]
-#[should_panic(
-    expected = "Invalid bounds: max_liq_threshold_bps must be less than min_buffer_bps"
-)]
+#[should_panic(expected = "Invalid bounds: max_liq_threshold_bps must be less than min_buffer_bps")]
 fn test_initialize_max_liq_ge_min_buffer_panics() {
     let env = Env::default();
     env.mock_all_auths();
@@ -230,8 +249,10 @@ fn test_initialize_max_liq_ge_min_buffer_panics() {
         &Address::generate(&env),
         &Address::generate(&env),
         &Address::generate(&env),
-        &100, &500,
-        &12000, &20000,
+        &100,
+        &500,
+        &12000,
+        &20000,
         &11000,
         &12500, // max_liq >= min_buffer – invalid
         &3600,
@@ -253,8 +274,10 @@ fn test_initialize_bad_fees_panics() {
         &Address::generate(&env),
         &5000, // platform_fee + liquidator_fee = 10000 – invalid
         &5000,
-        &12000, &20000,
-        &11000, &11500,
+        &12000,
+        &20000,
+        &11000,
+        &11500,
         &3600,
     );
 }
@@ -661,7 +684,10 @@ fn test_borrow_stale_oracle_note() {
     // returns 10_000_000 (1 USD/token).  A production oracle would enforce
     // max_price_staleness_secs.  No panic variant exists in the stub, so this
     // test is a documentation marker rather than a panic test.
-    assert!(true, "stale-oracle enforcement is a production oracle concern");
+    assert!(
+        true,
+        "stale-oracle enforcement is a production oracle concern"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
