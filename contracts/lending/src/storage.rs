@@ -1,5 +1,5 @@
 use crate::types::{Listing, PlatformConfig, Position};
-use soroban_sdk::{contracttype, Address, Env, String};
+use soroban_sdk::{contracttype, Address, Env, Symbol};
 
 #[contracttype]
 #[derive(Clone)]
@@ -112,14 +112,14 @@ pub fn has_position(env: &Env, id: u64) -> bool {
     env.storage().persistent().has(&DataKey::Position(id))
 }
 
-pub fn get_currency_symbol(env: &Env, currency: &Address) -> String {
+pub fn get_currency_symbol(env: &Env, currency: &Address) -> Symbol {
     let key = DataKey::WhitelistedCurrency(currency.clone());
-    let symbol: String = env.storage().persistent().get(&key).unwrap();
+    let symbol: Symbol = env.storage().persistent().get(&key).unwrap();
     extend_persistent_ttl(env, &key);
     symbol
 }
 
-pub fn set_currency_symbol(env: &Env, currency: &Address, symbol: &String) {
+pub fn set_currency_symbol(env: &Env, currency: &Address, symbol: &Symbol) {
     let key = DataKey::WhitelistedCurrency(currency.clone());
     env.storage().persistent().set(&key, symbol);
     extend_persistent_ttl(env, &key);
