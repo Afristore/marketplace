@@ -10,7 +10,7 @@ import {
 import { ART_CATEGORIES } from "./ListingForm";
 
 export type StatusFilter = "All" | "Active" | "Sold" | "Cancelled";
-export type SortOption = "newest" | "oldest" | "price-low" | "price-high";
+export type SortOption = "newest" | "oldest" | "price_asc" | "price_desc";
 
 export interface Filters {
   search: string;
@@ -25,8 +25,8 @@ const STATUS_FILTERS: StatusFilter[] = ["All", "Active", "Sold", "Cancelled"];
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: "newest", label: "Newest First" },
   { value: "oldest", label: "Oldest First" },
-  { value: "price-low", label: "Price: Low to High" },
-  { value: "price-high", label: "Price: High to Low" },
+  { value: "price_asc", label: "Price: Low to High" },
+  { value: "price_desc", label: "Price: High to Low" },
 ];
 
 interface SearchFilterProps {

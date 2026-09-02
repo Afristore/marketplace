@@ -211,6 +211,9 @@ function StakingPageContent() {
       await refreshNFTs();
       await fetchStakedNfts();
       await fetchPendingRewards();
+      const { totalStaked } = await import("@/lib/staking");
+      const updatedTotal = await totalStaked(poolAddress);
+      setPoolStakedCount(updatedTotal);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Staking failed");
     } finally {
@@ -223,11 +226,13 @@ function StakingPageContent() {
     setIsUnstaking(true);
     setError(null);
     try {
-      const { unstake } = await import("@/lib/staking");
+      const { unstake, totalStaked } = await import("@/lib/staking");
       await unstake(publicKey, collectionAddress, tokenId, poolAddress);
       await fetchStakedNfts();
       await refreshNFTs();
       await fetchPendingRewards();
+      const updatedTotal = await totalStaked(poolAddress);
+      setPoolStakedCount(updatedTotal);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Unstaking failed");
     } finally {
@@ -387,7 +392,7 @@ function StakingPageContent() {
                   Est. APY
                 </p>
               </div>
-              <p className="text-2xl font-display font-bold text-mint-400 mt-2">
+              <p className="text-2xl font-display font-bold text-mint-400 mt-2" data-testid="staking-apy">
                 {apyDisplay}
                 {apyDisplay !== "—" && apyDisplay !== "0" && (
                   <span className="text-sm font-normal text-white/40 ml-1">
@@ -400,7 +405,7 @@ function StakingPageContent() {
               <p className="text-xs font-bold uppercase tracking-widest text-white/40">
                 Pool TVL
               </p>
-              <p className="text-2xl font-display font-bold text-white mt-2">
+              <p className="text-2xl font-display font-bold text-white mt-2" data-testid="staking-tvl">
                 {poolStakedCount}{" "}
                 <span className="text-sm font-normal text-white/40">staked</span>
               </p>

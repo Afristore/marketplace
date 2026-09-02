@@ -6,6 +6,7 @@ import {
   MOCK_ARTWORK_METADATA,
   setupMarketplaceMocks,
   resetE2eListingsInBrowser,
+  rejectNextE2eTransaction,
 } from "./helpers/marketplace-mocks";
 import { connectFreighterWallet } from "./helpers/wallet";
 
@@ -174,6 +175,92 @@ test.describe("E2E [Purchasing] - Attempting to buy own listing is disabled (#51
 
     // The seller must not be able to buy their own listing.
     await expect(page.getByRole("button", { name: /buy now/i })).toHaveCount(0);
+  });
+});
+
+test.describe("E2E [Purchasing] - Successful purchase shows success modal (#509)", () => {
+  const store = new MarketplaceTestStore();
+
+  test.beforeEach(async ({ page }) => {
+    store.reset();
+    await setupMarketplaceMocks(page, store);
+    await resetE2eListingsInBrowser(page);
+  });
+
+  test("buyer sees a success modal with a Done button after paying", async ({
+    page,
+  }) => {
+    store.upsertActive({
+      listing_id: 9840,
+      artist: TEST_PUBLIC_KEY,
+      metadata_cid: E2E_METADATA_CID,
+      price: String(18 * 10_000_000),
+      currency: "XLM",
+      token: DEFAULT_TOKEN,
+      status: "Active",
+      owner: null,
+      created_at: Math.floor(Date.now() / 1000),
+      original_creator: TEST_PUBLIC_KEY,
+      royalty_bps: 0,
+      recipients: [{ address: TEST_PUBLIC_KEY, percentage: 100 }],
+    });
+
+    await connectFreighterWallet(page, BUYER_PUBLIC_KEY);
+    await page.goto("/explore");
+    await expect(page.getByText(MOCK_ARTWORK_METADATA.title)).toBeVisible();
+
+    await page.getByRole("button", { name: /buy now/i }).first().click();
+    await expect(page.getByText("Checkout")).toBeVisible();
+
+    await page.getByRole("button", { name: /pay 18 xlm/i }).click();
+
+    // The success modal replaces the checkout form — it stays open until the
+    // buyer dismisses it, it isn't just a fleeting toast.
+    const successModal = page.getByTestId("purchase-success-modal");
+    await expect(successModal).toBeVisible({ timeout: 15_000 });
+    await expect(successModal.getByText(/purchase successful/i)).toBeVisible();
+    await expect(successModal.getByText(/18 xlm/i)).toBeVisible();
+
+    // Checkout header/content is gone, replaced entirely by the success view.
+    await expect(page.getByText("Checkout")).toBeHidden();
+
+    await successModal.getByRole("button", { name: /done/i }).click();
+    await expect(successModal).toBeHidden();
+
+    store.markSold(9840, BUYER_PUBLIC_KEY);
+    await page.reload();
+    await expect(page.getByRole("button", { name: /buy now/i })).toHaveCount(0);
+  });
+
+  test("failed purchase does not show the success modal", async ({ page }) => {
+    store.upsertActive({
+      listing_id: 9841,
+      artist: TEST_PUBLIC_KEY,
+      metadata_cid: E2E_METADATA_CID,
+      price: String(5 * 10_000_000),
+      currency: "XLM",
+      token: DEFAULT_TOKEN,
+      status: "Active",
+      owner: null,
+      created_at: Math.floor(Date.now() / 1000),
+      original_creator: TEST_PUBLIC_KEY,
+      royalty_bps: 0,
+      recipients: [{ address: TEST_PUBLIC_KEY, percentage: 100 }],
+    });
+
+    await connectFreighterWallet(page, BUYER_PUBLIC_KEY);
+    await rejectNextE2eTransaction(page);
+    await page.goto("/explore");
+    await expect(page.getByText(MOCK_ARTWORK_METADATA.title)).toBeVisible();
+
+    await page.getByRole("button", { name: /buy now/i }).first().click();
+    await expect(page.getByText("Checkout")).toBeVisible();
+    await page.getByRole("button", { name: /pay 5 xlm/i }).click();
+
+    // A rejected/failed transaction must never show the success modal, and the
+    // checkout form must remain open so the buyer can retry.
+    await expect(page.getByTestId("purchase-success-modal")).toHaveCount(0);
+    await expect(page.getByText("Checkout")).toBeVisible();
   });
 });
 

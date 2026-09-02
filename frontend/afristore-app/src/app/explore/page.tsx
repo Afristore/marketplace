@@ -2,13 +2,16 @@
 // app/explore/page.tsx — Browse / Explore All Listings
 //
 // Full catalogue page with search, filtering, sorting, and
-// pagination for discovering marketplace listings at scale.
+// server-side pagination for discovering marketplace listings
+// at scale. Sorting, category/status/price filtering, and paging
+// are all performed by the indexer so clients only ever download
+// the page they are viewing.
 // ─────────────────────────────────────────────────────────────
 
 "use client";
 
-import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { Listing, stroopsToXlm } from "@/lib/contract";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { Listing } from "@/lib/contract";
 import { ListingCard } from "@/components/ListingCard";
 import {
   ChevronLeft,
@@ -17,9 +20,8 @@ import {
   AlertCircle,
   RefreshCw,
 } from "lucide-react";
-import { SearchFilter, Filters, SortOption } from "@/components/SearchFilter";
-import { getCachedMetadata, ArtworkMetadata } from "@/lib/ipfs";
-import { fetchListings } from "@/lib/indexer";
+import { SearchFilter, Filters } from "@/components/SearchFilter";
+import { fetchListings, fetchMarketplaceStats } from "@/lib/indexer";
 import { getAllListings } from "@/lib/contract";
 
 // ── Types ────────────────────────────────────────────────────
@@ -29,7 +31,8 @@ const PAGE_SIZE = 12;
 // ── Page Component ───────────────────────────────────────────
 
 export default function ExplorePage() {
-  const [allListings, setAllListings] = useState<Listing[]>([]);
+  const [listings, setListings] = useState<Listing[]>([]);
+  const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,9 +48,11 @@ export default function ExplorePage() {
   const [page, setPage] = useState(1);
   const [showFilters, setShowFilters] = useState(false);
 
-  const [metadataMap, setMetadataMap] = useState<
-    Map<string, ArtworkMetadata | null>
-  >(new Map());
+  const [stats, setStats] = useState<{
+    total: number;
+    active: number;
+    sold: number;
+  } | null>(null);
 
   // Debounce search so we don't fire on every keystroke
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -63,37 +68,72 @@ export default function ExplorePage() {
     };
   }, [filters.search]);
 
-  // Fetch from indexer whenever database-filterable params change
+  // Fetch marketplace-wide stats for the header counters (independent of the
+  // paginated listing query so the whole catalogue is never downloaded).
+  useEffect(() => {
+    let cancelled = false;
+    fetchMarketplaceStats().then((s) => {
+      if (cancelled || !s) return;
+      setStats({
+        total: s.totalListings,
+        active: s.activeListings,
+        sold: s.totalSales,
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Fetch the requested page from the indexer whenever filter/page params
+  // change. All filtering, sorting, and pagination happen server-side.
   const load = useCallback(async () => {
     setIsLoading(true);
     setError(null);
+    const start = (page - 1) * PAGE_SIZE;
     try {
-      const opts: Parameters<typeof fetchListings>[0] = { limit: 1000 };
+      const opts: Parameters<typeof fetchListings>[0] = {
+        limit: PAGE_SIZE,
+        offset: start,
+        sort: filters.sort,
+      };
       if (filters.status !== "All") opts.status = filters.status;
+      if (filters.category !== "All") opts.category = filters.category;
       if (filters.minPrice) opts.minPrice = filters.minPrice;
       if (filters.maxPrice) opts.maxPrice = filters.maxPrice;
       if (debouncedSearch.trim()) opts.search = debouncedSearch.trim();
 
       const res = await fetchListings(opts);
       const rows = Array.isArray(res.listings) ? res.listings : [];
-      if (rows.length > 0) {
-        setAllListings(rows);
+      if (rows.length > 0 || typeof res.total === "number") {
+        setListings(rows);
+        setTotal(typeof res.total === "number" ? res.total : rows.length);
       } else {
         // Fallback to on-chain scan only when indexer response is malformed
         const all = await getAllListings();
-        setAllListings(all);
+        setListings(all.slice(start, start + PAGE_SIZE));
+        setTotal(all.length);
       }
     } catch {
       try {
         const all = await getAllListings();
-        setAllListings(all);
+        setListings(all.slice(start, start + PAGE_SIZE));
+        setTotal(all.length);
       } catch (e: unknown) {
         setError(e instanceof Error ? e.message : "Failed to load listings");
       }
     } finally {
       setIsLoading(false);
     }
-  }, [filters.status, filters.minPrice, filters.maxPrice, debouncedSearch]);
+  }, [
+    filters.status,
+    filters.category,
+    filters.minPrice,
+    filters.maxPrice,
+    filters.sort,
+    debouncedSearch,
+    page,
+  ]);
 
   useEffect(() => {
     load();
@@ -104,66 +144,9 @@ export default function ExplorePage() {
     setPage(1);
   }, [filters]);
 
-  // Resolve metadata for category / full-text search (client-side only)
-  useEffect(() => {
-    if (allListings.length === 0) return;
-    let cancelled = false;
-    const resolveAll = async () => {
-      const entries: [string, ArtworkMetadata | null][] = [];
-      await Promise.all(
-        allListings.map(async (l) => {
-          if (!l.metadata_cid) return;
-          const meta = await getCachedMetadata(l.metadata_cid);
-          entries.push([l.metadata_cid, meta]);
-        }),
-      );
-      if (!cancelled) setMetadataMap(new Map(entries));
-    };
-    resolveAll();
-    return () => {
-      cancelled = true;
-    };
-  }, [allListings]);
+  // ── Pagination (server-side) ───────────────────────────────
 
-  // ── Client-side post-filter for category + sort ───────────
-
-  const filtered = useMemo(() => {
-    let result = [...allListings];
-
-    // Category filter (IPFS metadata — client-side only)
-    if (filters.category !== "All") {
-      result = result.filter((l) => {
-        const meta = l.metadata_cid ? metadataMap.get(l.metadata_cid) : null;
-        return meta?.category === filters.category;
-      });
-    }
-
-    // Sort
-    switch (filters.sort) {
-      case "newest":
-        result.sort((a, b) => b.created_at - a.created_at);
-        break;
-      case "oldest":
-        result.sort((a, b) => a.created_at - b.created_at);
-        break;
-      case "price-low":
-        result.sort((a, b) => a.price < b.price ? -1 : a.price > b.price ? 1 : 0);
-        break;
-      case "price-high":
-        result.sort((a, b) => b.price < a.price ? -1 : b.price > a.price ? 1 : 0);
-        break;
-    }
-
-    return result;
-  }, [allListings, filters.category, filters.sort, metadataMap]);
-
-  // ── Pagination ───────────────────────────────────────────
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginatedListings = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE;
-    return filtered.slice(start, start + PAGE_SIZE);
-  }, [filtered, page]);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const goToPage = useCallback(
     (p: number) => {
@@ -173,10 +156,9 @@ export default function ExplorePage() {
     [totalPages],
   );
 
-  // ── Stats ────────────────────────────────────────────────
-
-  const activeCnt = allListings.filter((l) => l.status === "Active").length;
-  const soldCnt = allListings.filter((l) => l.status === "Sold").length;
+  // "Showing X - Y of Z" — computed from the server-provided total
+  const showingStart = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1;
+  const showingEnd = Math.min(page * PAGE_SIZE, total);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -196,9 +178,9 @@ export default function ExplorePage() {
             {/* Stats */}
             <div className="flex flex-wrap gap-8 md:gap-12">
               {[
-                { label: "Total Art", value: allListings.length },
-                { label: "Active", value: activeCnt },
-                { label: "Sold", value: soldCnt },
+                { label: "Total Art", value: stats?.total ?? 0 },
+                { label: "Active", value: stats?.active ?? 0 },
+                { label: "Sold", value: stats?.sold ?? 0 },
               ].map(({ label, value }) => (
                 <div key={label} className="relative">
                   <span className="text-3xl font-display font-bold text-white block">
@@ -222,7 +204,7 @@ export default function ExplorePage() {
         }
         showFilters={showFilters}
         setShowFilters={setShowFilters}
-        totalResults={filtered.length}
+        totalResults={total}
       />
 
       {/* Content */}
@@ -232,15 +214,13 @@ export default function ExplorePage() {
           <p className="mb-6 text-sm text-gray-500">
             Showing{" "}
             <span className="font-semibold text-gray-700">
-              {Math.min((page - 1) * PAGE_SIZE + 1, filtered.length)}
+              {showingStart}
               {" - "}
-              {Math.min(page * PAGE_SIZE, filtered.length)}
+              {showingEnd}
             </span>{" "}
             of{" "}
-            <span className="font-semibold text-gray-700">
-              {filtered.length}
-            </span>{" "}
-            {filtered.length === 1 ? "artwork" : "artworks"}
+            <span className="font-semibold text-gray-700">{total}</span>{" "}
+            {total === 1 ? "artwork" : "artworks"}
             {filters.search && (
               <span>
                 {" "}
@@ -296,7 +276,7 @@ export default function ExplorePage() {
         )}
 
         {/* Empty state */}
-        {!isLoading && !error && filtered.length === 0 && (
+        {!isLoading && !error && total === 0 && (
           <div className="flex flex-col items-center justify-center py-20">
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-brand-50 text-brand-500 mb-4">
               <Package size={32} />
@@ -332,10 +312,10 @@ export default function ExplorePage() {
         )}
 
         {/* Listings grid */}
-        {!isLoading && !error && filtered.length > 0 && (
+        {!isLoading && !error && total > 0 && (
           <>
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {paginatedListings.map((listing: Listing) => (
+              {listings.map((listing: Listing) => (
                 <ListingCard
                   key={listing.listing_id}
                   listing={listing}

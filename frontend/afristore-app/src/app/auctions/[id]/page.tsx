@@ -198,8 +198,11 @@ export default function AuctionDetailPage() {
   const isActive = auction?.status === "Active";
   const isFinalized = auction?.status === "Finalized";
   const isCancelled = auction?.status === "Cancelled";
-  const canFinalize = isActive && isExpired;
+  const isOwn = auction ? publicKey === auction.creator : false;
+  const canFinalize = isActive && isExpired && isOwn;
   const canBid = isActive && !isExpired;
+  const minutesRemaining = auction ? Math.floor(Math.max(0, auction.end_time - now) / 60) : 0;
+  const isEndingSoon = isActive && !isExpired && minutesRemaining > 0 && minutesRemaining <= 60;
 
   const imageUrl = metadata?.image ? cidToGatewayUrl(metadata.image) : null;
   const highestBidXlm = auction ? stroopsToXlm(auction.highest_bid) : "0";
@@ -312,6 +315,12 @@ export default function AuctionDetailPage() {
                   Time Remaining
                 </p>
                 <Countdown endTime={auction.end_time} />
+                {isEndingSoon && (
+                  <div className="mt-3 flex items-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-sm font-bold text-red-600 animate-pulse border border-red-200">
+                    <Clock size={14} />
+                    Ending Soon — {minutesRemaining} min remaining
+                  </div>
+                )}
               </div>
             )}
 

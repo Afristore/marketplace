@@ -64,6 +64,7 @@ const INDEXER_URL = (
 export async function setupMarketplaceMocks(
   page: Page,
   store: MarketplaceTestStore,
+  options?: { categoryByCid?: Record<string, string> },
 ) {
   await page.route("**/api/ipfs/upload-image", async (route) => {
     await route.fulfill({
@@ -94,26 +95,108 @@ export async function setupMarketplaceMocks(
   await page.route("**/gateway.pinata.cloud/ipfs/**", fulfillMetadata);
   await page.route("**/ipfs.io/ipfs/**", fulfillMetadata);
 
+  const categoryByCid = options?.categoryByCid ?? {};
+
+  const applyListingFilters = (url: URL): E2eIndexerListing[] => {
+    let rows = store.listings;
+
+    const statusFilter = url.searchParams.get("status");
+    if (statusFilter && statusFilter !== "All") {
+      rows = rows.filter((l) => l.status === statusFilter);
+    }
+
+    const artistFilter = url.searchParams.get("artist");
+    if (artistFilter) {
+      rows = rows.filter((l) => l.artist === artistFilter);
+    }
+
+    const ownerFilter = url.searchParams.get("owner");
+    if (ownerFilter) {
+      rows = rows.filter((l) => l.owner === ownerFilter);
+    }
+
+    const search = url.searchParams.get("search");
+    if (search) {
+      const q = search.toLowerCase();
+      rows = rows.filter((l) => l.artist.toLowerCase().includes(q));
+    }
+
+    const minPrice = url.searchParams.get("minPrice");
+    const maxPrice = url.searchParams.get("maxPrice");
+    if (minPrice || maxPrice) {
+      rows = rows.filter((l) => {
+        const p = Number(l.price);
+        if (minPrice && p < Number(minPrice)) return false;
+        if (maxPrice && p > Number(maxPrice)) return false;
+        return true;
+      });
+    }
+
+    const category = url.searchParams.get("category");
+    if (category && category !== "All") {
+      rows = rows.filter((l) => categoryByCid[l.metadata_cid] === category);
+    }
+
+    return rows;
+  };
+
+  const sortListings = (rows: E2eIndexerListing[], sort: string | null) => {
+    const copy = [...rows];
+    switch (sort) {
+      case "oldest":
+        return copy.sort((a, b) => a.created_at - b.created_at);
+      case "price_asc":
+        return copy.sort((a, b) => Number(a.price) - Number(b.price));
+      case "price_desc":
+        return copy.sort((a, b) => Number(b.price) - Number(a.price));
+      default: // "newest"
+        return copy.sort((a, b) => b.created_at - a.created_at);
+    }
+  };
+
   await page.route(`${INDEXER_URL}/listings**`, async (route) => {
     if (route.request().method() !== "GET") {
       return route.continue();
     }
 
     const url = new URL(route.request().url());
-    const statusFilter = url.searchParams.get("status");
-    const artistFilter = url.searchParams.get("artist");
-    let rows = store.listings;
-    if (statusFilter && statusFilter !== "All") {
-      rows = rows.filter((l) => l.status === statusFilter);
-    }
-    if (artistFilter) {
-      rows = rows.filter((l) => l.artist === artistFilter);
-    }
+
+    let rows = applyListingFilters(url);
+    const total = rows.length;
+
+    rows = sortListings(rows, url.searchParams.get("sort"));
+
+    const rawLimit = Number(url.searchParams.get("limit"));
+    const limit =
+      Number.isFinite(rawLimit) && rawLimit > 0
+        ? Math.min(rawLimit, 1000)
+        : 50;
+    const rawOffset = Number(url.searchParams.get("offset") ?? 0);
+    const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0;
+    rows = rows.slice(offset, offset + limit);
 
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ listings: rows, total: rows.length }),
+      body: JSON.stringify({ listings: rows, total }),
+    });
+  });
+
+  await page.route(`${INDEXER_URL}/stats**`, async (route) => {
+    if (route.request().method() !== "GET") {
+      return route.continue();
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        totalListings: store.listings.length,
+        activeListings: store.activeListings().length,
+        totalSales: store.listings.filter((l) => l.status === "Sold").length,
+        totalVolume: "0",
+        activeUsers: 0,
+        totalEvents: 0,
+      }),
     });
   });
 

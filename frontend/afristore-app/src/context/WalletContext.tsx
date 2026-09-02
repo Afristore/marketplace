@@ -8,6 +8,11 @@ import {
   MagicWalletStatus,
 } from "@/hooks/useMagicWallet";
 import { isE2eMockChain } from "@/lib/e2e-chain-mock";
+import {
+  NotificationsProvider,
+  useNotifications,
+} from "./NotificationsContext";
+import type { NotificationsState } from "./NotificationsContext";
 
 export type WalletType = "freighter" | "magic" | null;
 
@@ -28,6 +33,7 @@ export interface UnifiedWalletState {
   switchNetwork: (networkName: string) => Promise<void>;
   freighter: WalletState;
   magic: MagicWalletState;
+  notifications: NotificationsState;
 }
 
 const WalletContext = createContext<UnifiedWalletState | null>(null);
@@ -80,6 +86,44 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  return (
+    <NotificationsProvider publicKey={publicKey}>
+      <WalletContextInner
+        freighter={freighter}
+        magic={magic}
+        walletType={walletType}
+        publicKey={publicKey}
+        status={status}
+        network={network}
+        switchNetwork={switchNetwork}
+      >
+        {children}
+      </WalletContextInner>
+    </NotificationsProvider>
+  );
+}
+
+function WalletContextInner({
+  freighter,
+  magic,
+  walletType,
+  publicKey,
+  status,
+  network,
+  switchNetwork,
+  children,
+}: {
+  freighter: WalletState;
+  magic: MagicWalletState;
+  walletType: WalletType;
+  publicKey: string | null;
+  status: UnifiedWalletState["status"];
+  network: string;
+  switchNetwork: (networkName: string) => Promise<void>;
+  children: ReactNode;
+}) {
+  const notifications = useNotifications();
+
   const value = useMemo(
     () => ({
       walletType,
@@ -104,8 +148,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       switchNetwork,
       freighter,
       magic,
+      notifications,
     }),
-    [walletType, publicKey, status, network, switchNetwork, freighter, magic],
+    [walletType, publicKey, status, network, switchNetwork, freighter, magic, notifications],
   );
 
   return (

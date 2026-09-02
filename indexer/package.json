@@ -6,6 +6,7 @@
     "dev": "tsx src/index.ts",
     "crank": "tsx src/crank.ts",
     "backfill": "tsx src/backfill.ts",
+    "backfill:categories": "tsx src/backfill-categories.ts",
     "build": "npm run prisma:generate && tsc",
     "prestart": "npx prisma@5 migrate deploy && npm run migrate:status",
     "start": "node dist/index.js",
@@ -24,7 +25,7 @@
     "@prisma/client": "~5.22.0",
     "@stellar/stellar-sdk": "^14.6.1",
     "@types/express-rate-limit": "^5.1.3",
-    "axios": "^1.15.2",
+    "axios": "^1.9.0",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
@@ -43,9 +44,10 @@
     "ts-node": "^10.9.2",
     "tsx": "^4.22.4",
     "typescript": "^5.4.5",
-    "vitest": "^4.1.8"
+    "vitest": "^3.2.7"
   },
   "overrides": {
-    "path-to-regexp": "^8.4.0"
+    "path-to-regexp": "^8.4.0",
+    "ip-address": ">=10.5.0"
   }
 }
