@@ -133,6 +133,24 @@ impl LendingContract {
         .publish(&env);
     }
 
+    pub fn settle(env: Env, borrower: Address, interest_rate_bps: u32) -> i128 {
+        if !is_initialized(&env) {
+            panic_with_error!(&env, LendingError::NotInitialized);
+        }
+
+        if is_paused(&env) {
+            panic_with_error!(&env, LendingError::ContractPaused);
+        }
+
+        borrower.require_auth();
+
+        let position = load_borrow_position(&env, &borrower)
+            .unwrap_or_else(|| panic_with_error!(&env, LendingError::PositionNotFound));
+
+        let now = env.ledger().timestamp();
+        crate::settlement::settle_position(&env, now, &position, interest_rate_bps)
+    }
+
     pub fn get_position(env: Env, borrower: Address) -> Option<BorrowPosition> {
         load_borrow_position(&env, &borrower)
     }

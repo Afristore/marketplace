@@ -1,7 +1,7 @@
 use super::*;
 
 use soroban_sdk::{
-    testutils::Address as _,
+    testutils::{Address as _, Ledger as _},
     token::{StellarAssetClient, TokenClient},
     Address, Env,
 };
@@ -196,4 +196,61 @@ fn test_borrow_multiple_valid_topups_succeed() {
 
     assert_eq!(col_tc.balance(&contract_id), 500);
     assert_eq!(bor_tc.balance(&borrower), 150);
+}
+
+// ── Settlement Elapsed-Time Tests (Issue #803) ──────────────────────────
+
+#[test]
+fn test_settlement_invalid_ledger_time_preceding_start_time_fails() {
+    let (env, client, _admin, borrower, _col_token, _bor_token, _contract_id) = setup();
+
+    // Set initial ledger timestamp to 10,000 and create borrow position
+    env.ledger().set_timestamp(10_000);
+    client.borrow(&borrower, &500, &1_000);
+
+    let pos_before = client.get_position(&borrower).unwrap();
+    assert_eq!(pos_before.timestamp, 10_000);
+
+    // Simulate clock drift / invalid ledger state where now (5,000) < start_time (10,000)
+    env.ledger().set_timestamp(5_000);
+
+    let res = client.try_settle(&borrower, &500);
+    let err = res.unwrap_err().unwrap();
+
+    // 1. Reverts with explicit InvalidLedgerTime error
+    assert_eq!(err, LendingError::InvalidLedgerTime.into());
+
+    // 2. Confirm state integrity: position remains intact and unmodified
+    let pos_after = client.get_position(&borrower).unwrap();
+    assert_eq!(pos_after, pos_before);
+}
+
+#[test]
+fn test_settlement_equal_timestamp_zero_elapsed_time_succeeds() {
+    let (env, client, _admin, borrower, _col_token, _bor_token, _contract_id) = setup();
+
+    env.ledger().set_timestamp(10_000);
+    client.borrow(&borrower, &500, &1_000);
+
+    // Settle at exact same timestamp (now == start_time)
+    let total = client.settle(&borrower, &500);
+
+    // Zero elapsed time yields zero interest; total due equals principal borrow amount
+    assert_eq!(total, 1_000);
+}
+
+#[test]
+fn test_settlement_future_timestamp_calculates_interest_succeeds() {
+    let (env, client, _admin, borrower, _col_token, _bor_token, _contract_id) = setup();
+
+    env.ledger().set_timestamp(10_000);
+    client.borrow(&borrower, &500, &100_000);
+
+    // Advance clock by 1 year (31,536,000 seconds)
+    env.ledger().set_timestamp(10_000 + 31_536_000);
+
+    // Interest rate 1,000 BPS (10% APR)
+    // 100,000 * 10% * 1 year = 10,000 interest
+    let total = client.settle(&borrower, &1_000);
+    assert_eq!(total, 110_000);
 }

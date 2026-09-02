@@ -12,6 +12,7 @@ pub enum LendingError {
     InsufficientLiquidity = 6,
     PositionNotFound = 7,
     ContractPaused = 8,
+    InvalidLedgerTime = 9,
 }
 
 #[contracttype]
