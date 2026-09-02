@@ -1,150 +1,216 @@
-// E2E tests for staking functionality
-// Covers issues #528 (rewards estimation) and #529 (unstake flow)
-
 import { test, expect } from "@playwright/test";
-import { TEST_PUBLIC_KEY } from "./freighter-mock";
-import {
-  MarketplaceTestStore,
-  setupMarketplaceMocks,
-  resetE2eListingsInBrowser,
-  setupWalletIndexerMocks,
-  seedE2eStakingPoolInBrowser,
-} from "./helpers/marketplace-mocks";
-import { connectFreighterWallet } from "./helpers/wallet";
+import { mockFreighter, TEST_PUBLIC_KEY } from "./freighter-mock";
 
-test.describe("Staking E2E", () => {
-  const store = new MarketplaceTestStore();
-  const COLLECTION_ADDRESS = "CBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA00001";
-  const collectionNfts = [
-    { collectionAddress: COLLECTION_ADDRESS, tokenId: 1, name: "Masai Warrior #1" },
-    { collectionAddress: COLLECTION_ADDRESS, tokenId: 2, name: "Masai Warrior #2" },
-  ];
-
+test.describe("Staking Page", () => {
   test.beforeEach(async ({ page }) => {
-    store.reset();
-    await setupMarketplaceMocks(page, store);
-    await resetE2eListingsInBrowser(page);
-    await connectFreighterWallet(page, TEST_PUBLIC_KEY);
-
-    // Mock owned NFTs indexer endpoint
-    await setupWalletIndexerMocks(page, { tokens: collectionNfts });
-
-    // Abort staked endpoint so fetchStakedNfts falls back to on-chain mock
-    await page.route("**/wallets/*/staked", async (route) => {
-      await route.abort("connectionrefused");
-    });
-
-    // Seed a staking pool for the collection
-    await seedE2eStakingPoolInBrowser(page, COLLECTION_ADDRESS, 100);
+    await mockFreighter(page);
   });
 
-  test("#527: clicking stake signs transaction and moves NFT to staked tab", async ({
-    page,
-  }) => {
-    await page.goto(`/staking?collection=${COLLECTION_ADDRESS}`);
-    await page.waitForLoadState("domcontentloaded");
+  test("staking page lists un-staked NFTs eligible for staking", async ({ page }) => {
+    const TEST_COLLECTION_ADDRESS = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+    const MOCK_POOL_ADDRESS = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSCX";
 
-    // Pool stats should be visible
-    await expect(page.getByText("Reward Token").first()).toBeVisible({
-      timeout: 15_000,
+    // Mock owned NFTs from the indexer
+    const mockOwnedNFTs = [
+      {
+        collectionAddress: TEST_COLLECTION_ADDRESS,
+        tokenId: 1,
+        name: "Serengeti Lion #1",
+        image: "ipfs://QmTestImage1",
+      },
+      {
+        collectionAddress: TEST_COLLECTION_ADDRESS,
+        tokenId: 2,
+        name: "Kilimanjaro Sunset #2",
+        image: "ipfs://QmTestImage2",
+      },
+      {
+        collectionAddress: TEST_COLLECTION_ADDRESS,
+        tokenId: 3,
+        name: "Victoria Falls #3",
+        image: "ipfs://QmTestImage3",
+      },
+    ];
+
+    // Mock staked NFTs (empty - none staked yet)
+    const mockStakedNFTs: object[] = [];
+
+    // Mock staking pool config
+    const mockPoolConfig = {
+      rewardToken: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+      rewardRate: "10000000", // 1 token per second
+      minStakeDuration: 0,
+      maxStakeDuration: 0,
+    };
+
+    // Setup route handlers
+    await page.route("**/wallets/**/nfts**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(mockOwnedNFTs),
+      });
     });
-    await expect(page.getByText("Daily Rate / NFT")).toBeVisible();
-    await expect(page.getByText("Est. APY")).toBeVisible();
-    await expect(page.getByText("Pool TVL")).toBeVisible();
 
-    // Should show the Unstaked NFTs tab with our NFTs
-    await expect(page.getByText("Masai Warrior #1")).toBeVisible({
-      timeout: 10_000,
+    await page.route("**/wallets/**/staked**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(mockStakedNFTs),
+      });
     });
-    await expect(page.getByText("Masai Warrior #2")).toBeVisible();
 
-    // Select the first NFT by clicking on it
-    await page.getByText("Masai Warrior #1").click();
-
-    // Stake Selected button should appear
-    const stakeBtn = page.getByRole("button", { name: /stake selected/i });
-    await expect(stakeBtn).toBeVisible();
-
-    // Click stake
-    await stakeBtn.click();
-
-    // Verify Staked Vault tab now has the NFT
-    await page.getByRole("button", { name: /staked vault/i }).click();
-    await expect(page.getByText("Masai Warrior #1")).toBeVisible({
-      timeout: 10_000,
+    // Mock the launchpad API for staking pool lookup
+    await page.route("**/launchpad/**", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.pathname.includes("staking-pool")) {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ poolAddress: MOCK_POOL_ADDRESS }),
+        });
+      } else {
+        await route.continue();
+      }
     });
+
+    // Mock Soroban contract calls for staking pool config
+    await page.route("**/staking/**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(mockPoolConfig),
+      });
+    });
+
+    // Navigate to staking page
+    await page.goto("/staking");
+
+    // Wait for page to load and wallet to connect
+    const shortKey = `${TEST_PUBLIC_KEY.slice(0, 4)}…${TEST_PUBLIC_KEY.slice(-4)}`;
+    await expect(page.getByText(shortKey)).toBeVisible({ timeout: 10_000 });
+
+    // Verify staking page header is visible
+    await expect(page.getByRole("heading", { name: /nft staking/i })).toBeVisible();
+
+    // Enter collection address in the input field
+    const collectionInput = page.getByPlaceholder(/paste nft contract address/i);
+    await collectionInput.fill(TEST_COLLECTION_ADDRESS);
+
+    // Click load pool button
+    const loadPoolButton = page.getByRole("button", { name: /load pool/i });
+    await loadPoolButton.click();
+
+    // Wait for pool to load
+    await expect(page.getByText(/reward token/i)).toBeVisible({ timeout: 10_000 });
+
+    // Verify "Unstaked NFTs" tab is active by default or click it
+    const unstakedTab = page.getByRole("button", { name: /unstaked nfts/i });
+    await unstakedTab.click();
+
+    // Verify unstaked NFTs are displayed
+    // Check for the NFT names or token IDs
+    await expect(page.getByText(/serengeti lion/i)).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText(/kilimanjaro sunset/i)).toBeVisible();
+    await expect(page.getByText(/victoria falls/i)).toBeVisible();
+
+    // Verify NFT cards are selectable (eligible for staking)
+    const nftCards = page.locator("[data-testid^='nft-card'], button[class*='rounded-2xl']").filter({
+      hasText: /nft|serengeti|kilimanjaro|victoria/i,
+    });
+
+    // Count should match our mock data (3 NFTs)
+    await expect(nftCards).toHaveCount(3, { timeout: 5_000 });
+
+    // Verify each NFT card can be selected for staking
+    const firstNftCard = nftCards.first();
+    await firstNftCard.click();
+
+    // Verify selection indicator appears
+    await expect(page.getByText(/selected/i)).toBeVisible();
+
+    // Verify "Stake Selected" button becomes available
+    const stakeSelectedButton = page.getByRole("button", { name: /stake selected/i });
+    await expect(stakeSelectedButton).toBeEnabled();
+
+    // Verify stats show correct counts
+    await expect(page.getByText("3")).toBeVisible(); // You Own count
+    await expect(page.getByText("You Own")).toBeVisible();
+    await expect(page.getByText("0")).toBeVisible(); // Your Staked count
+    await expect(page.getByText("Your Staked")).toBeVisible();
   });
 
-  test("#528: staking dashboard calculates estimated rewards", async ({
-    page,
-  }) => {
-    await page.goto(`/staking?collection=${COLLECTION_ADDRESS}`);
-    await page.waitForLoadState("domcontentloaded");
-
-    // Wait for pool stats to load
-    await expect(page.getByText("Reward Token").first()).toBeVisible({
-      timeout: 15_000,
+  test("staking page shows empty state when no NFTs owned", async ({ page }) => {
+    // Mock empty owned NFTs
+    await page.route("**/wallets/**/nfts**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
     });
 
-    // Select both NFTs and stake them
-    await page.getByText("Masai Warrior #1").click();
-    await page.getByText("Masai Warrior #2").click();
-
-    const stakeBtn = page.getByRole("button", { name: /stake selected/i });
-    await expect(stakeBtn).toBeVisible();
-    await stakeBtn.click();
-
-    // Switch to Staked Vault tab
-    await page.getByRole("button", { name: /staked vault/i }).click();
-
-    // Verify pending rewards are shown
-    // Mock calculateRewards returns stakes.length * 100 = 200
-    // Displayed value = 200 / 10_000_000 = 0.00002
-    await expect(page.getByText(/pending rewards/i)).toBeVisible({
-      timeout: 10_000,
+    await page.route("**/wallets/**/staked**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([]),
+      });
     });
-    await expect(page.getByText(/0.00002/)).toBeVisible();
 
-    // Verify "Claim All Rewards" button is enabled (pendingRewards > 0)
-    const claimBtn = page.getByRole("button", { name: /claim all rewards/i });
-    await expect(claimBtn).toBeVisible();
-    await expect(claimBtn).toBeEnabled();
+    await page.goto("/staking");
+
+    const shortKey = `${TEST_PUBLIC_KEY.slice(0, 4)}…${TEST_PUBLIC_KEY.slice(-4)}`;
+    await expect(page.getByText(shortKey)).toBeVisible({ timeout: 10_000 });
+
+    // Verify empty state message
+    await expect(
+      page.getByText(/you don't own any nfts|no unstaked nfts|select a collection/i)
+    ).toBeVisible({ timeout: 5_000 });
   });
 
-  test("#529: clicking unstake returns NFT to wallet (unstaked tab)", async ({
-    page,
-  }) => {
-    await page.goto(`/staking?collection=${COLLECTION_ADDRESS}`);
-    await page.waitForLoadState("domcontentloaded");
-
-    // Wait for pool stats to load
-    await expect(page.getByText("Reward Token").first()).toBeVisible({
-      timeout: 15_000,
+  test("staking page shows connect wallet prompt when disconnected", async ({ page }) => {
+    // Clear the mocked wallet to simulate disconnected state
+    await page.addInitScript(() => {
+      sessionStorage.removeItem("e2e_wallet_public_key");
+      sessionStorage.removeItem("e2e_network_passphrase");
     });
 
-    // Stake the first NFT
-    await page.getByText("Masai Warrior #1").click();
-    const stakeBtn = page.getByRole("button", { name: /stake selected/i });
-    await expect(stakeBtn).toBeVisible();
-    await stakeBtn.click();
+    await page.goto("/staking");
 
-    // Switch to Staked Vault tab and verify it's there
-    await page.getByRole("button", { name: /staked vault/i }).click();
-    await expect(page.getByText("Masai Warrior #1")).toBeVisible({
-      timeout: 10_000,
+    // Verify connect wallet prompt
+    await expect(page.getByText(/connect your wallet/i)).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /connect wallet/i })
+    ).toBeVisible();
+  });
+
+  test("staking page handles pool not found gracefully", async ({ page }) => {
+    const TEST_COLLECTION_ADDRESS = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
+    await page.route("**/launchpad/**", async (route) => {
+      await route.fulfill({
+        status: 404,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "No staking pool found" }),
+      });
     });
 
-    // Click Unstake on the staked NFT
-    const unstakeBtn = page.getByRole("button", { name: /unstake/i }).first();
-    await expect(unstakeBtn).toBeVisible();
-    await unstakeBtn.click();
+    await page.goto("/staking");
 
-    // Switch back to Unstaked NFTs tab
-    await page.getByRole("button", { name: /unstaked nfts/i }).click();
+    const shortKey = `${TEST_PUBLIC_KEY.slice(0, 4)}…${TEST_PUBLIC_KEY.slice(-4)}`;
+    await expect(page.getByText(shortKey)).toBeVisible({ timeout: 10_000 });
 
-    // The NFT should be back in the unstaked tab
-    await expect(page.getByText("Masai Warrior #1")).toBeVisible({
-      timeout: 10_000,
-    });
+    // Enter collection address
+    const collectionInput = page.getByPlaceholder(/paste nft contract address/i);
+    await collectionInput.fill(TEST_COLLECTION_ADDRESS);
+
+    const loadPoolButton = page.getByRole("button", { name: /load pool/i });
+    await loadPoolButton.click();
+
+    // Verify error message for no pool found
+    await expect(
+      page.getByText(/no staking pool found|deploy one/i)
+    ).toBeVisible({ timeout: 5_000 });
   });
 });

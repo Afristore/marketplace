@@ -1,151 +1,396 @@
-use soroban_sdk::{
-    contract, contractimpl, panic_with_error, token::Client as TokenClient, Address, Env,
-};
+use soroban_sdk::{contract, contractimpl, symbol_short, token, Address, Env, Symbol};
 
-use crate::{
-    events::BorrowEvent,
-    storage::{
-        get_admin, get_borrow_token, get_collateral_token, is_initialized, is_paused,
-        load_borrow_position, save_borrow_position, set_admin, set_borrow_token,
-        set_collateral_token, set_initialized, set_paused, LEDGER_TTL_BUMP, LEDGER_TTL_THRESHOLD,
-    },
-    types::{BorrowPosition, LendingError},
+use crate::events;
+use crate::interest::accrued_interest_usd;
+use crate::oracle;
+use crate::settlement::settle;
+use crate::storage::{
+    extend_instance_ttl, get_config, get_currency_symbol, get_listing, get_position, has_config,
+    is_currency_whitelisted, next_position_id, set_config, set_currency_symbol, set_listing,
+    set_position,
 };
+use crate::types::{ListingStatus, PlatformConfig, Position, PositionStatus};
 
 #[contract]
 pub struct LendingContract;
 
+// ── Private helpers ───────────────────────────────────────────────────────────
+
+/// Validate the four bps bound parameters that are shared by `initialize()`,
+/// `admin_update_bounds()`, and any future setter that touches these fields.
+///
+/// Invariants enforced (all panic with descriptive messages on violation):
+///   1. min_buffer_bps < max_buffer_bps
+///   2. min_liq_threshold_bps < max_liq_threshold_bps
+///   3. max_liq_threshold_bps < min_buffer_bps   (threshold ceiling below buffer floor)
+fn validate_bounds(
+    min_buffer_bps: u32,
+    max_buffer_bps: u32,
+    min_liq_threshold_bps: u32,
+    max_liq_threshold_bps: u32,
+) {
+    if min_buffer_bps >= max_buffer_bps {
+        panic!("Invalid buffer bounds: min_buffer_bps must be less than max_buffer_bps");
+    }
+    if min_liq_threshold_bps >= max_liq_threshold_bps {
+        panic!("Invalid liquidation threshold bounds: min_liq_threshold_bps must be less than max_liq_threshold_bps");
+    }
+    if max_liq_threshold_bps >= min_buffer_bps {
+        panic!("Invalid bounds: max_liq_threshold_bps must be less than min_buffer_bps");
+    }
+}
+
 #[contractimpl]
 impl LendingContract {
-    pub fn initialize(env: Env, admin: Address, collateral_token: Address, borrow_token: Address) {
-        if is_initialized(&env) {
-            panic_with_error!(&env, LendingError::AlreadyInitialized);
+    // ── Config / Init ─────────────────────────────────────────────────────────
+
+    /// One-time initializer. Must be called once immediately after deployment.
+    /// Panics if the contract has already been configured.
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        fee_receiver: Address,
+        oracle_address: Address,
+        platform_fee_bps: u32,
+        liquidator_fee_bps: u32,
+        min_buffer_bps: u32,
+        max_buffer_bps: u32,
+        min_liq_threshold_bps: u32,
+        max_liq_threshold_bps: u32,
+        max_price_staleness_secs: u64,
+    ) {
+        if has_config(&env) {
+            panic!("Already initialized");
         }
 
-        set_admin(&env, &admin);
-        set_collateral_token(&env, &collateral_token);
-        set_borrow_token(&env, &borrow_token);
-        set_initialized(&env);
-
-        env.storage()
-            .instance()
-            .extend_ttl(LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
-    }
-
-    pub fn set_paused(env: Env, paused: bool) {
-        let admin = get_admin(&env)
-            .unwrap_or_else(|| panic_with_error!(&env, LendingError::NotInitialized));
         admin.require_auth();
-        set_paused(&env, paused);
-    }
 
-    pub fn is_paused(env: Env) -> bool {
-        is_paused(&env)
-    }
+        validate_bounds(
+            min_buffer_bps,
+            max_buffer_bps,
+            min_liq_threshold_bps,
+            max_liq_threshold_bps,
+        );
 
-    pub fn borrow(env: Env, borrower: Address, collateral_amount: i128, borrow_amount: i128) {
-        if !is_initialized(&env) {
-            panic_with_error!(&env, LendingError::NotInitialized);
+        if platform_fee_bps.saturating_add(liquidator_fee_bps) >= 10000 {
+            panic!("Invalid fees: combined fees must be less than 10000");
         }
 
-        if is_paused(&env) {
-            panic_with_error!(&env, LendingError::ContractPaused);
+        let config = PlatformConfig {
+            admin,
+            fee_receiver,
+            platform_fee_bps,
+            liquidator_fee_bps,
+            min_buffer_bps,
+            max_buffer_bps,
+            min_liq_threshold_bps,
+            max_liq_threshold_bps,
+            oracle_address,
+            max_price_staleness_secs,
+        };
+
+        set_config(&env, &config);
+    }
+
+    // ── Admin parameter updates ───────────────────────────────────────────────
+
+    /// Admin-only: update the four collateral-buffer / liquidation-threshold bps
+    /// bounds. Applies the same invariants as `initialize()`.
+    pub fn admin_update_bounds(
+        env: Env,
+        min_buffer_bps: u32,
+        max_buffer_bps: u32,
+        min_liq_threshold_bps: u32,
+        max_liq_threshold_bps: u32,
+    ) {
+        let mut config = get_config(&env);
+        config.admin.require_auth();
+
+        validate_bounds(
+            min_buffer_bps,
+            max_buffer_bps,
+            min_liq_threshold_bps,
+            max_liq_threshold_bps,
+        );
+
+        config.min_buffer_bps = min_buffer_bps;
+        config.max_buffer_bps = max_buffer_bps;
+        config.min_liq_threshold_bps = min_liq_threshold_bps;
+        config.max_liq_threshold_bps = max_liq_threshold_bps;
+
+        set_config(&env, &config);
+    }
+
+    /// Admin-only: update the platform and liquidator fee basis points.
+    pub fn admin_set_fees(env: Env, platform_fee_bps: u32, liquidator_fee_bps: u32) {
+        let mut config = get_config(&env);
+        config.admin.require_auth();
+
+        if platform_fee_bps.saturating_add(liquidator_fee_bps) >= 10000 {
+            panic!("Invalid fees: combined fees must be less than 10000");
         }
 
+        config.platform_fee_bps = platform_fee_bps;
+        config.liquidator_fee_bps = liquidator_fee_bps;
+
+        set_config(&env, &config);
+    }
+
+    /// Admin-only: approve a token as valid collateral, mapped to its Reflector asset symbol.
+    pub fn whitelist_currency(env: Env, currency: Address, reflector_asset: Symbol) {
+        extend_instance_ttl(&env);
+
+        let config = get_config(&env);
+        config.admin.require_auth();
+
+        if is_currency_whitelisted(&env, &currency)
+            && get_currency_symbol(&env, &currency) == reflector_asset
+        {
+            return;
+        }
+
+        let _ = token::Client::new(&env, &currency).decimals();
+        set_currency_symbol(&env, &currency, &reflector_asset);
+    }
+
+    // ── Listings ──────────────────────────────────────────────────────────────
+
+    pub fn cancel_listing(env: Env, listing_id: u64) {
+        extend_instance_ttl(&env);
+        let mut listing = get_listing(&env, listing_id);
+
+        listing.lender.require_auth();
+
+        if listing.status != ListingStatus::Open {
+            panic!("Listing is not Open");
+        }
+
+        // Return NFT to lender
+        let nft_client = token::Client::new(&env, &listing.nft_contract);
+        nft_client.transfer(
+            &env.current_contract_address(),
+            &listing.lender,
+            &(listing.token_id as i128),
+        );
+
+        listing.status = ListingStatus::Cancelled;
+        set_listing(&env, listing_id, &listing);
+
+        #[allow(deprecated)]
+        env.events()
+            .publish((symbol_short!("cancel"), listing_id), ());
+    }
+
+    // ── Borrow ────────────────────────────────────────────────────────────────
+
+    pub fn borrow(
+        env: Env,
+        listing_id: u64,
+        borrower: Address,
+        collateral_currency: Address,
+        collateral_amount: i128,
+    ) -> u64 {
         borrower.require_auth();
 
-        // Explicit security guard: collateral_amount must be strictly positive (> 0)
-        // Must occur prior to token transfers or state updates.
-        if collateral_amount <= 0 {
-            panic_with_error!(&env, LendingError::InvalidCollateral);
+        let mut listing = get_listing(&env, listing_id);
+
+        if listing.status != ListingStatus::Open {
+            panic!("Listing is not Open");
         }
 
-        if borrow_amount <= 0 {
-            panic_with_error!(&env, LendingError::InvalidAmount);
+        if !is_currency_whitelisted(&env, &collateral_currency) {
+            panic!("Collateral currency not whitelisted");
         }
 
-        let collateral_token_addr = get_collateral_token(&env)
-            .unwrap_or_else(|| panic_with_error!(&env, LendingError::NotInitialized));
-        let borrow_token_addr = get_borrow_token(&env)
-            .unwrap_or_else(|| panic_with_error!(&env, LendingError::NotInitialized));
+        let config = get_config(&env);
+        let oracle_price = oracle::get_price(&env, &config.oracle_address, &collateral_currency);
 
-        let contract_addr = env.current_contract_address();
+        let collateral_value_usd = (collateral_amount * oracle_price) / 10_000_000;
 
-        let borrow_token_client = TokenClient::new(&env, &borrow_token_addr);
-        let available_liquidity = borrow_token_client.balance(&contract_addr);
-        if available_liquidity < borrow_amount {
-            panic_with_error!(&env, LendingError::InsufficientLiquidity);
+        let required_collateral =
+            (listing.declared_price_usd * (listing.min_collateral_buffer_bps as i128)) / 10_000;
+
+        if collateral_value_usd < required_collateral {
+            panic!("Under-collateralized");
         }
-
-        let collateral_token_client = TokenClient::new(&env, &collateral_token_addr);
 
         // Transfer collateral from borrower to contract
-        collateral_token_client.transfer(&borrower, &contract_addr, &collateral_amount);
+        let collateral_client = token::Client::new(&env, &collateral_currency);
+        collateral_client.transfer(
+            &borrower,
+            &env.current_contract_address(),
+            &collateral_amount,
+        );
 
-        // Transfer borrow token from contract to borrower
-        borrow_token_client.transfer(&contract_addr, &borrower, &borrow_amount);
+        // Transfer NFT from contract to borrower
+        let nft_client = token::Client::new(&env, &listing.nft_contract);
+        nft_client.transfer(
+            &env.current_contract_address(),
+            &borrower,
+            &(listing.token_id as i128),
+        );
 
-        // State update
-        let existing = load_borrow_position(&env, &borrower);
-        let (new_collateral, new_borrow) = match existing {
-            Some(pos) => (
-                pos.collateral_amount + collateral_amount,
-                pos.borrow_amount + borrow_amount,
-            ),
-            None => (collateral_amount, borrow_amount),
-        };
+        listing.status = ListingStatus::Filled;
+        set_listing(&env, listing_id, &listing);
 
-        let position = BorrowPosition {
+        let position_id = next_position_id(&env);
+        let position = Position {
+            id: position_id,
+            listing_id,
+            lender: listing.lender.clone(),
             borrower: borrower.clone(),
-            collateral_amount: new_collateral,
-            borrow_amount: new_borrow,
-            timestamp: env.ledger().timestamp(),
+            nft_contract: listing.nft_contract.clone(),
+            token_id: listing.token_id,
+            declared_price_usd: listing.declared_price_usd,
+            collateral_currency: collateral_currency.clone(),
+            collateral_amount,
+            interest_schedule_bps: listing.interest_schedule_bps.clone(),
+            liquidation_threshold_bps: listing.liquidation_threshold_bps,
+            start_time: env.ledger().timestamp(),
+            max_duration_secs: (listing.max_duration_days as u64) * 86400,
+            status: PositionStatus::Active,
         };
 
-        save_borrow_position(&env, &position);
+        set_position(&env, position_id, &position);
 
-        env.storage()
-            .instance()
-            .extend_ttl(LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
+        #[allow(deprecated)]
+        env.events()
+            .publish((symbol_short!("borrow"), position_id), ());
 
-        BorrowEvent {
-            borrower,
-            collateral_amount,
-            borrow_amount,
-            timestamp: env.ledger().timestamp(),
-        }
-        .publish(&env);
+        position_id
     }
 
-    pub fn settle(env: Env, borrower: Address, interest_rate_bps: u32) -> i128 {
-        if !is_initialized(&env) {
-            panic_with_error!(&env, LendingError::NotInitialized);
+    /// Borrower voluntarily closes their position before term expiry.
+    pub fn return_nft(env: Env, position_id: u64) {
+        extend_instance_ttl(&env);
+        let mut position = get_position(&env, position_id);
+
+        position.borrower.require_auth();
+
+        if position.status != PositionStatus::Active {
+            panic!("Position is not Active");
         }
-
-        if is_paused(&env) {
-            panic_with_error!(&env, LendingError::ContractPaused);
-        }
-
-        borrower.require_auth();
-
-        let position = load_borrow_position(&env, &borrower)
-            .unwrap_or_else(|| panic_with_error!(&env, LendingError::PositionNotFound));
 
         let now = env.ledger().timestamp();
-        crate::settlement::settle_position(&env, now, &position, interest_rate_bps)
+        let deadline = position.start_time + position.max_duration_secs;
+        if now > deadline {
+            panic!("Loan term has expired; use liquidate()");
+        }
+
+        // Transfer NFT from borrower back to contract, then to lender.
+        let contract_address = env.current_contract_address();
+        let nft_client = token::Client::new(&env, &position.nft_contract);
+        nft_client.transfer(
+            &position.borrower,
+            &contract_address,
+            &(position.token_id as i128),
+        );
+        nft_client.transfer(
+            &contract_address,
+            &position.lender,
+            &(position.token_id as i128),
+        );
+
+        // Settle collateral waterfall (no liquidator on voluntary return).
+        let config = get_config(&env);
+        let result = settle(&env, &position, None, &config);
+
+        position.status = PositionStatus::Returned;
+        set_position(&env, position_id, &position);
+
+        events::emit_position_returned(
+            &env,
+            position_id,
+            result.accrued_interest_usd,
+            result.platform_fee_usd,
+            result.borrower_rem,
+        );
     }
 
-    pub fn get_position(env: Env, borrower: Address) -> Option<BorrowPosition> {
-        load_borrow_position(&env, &borrower)
+    pub fn add_collateral(env: Env, position_id: u64, amount: i128) {
+        let mut position = get_position(&env, position_id);
+        position.borrower.require_auth();
+
+        if position.status != PositionStatus::Active {
+            panic!("Position is not Active");
+        }
+
+        if amount <= 0 {
+            panic!("Amount must be greater than zero");
+        }
+
+        let contract_address = env.current_contract_address();
+        let collateral_client = token::Client::new(&env, &position.collateral_currency);
+        collateral_client.transfer(&position.borrower, &contract_address, &amount);
+        position.collateral_amount += amount;
+        set_position(&env, position_id, &position);
+
+        events::emit_collateral_added(
+            &env,
+            position_id,
+            position.borrower.clone(),
+            amount,
+            position.collateral_amount,
+        );
     }
 
-    pub fn get_collateral_token(env: Env) -> Address {
-        get_collateral_token(&env)
-            .unwrap_or_else(|| panic_with_error!(&env, LendingError::NotInitialized))
-    }
+    /// Permissionless settlement for unhealthy or expired positions.
+    pub fn liquidate(env: Env, position_id: u64, liquidator: Address) {
+        liquidator.require_auth();
 
-    pub fn get_borrow_token(env: Env) -> Address {
-        get_borrow_token(&env)
-            .unwrap_or_else(|| panic_with_error!(&env, LendingError::NotInitialized))
+        let mut position = get_position(&env, position_id);
+
+        if position.status != PositionStatus::Active {
+            panic!("Position is not Active");
+        }
+
+        let now = env.ledger().timestamp();
+        let config = get_config(&env);
+
+        let is_expired = now > position.start_time + position.max_duration_secs;
+
+        let is_unhealthy = if !is_expired {
+            let oracle_price =
+                oracle::get_price(&env, &config.oracle_address, &position.collateral_currency);
+
+            let collateral_value_usd = (position.collateral_amount * oracle_price) / 10_000_000;
+
+            let accrued = accrued_interest_usd(&position, now);
+            let owed_usd = position.declared_price_usd + accrued;
+
+            let health_factor_bps = if owed_usd > 0 {
+                collateral_value_usd * 10_000 / owed_usd
+            } else {
+                10_000
+            };
+
+            health_factor_bps <= (position.liquidation_threshold_bps as i128)
+        } else {
+            false
+        };
+
+        if !is_expired && !is_unhealthy {
+            panic!("Position is healthy; cannot liquidate");
+        }
+
+        let result = settle(&env, &position, Some(liquidator.clone()), &config);
+
+        position.status = if is_expired {
+            PositionStatus::Expired
+        } else {
+            PositionStatus::Liquidated
+        };
+        set_position(&env, position_id, &position);
+
+        #[allow(deprecated)]
+        env.events().publish(
+            (symbol_short!("liquidate"), position_id),
+            (
+                liquidator,
+                result.lender_payout,
+                result.liquidator_payout,
+                result.borrower_rem,
+            ),
+        );
     }
 }

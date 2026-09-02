@@ -69,7 +69,7 @@ export function BiddingPanel({
     error: finalizeError,
   } = useFinalizeAuction(publicKey);
 
-  const { days, hours, minutes, seconds, isExpired } = useCountdown(
+  const { days, hours, minutes, seconds, remaining, isExpired } = useCountdown(
     auction.end_time,
   );
 
@@ -87,7 +87,9 @@ export function BiddingPanel({
   const isOwn = publicKey === auction.creator;
   const isActive = auction.status === "Active";
   const canBid = isActive && !isExpired && !isOwn;
-  const canFinalize = isActive && isExpired;
+  const canFinalize = isActive && isExpired && isOwn;
+  const minutesRemaining = Math.floor(remaining / 60);
+  const isEndingSoon = isActive && !isExpired && minutesRemaining > 0 && minutesRemaining <= 60;
 
   const bidValidation = useMemo(() => {
     const amount = parseFloat(bidAmount);
@@ -154,9 +156,21 @@ export function BiddingPanel({
         {isActive && isExpired && (
           <span className="text-xs font-semibold text-red-500">Expired</span>
         )}
+
+        {isEndingSoon && (
+          <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-600 animate-pulse">
+            Ending Soon
+          </span>
+        )}
       </div>
 
-      {/* Countdown (large display for active auctions) */}
+      {/* Ending Soon / Countdown (large display for active auctions) */}
+      {isEndingSoon && (
+        <div className="flex items-center justify-center gap-2 rounded-xl bg-red-50 px-3 py-2 text-sm font-bold text-red-600 animate-pulse border border-red-200">
+          <Clock size={14} />
+          Ending Soon — {minutesRemaining} min remaining
+        </div>
+      )}
       {isActive && !isExpired && (
         <div className="grid grid-cols-4 gap-2 text-center">
           {[

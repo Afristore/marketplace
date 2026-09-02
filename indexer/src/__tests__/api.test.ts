@@ -7,6 +7,7 @@ import request from 'supertest';
 const mockPrisma = vi.hoisted(() => ({
   listing: {
     findMany: vi.fn(),
+    findFirst: vi.fn(),
     count: vi.fn(),
     aggregate: vi.fn(),
   },
@@ -15,7 +16,18 @@ const mockPrisma = vi.hoisted(() => ({
     findFirst: vi.fn(),
     count: vi.fn(),
   },
+  stakedNFT: {
+    findMany: vi.fn(),
+  },
   collection: {
+    findMany: vi.fn(),
+    findUnique: vi.fn(),
+  },
+  userPreferences: {
+    findUnique: vi.fn(),
+    upsert: vi.fn(),
+  },
+  stakedNFT: {
     findMany: vi.fn(),
   },
 }));
@@ -24,6 +36,7 @@ const mockRedis = vi.hoisted(() => ({
   isOpen: false,
   isReady: false,
   get: vi.fn(),
+  set: vi.fn().mockResolvedValue(undefined),
   setEx: vi.fn().mockResolvedValue(undefined),
   on: vi.fn(),
   connect: vi.fn().mockRejectedValue(new Error('No Redis')),
@@ -116,6 +129,16 @@ describe('GET /listings', () => {
     );
   });
 
+  it('filters by category query param', async () => {
+    mockPrisma.listing.findMany.mockResolvedValue([]);
+
+    await request(app).get('/listings?category=Sculpture');
+
+    expect(mockPrisma.listing.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { category: 'Sculpture' } })
+    );
+  });
+
   it('returns empty array when no listings match', async () => {
     mockPrisma.listing.findMany.mockResolvedValue([]);
     mockPrisma.listing.count.mockResolvedValue(0);
@@ -140,6 +163,52 @@ describe('GET /listings', () => {
 
     expect(mockPrisma.listing.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ skip: 10000 })
+    );
+  });
+
+  it('returns 400 for an invalid sort parameter', async () => {
+    const res = await request(app).get('/listings?sort=bogus');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBeDefined();
+    expect(mockPrisma.listing.findMany).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 for a sort value colliding with an Object prototype property', async () => {
+    const res = await request(app).get('/listings?sort=toString');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBeDefined();
+    expect(mockPrisma.listing.findMany).not.toHaveBeenCalled();
+  });
+
+  it('orders by price ascending when sort=price_asc is provided', async () => {
+    mockPrisma.listing.findMany.mockResolvedValue([]);
+
+    await request(app).get('/listings?sort=price_asc');
+
+    expect(mockPrisma.listing.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { price: 'asc' } })
+    );
+  });
+
+  it('orders by newest (createdAtLedger desc) when sort=newest is provided', async () => {
+    mockPrisma.listing.findMany.mockResolvedValue([]);
+
+    await request(app).get('/listings?sort=newest');
+
+    expect(mockPrisma.listing.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { createdAtLedger: 'desc' } })
+    );
+  });
+
+  it('orders by oldest (createdAtLedger asc) when sort=oldest is provided', async () => {
+    mockPrisma.listing.findMany.mockResolvedValue([]);
+
+    await request(app).get('/listings?sort=oldest');
+
+    expect(mockPrisma.listing.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ orderBy: { createdAtLedger: 'asc' } })
     );
   });
 });
@@ -547,6 +616,314 @@ describe('GET /wallets/:address/royalty-stats — extended', () => {
   });
 });
 
+// ── GET /wallets/:address/portfolio ──────────────────────────────────────────
+
+describe('GET /wallets/:address/portfolio', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('returns total portfolio value based on collection floor prices', async () => {
+    // Wallet owns NFTs in two collections
+    mockPrisma.listing.findMany.mockResolvedValue([
+      { collection: 'COLLECTION_A' },
+      { collection: 'COLLECTION_A' },
+      { collection: 'COLLECTION_B' },
+    ]);
+    mockPrisma.stakedNFT.findMany.mockResolvedValue([
+      { collection: 'COLLECTION_B' },
+    ]);
+
+    // Floor prices: A=100, B=50 (lowest Active listing in each collection)
+    mockPrisma.listing.findFirst
+      .mockResolvedValueOnce({ price: '100.0000000' })   // COLLECTION_A floor
+      .mockResolvedValueOnce({ price: '50.0000000' });   // COLLECTION_B floor
+
+    const res = await request(app).get('/wallets/GWALLET/portfolio');
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalValue).toBe('150.0000000');
+    expect(res.body.collectionFloorPrices).toEqual({
+      COLLECTION_A: '100.0000000',
+      COLLECTION_B: '50.0000000',
+    });
+    expect(res.body.ownedCount).toBe(4); // 3 listings + 1 staked
+  });
+
+  it('returns zero when wallet owns no NFTs', async () => {
+    mockPrisma.listing.findMany.mockResolvedValue([]);
+    mockPrisma.stakedNFT.findMany.mockResolvedValue([]);
+
+    const res = await request(app).get('/wallets/GEMPTY/portfolio');
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalValue).toBe('0.0000000');
+    expect(res.body.collectionFloorPrices).toEqual({});
+    expect(res.body.ownedCount).toBe(0);
+  });
+
+  it('excludes collections with no active floor price', async () => {
+    mockPrisma.listing.findMany.mockResolvedValue([
+      { collection: 'COLLECTION_X' },
+    ]);
+    mockPrisma.stakedNFT.findMany.mockResolvedValue([]);
+
+    // No Active listing exists for this collection
+    mockPrisma.listing.findFirst.mockResolvedValue(null);
+
+    const res = await request(app).get('/wallets/GWALLET/portfolio');
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalValue).toBe('0.0000000');
+    expect(res.body.collectionFloorPrices).toEqual({});
+  });
+
+  it('returns 500 when Prisma throws', async () => {
+    mockPrisma.listing.findMany.mockRejectedValue(new Error('DB down'));
+
+    const res = await request(app).get('/wallets/GWALLET/portfolio');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBeDefined();
+  });
+
+  it('sums floor prices from multiple collections correctly', async () => {
+    // 3 collections: floor prices 10, 200, 3000
+    mockPrisma.listing.findMany.mockResolvedValue([
+      { collection: 'C1' },
+      { collection: 'C2' },
+      { collection: 'C3' },
+    ]);
+    mockPrisma.stakedNFT.findMany.mockResolvedValue([]);
+
+    mockPrisma.listing.findFirst
+      .mockResolvedValueOnce({ price: '10.0000000' })
+      .mockResolvedValueOnce({ price: '200.0000000' })
+      .mockResolvedValueOnce({ price: '3000.0000000' });
+
+    const res = await request(app).get('/wallets/GWALLET/portfolio');
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalValue).toBe('3210.0000000');
+    expect(res.body.ownedCount).toBe(3);
+  });
+
+  it('deduplicates collections when wallet has both owned and staked NFTs in same collection', async () => {
+    mockPrisma.listing.findMany.mockResolvedValue([
+      { collection: 'COLLECTION_C' },
+    ]);
+    mockPrisma.stakedNFT.findMany.mockResolvedValue([
+      { collection: 'COLLECTION_C' },
+    ]);
+
+    mockPrisma.listing.findFirst.mockResolvedValue({ price: '75.5000000' });
+
+    const res = await request(app).get('/wallets/GWALLET/portfolio');
+
+    expect(res.status).toBe(200);
+    // Floor price counted only once despite two entries in same collection
+    expect(res.body.totalValue).toBe('75.5000000');
+    expect(res.body.ownedCount).toBe(2);
+    expect(mockPrisma.listing.findFirst).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── PUT /wallets/:address/preferences (POST /settings) ───────────────────────
+
+describe('PUT /wallets/:address/preferences', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('creates a new preferences record via upsert when none exists', async () => {
+    const savedPrefs = {
+      walletAddress: 'GWALLET',
+      theme: 'light',
+      currency: 'USDC',
+      priceAlerts: true,
+    };
+    mockPrisma.userPreferences.upsert.mockResolvedValue(savedPrefs);
+
+    const res = await request(app)
+      .put('/wallets/GWALLET/preferences')
+      .send({ theme: 'light', currency: 'USDC', priceAlerts: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(savedPrefs);
+    expect(mockPrisma.userPreferences.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { walletAddress: 'GWALLET' },
+        create: expect.objectContaining({
+          walletAddress: 'GWALLET',
+          theme: 'light',
+          currency: 'USDC',
+          priceAlerts: true,
+        }),
+      })
+    );
+  });
+
+  it('updates an existing preferences record via upsert', async () => {
+    const updatedPrefs = {
+      walletAddress: 'GWALLET',
+      theme: 'dark',
+      currency: 'XLM',
+      priceAlerts: false,
+    };
+    mockPrisma.userPreferences.upsert.mockResolvedValue(updatedPrefs);
+
+    const res = await request(app)
+      .put('/wallets/GWALLET/preferences')
+      .send({ theme: 'dark', currency: 'XLM', priceAlerts: false });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(updatedPrefs);
+    expect(mockPrisma.userPreferences.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { walletAddress: 'GWALLET' },
+        update: expect.objectContaining({
+          theme: 'dark',
+          currency: 'XLM',
+          priceAlerts: false,
+        }),
+      })
+    );
+  });
+
+  it('handles partial updates with only theme provided', async () => {
+    mockPrisma.userPreferences.upsert.mockResolvedValue({
+      walletAddress: 'GWALLET',
+      theme: 'light',
+      currency: 'XLM',
+      priceAlerts: false,
+    });
+
+    const res = await request(app)
+      .put('/wallets/GWALLET/preferences')
+      .send({ theme: 'light' });
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.userPreferences.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ theme: 'light' }),
+      })
+    );
+  });
+
+  it('uses defaults for create when fields are omitted', async () => {
+    mockPrisma.userPreferences.upsert.mockResolvedValue({
+      walletAddress: 'GWALLET',
+      theme: 'dark',
+      currency: 'XLM',
+      priceAlerts: false,
+    });
+
+    const res = await request(app)
+      .put('/wallets/GWALLET/preferences')
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(mockPrisma.userPreferences.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          walletAddress: 'GWALLET',
+          theme: 'dark',
+          currency: 'XLM',
+          priceAlerts: false,
+        }),
+      })
+    );
+  });
+
+  it('returns 500 when Prisma throws during upsert', async () => {
+    mockPrisma.userPreferences.upsert.mockRejectedValue(new Error('DB down'));
+
+    const res = await request(app)
+      .put('/wallets/GWALLET/preferences')
+      .send({ theme: 'dark' });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBeDefined();
+  });
+
+  it('passes undefined update fields when body is empty so Prisma ignores them', async () => {
+    mockPrisma.userPreferences.upsert.mockResolvedValue({
+      walletAddress: 'GEMPTY',
+      theme: 'dark',
+      currency: 'XLM',
+      priceAlerts: false,
+    });
+
+    const res = await request(app)
+      .put('/wallets/GEMPTY/preferences')
+      .send({});
+
+    expect(res.status).toBe(200);
+    const call = mockPrisma.userPreferences.upsert.mock.calls[0][0] as any;
+    // update should not contain undefined values leaking through
+    expect(call.update.theme).toBeUndefined();
+    expect(call.update.currency).toBeUndefined();
+    expect(call.update.priceAlerts).toBeUndefined();
+  });
+});
+
+// ── GET /collections/:id/stats ───────────────────────────────────────────────
+
+describe('GET /collections/:id/stats', () => {
+  const CONTRACT = 'CCONTRACT123';
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('correctly aggregates volume, floor price, and total items', async () => {
+    mockPrisma.collection.findUnique.mockResolvedValue({
+      contractAddress: CONTRACT,
+      kind: 'normal_721',
+      creator: 'GCREATOR',
+      deployedAtLedger: 100,
+    });
+    mockPrisma.listing.aggregate
+      .mockResolvedValueOnce({ _sum: { price: '3000.0000000' } })  // volume
+      .mockResolvedValueOnce({ _min: { price: '500.0000000' } });  // floor
+    mockPrisma.listing.count.mockResolvedValue(12);
+
+    const res = await request(app).get(`/collections/${CONTRACT}/stats`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.contractAddress).toBe(CONTRACT);
+    expect(res.body.totalVolume).toBe('3000.0000000');
+    expect(res.body.floorPrice).toBe('500.0000000');
+    expect(res.body.totalItems).toBe(12);
+  });
+
+  it('returns null floorPrice when there are no active listings', async () => {
+    mockPrisma.collection.findUnique.mockResolvedValue({ contractAddress: CONTRACT });
+    mockPrisma.listing.aggregate
+      .mockResolvedValueOnce({ _sum: { price: null } })
+      .mockResolvedValueOnce({ _min: { price: null } });
+    mockPrisma.listing.count.mockResolvedValue(0);
+
+    const res = await request(app).get(`/collections/${CONTRACT}/stats`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalVolume).toBe('0');
+    expect(res.body.floorPrice).toBeNull();
+    expect(res.body.totalItems).toBe(0);
+  });
+
+  it('returns 404 when the collection does not exist', async () => {
+    mockPrisma.collection.findUnique.mockResolvedValue(null);
+
+    const res = await request(app).get('/collections/DOESNOTEXIST/stats');
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('Collection not found');
+  });
+
+  it('returns 500 when the database throws', async () => {
+    mockPrisma.collection.findUnique.mockRejectedValue(new Error('DB down'));
+
+    const res = await request(app).get(`/collections/${CONTRACT}/stats`);
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBeDefined();
+  });
+});
+
 // ── SSE wallet filtering (issue #468) ─────────────────────────────────────────
 
 describe('eventMatchesWallet', () => {
@@ -593,6 +970,277 @@ describe('eventMatchesWallet', () => {
         wallet
       )
     ).toBe(false);
+  });
+});
+
+// ── GET /wallets/:address/preferences (issue #580) ──────────────────────────
+
+describe('GET /wallets/:address/preferences', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('returns user preferences when they exist', async () => {
+    const prefs = {
+      walletAddress: 'GUSER123',
+      theme: 'dark',
+      currency: 'XLM',
+      priceAlerts: true,
+      updatedAt: new Date('2024-01-01T00:00:00Z'),
+    };
+    mockPrisma.userPreferences.findUnique.mockResolvedValue(prefs);
+
+    const res = await request(app).get('/wallets/GUSER123/preferences');
+
+    expect(res.status).toBe(200);
+    expect(res.body.walletAddress).toBe('GUSER123');
+    expect(res.body.theme).toBe('dark');
+    expect(res.body.currency).toBe('XLM');
+    expect(res.body.priceAlerts).toBe(true);
+  });
+
+  it('returns empty object (falls back to defaults) when no preferences exist', async () => {
+    mockPrisma.userPreferences.findUnique.mockResolvedValue(null);
+
+    const res = await request(app).get('/wallets/GNEWUSER/preferences');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({});
+  });
+
+  it('queries by correct wallet address', async () => {
+    mockPrisma.userPreferences.findUnique.mockResolvedValue(null);
+
+    await request(app).get('/wallets/GSPECIFIC/preferences');
+
+    expect(mockPrisma.userPreferences.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { walletAddress: 'GSPECIFIC' } })
+    );
+  });
+
+  it('returns 500 when database throws', async () => {
+    mockPrisma.userPreferences.findUnique.mockRejectedValue(new Error('DB down'));
+
+    const res = await request(app).get('/wallets/GUSER/preferences');
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Failed to fetch preferences');
+  });
+
+  it('allows frontend to implement default preferences locally', async () => {
+    mockPrisma.userPreferences.findUnique.mockResolvedValue(null);
+
+    const res = await request(app).get('/wallets/GNEW/preferences');
+
+    expect(res.status).toBe(200);
+    // Empty object signals no preferences; client applies defaults (dark, XLM, false)
+    expect(Object.keys(res.body).length).toBe(0);
+  });
+});
+
+// ── SSE /wallets/:address/events (issue #581, #582) ─────────────────────────
+
+describe('SSE /wallets/:address/events', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('accepts SSE connections for wallet-specific events', () => new Promise<void>((resolve, reject) => {
+    const req = request(app).get('/wallets/GWALLET123/events');
+    req.buffer(false);
+    req.on('response', (res) => {
+      try {
+        res.on('error', () => {});
+        expect(res.status).toBe(200);
+        expect(res.headers['content-type']).toContain('text/event-stream');
+        expect(res.headers['cache-control']).toBe('no-cache');
+        expect(res.headers['connection']).toBe('keep-alive');
+        req.abort();
+        resolve();
+      } catch (err) {
+        req.abort();
+        reject(err);
+      }
+    });
+    req.on('error', (err) => {
+      if (err.message === 'aborted') return;
+      reject(err);
+    });
+    req.end();
+  }));
+
+  it('sets correct SSE headers for event streaming', () => new Promise<void>((resolve, reject) => {
+    const req = request(app).get('/wallets/GWALLET/events');
+    req.buffer(false);
+    req.on('response', (res) => {
+      try {
+        res.on('error', () => {});
+        expect(res.headers['content-type']).toContain('text/event-stream');
+        expect(res.headers['cache-control']).toBe('no-cache');
+        expect(res.headers['connection']).toBe('keep-alive');
+        req.abort();
+        resolve();
+      } catch (err) {
+        req.abort();
+        reject(err);
+      }
+    });
+    req.on('error', (err) => {
+      if (err.message === 'aborted') return;
+      reject(err);
+    });
+    req.end();
+  }));
+
+  it('returns 200 for SSE connection', () => new Promise<void>((resolve, reject) => {
+    const req = request(app).get('/wallets/GWALLET/events');
+    req.buffer(false);
+    req.on('response', (res) => {
+      try {
+        res.on('error', () => {});
+        expect(res.status).toBe(200);
+        req.abort();
+        resolve();
+      } catch (err) {
+        req.abort();
+        reject(err);
+      }
+    });
+    req.on('error', (err) => {
+      if (err.message === 'aborted') return;
+      reject(err);
+    });
+    req.end();
+  }));
+
+  it('only broadcasts events matching the wallet address', () => new Promise<void>((resolve, reject) => {
+    // Verify filtering logic at endpoint level
+    const req = request(app).get('/wallets/GSPECIFIC/events');
+    req.buffer(false);
+    req.on('response', (res) => {
+      try {
+        res.on('error', () => {});
+        expect(res.status).toBe(200);
+        // Actual event filtering happens in eventMatchesWallet which is tested separately
+        req.abort();
+        resolve();
+      } catch (err) {
+        req.abort();
+        reject(err);
+      }
+    });
+    req.on('error', (err) => {
+      if (err.message === 'aborted') return;
+      reject(err);
+    });
+    req.end();
+  }));
+});
+
+// ── Extended SSE event filtering tests (issue #581) ──────────────────────────
+
+describe('SSE event filtering for wallet-specific broadcasts', () => {
+  const wallet = 'GBROADCAST';
+
+  it('broadcasts events where wallet is the actor', () => {
+    const event = {
+      id: 1,
+      actor: wallet,
+      data: { price: '100' },
+      ledgerSequence: 50,
+    };
+    expect(eventMatchesWallet(event, wallet)).toBe(true);
+  });
+
+  it('broadcasts events where wallet is the buyer', () => {
+    const event = {
+      id: 2,
+      actor: 'GOTHER',
+      data: { buyer: wallet, price: '200' },
+      ledgerSequence: 51,
+    };
+    expect(eventMatchesWallet(event, wallet)).toBe(true);
+  });
+
+  it('broadcasts events where wallet is listed as recipient', () => {
+    const event = {
+      id: 3,
+      actor: 'GARTIST',
+      data: { recipients: [{ address: wallet, percentage: 1000 }] },
+      ledgerSequence: 52,
+    };
+    expect(eventMatchesWallet(event, wallet)).toBe(true);
+  });
+
+  it('does not broadcast events unrelated to wallet', () => {
+    const event = {
+      id: 4,
+      actor: 'GOTHER1',
+      data: { buyer: 'GOTHER2', artist: 'GOTHER3' },
+      ledgerSequence: 53,
+    };
+    expect(eventMatchesWallet(event, wallet)).toBe(false);
+  });
+
+  it('broadcasts events where wallet is the artist', () => {
+    const event = {
+      id: 5,
+      actor: 'GBUYER',
+      data: { artist: wallet, price: '500' },
+      ledgerSequence: 54,
+    };
+    expect(eventMatchesWallet(event, wallet)).toBe(true);
+  });
+
+  it('broadcasts events where wallet is the offerer', () => {
+    const event = {
+      id: 6,
+      actor: 'GOTHER',
+      data: { offerer: wallet, amount: '1000' },
+      ledgerSequence: 55,
+    };
+    expect(eventMatchesWallet(event, wallet)).toBe(true);
+  });
+
+  it('handles recipients as array of objects correctly', () => {
+    const event = {
+      id: 7,
+      actor: 'GSELLER',
+      data: {
+        recipients: [
+          { address: 'GOTHER', percentage: 500 },
+          { address: wallet, percentage: 500 },
+        ],
+      },
+      ledgerSequence: 56,
+    };
+    expect(eventMatchesWallet(event, wallet)).toBe(true);
+  });
+
+  it('handles recipients as array of strings correctly', () => {
+    const event = {
+      id: 8,
+      actor: 'GSELLER',
+      data: { recipients: [wallet, 'GOTHER'] },
+      ledgerSequence: 57,
+    };
+    expect(eventMatchesWallet(event, wallet)).toBe(true);
+  });
+
+  it('filters out events with null data gracefully', () => {
+    const event = {
+      id: 9,
+      actor: 'GOTHER',
+      data: null,
+      ledgerSequence: 58,
+    };
+    expect(eventMatchesWallet(event, wallet)).toBe(false);
+  });
+
+  it('filters out events with undefined data gracefully', () => {
+    const event = {
+      id: 10,
+      actor: 'GOTHER',
+      data: undefined,
+      ledgerSequence: 59,
+    };
+    expect(eventMatchesWallet(event, wallet)).toBe(false);
   });
 });
 

@@ -21,7 +21,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "NEXT_PUBLIC_E2E_MOCK_CHAIN=true npx next dev",
+    command:
+      "NEXT_PUBLIC_E2E_MOCK_CHAIN=true NEXT_PUBLIC_PINATA_GATEWAY=https://gateway.pinata.cloud npx next dev",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,

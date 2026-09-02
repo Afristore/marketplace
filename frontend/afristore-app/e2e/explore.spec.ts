@@ -23,6 +23,8 @@ const PAGE_SIZE = 12;
 const CID_BAOBAB = "QmE2eBaobabTwilightCid";
 const CID_LAGOS = "QmE2eLagosSkylineCid";
 const CID_NAIROBI = "QmE2eNairobiStreetsCid";
+const CID_KENTE = "QmE2eKenteWeaveCid";
+const CID_ADINKRA = "QmE2eAdinkraCarvingCid";
 
 const EXTRA_METADATA: Record<string, typeof MOCK_ARTWORK_METADATA> = {
   [CID_BAOBAB]: {
@@ -39,6 +41,16 @@ const EXTRA_METADATA: Record<string, typeof MOCK_ARTWORK_METADATA> = {
     ...MOCK_ARTWORK_METADATA,
     title: "Nairobi Streets",
     category: "Photography",
+  },
+  [CID_KENTE]: {
+    ...MOCK_ARTWORK_METADATA,
+    title: "Kente Weave",
+    category: "Sculpture",
+  },
+  [CID_ADINKRA]: {
+    ...MOCK_ARTWORK_METADATA,
+    title: "Adinkra Carving",
+    category: "Sculpture",
   },
 };
 
@@ -66,28 +78,10 @@ async function mockExtraArtworkMetadata(page: Page) {
   });
 }
 
-/**
- * Mirrors the indexer's real `search` behaviour (matches against artist
- * address / collection — see indexer/src/api/routes.ts). Falls back to the
- * base marketplace mock for requests without a `search` param.
- */
-async function mockIndexerSearch(page: Page, store: MarketplaceTestStore) {
-  await page.route(`${INDEXER_URL}/listings**`, async (route) => {
-    if (route.request().method() !== "GET") return route.fallback();
-    const url = new URL(route.request().url());
-    const search = url.searchParams.get("search");
-    if (!search) return route.fallback();
-    const q = search.toLowerCase();
-    const rows = store.listings.filter((l) =>
-      l.artist.toLowerCase().includes(q),
-    );
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ listings: rows, total: rows.length }),
-    });
-  });
-}
+/** CID → art category map mirroring the indexer's denormalized `category` column. */
+const categoryByCid = Object.fromEntries(
+  Object.entries(EXTRA_METADATA).map(([cid, meta]) => [cid, meta.category]),
+);
 
 function makeListing(
   overrides: Partial<E2eIndexerListing> & { listing_id: number },
@@ -119,7 +113,7 @@ test.describe("Explore page loads first page of listings (#491)", () => {
 
   test.beforeEach(async ({ page }) => {
     store.reset();
-    await setupMarketplaceMocks(page, store);
+    await setupMarketplaceMocks(page, store, { categoryByCid });
     await resetE2eListingsInBrowser(page);
   });
 
@@ -167,7 +161,7 @@ test.describe("Explore page sorts by Price (#494)", () => {
 
   test.beforeEach(async ({ page }) => {
     store.reset();
-    await setupMarketplaceMocks(page, store);
+    await setupMarketplaceMocks(page, store, { categoryByCid });
     await mockExtraArtworkMetadata(page);
     await resetE2eListingsInBrowser(page);
 
@@ -216,14 +210,14 @@ test.describe("Explore page sorts by Price (#494)", () => {
       "Baobab Twilight",
     ]);
 
-    await page.getByRole("combobox").first().selectOption("price-low");
+    await page.getByRole("combobox").first().selectOption("price_asc");
     await expect(page.locator("h3")).toHaveText([
       "Baobab Twilight",
       "Nairobi Streets",
       "Lagos Skyline",
     ]);
 
-    await page.getByRole("combobox").first().selectOption("price-high");
+    await page.getByRole("combobox").first().selectOption("price_desc");
     await expect(page.locator("h3")).toHaveText([
       "Lagos Skyline",
       "Nairobi Streets",
@@ -237,7 +231,7 @@ test.describe("Explore page filters by category/kind (#495)", () => {
 
   test.beforeEach(async ({ page }) => {
     store.reset();
-    await setupMarketplaceMocks(page, store);
+    await setupMarketplaceMocks(page, store, { categoryByCid });
     await mockExtraArtworkMetadata(page);
     await resetE2eListingsInBrowser(page);
 
@@ -287,7 +281,7 @@ test.describe('Explore page "Load More" appends next page of results (#492)', ()
 
   test.beforeEach(async ({ page }) => {
     store.reset();
-    await setupMarketplaceMocks(page, store);
+    await setupMarketplaceMocks(page, store, { categoryByCid });
     await resetE2eListingsInBrowser(page);
   });
 
@@ -335,9 +329,8 @@ test.describe("Search bar returns relevant collection/NFT results (#496)", () =>
 
   test.beforeEach(async ({ page }) => {
     store.reset();
-    await setupMarketplaceMocks(page, store);
+    await setupMarketplaceMocks(page, store, { categoryByCid });
     await mockExtraArtworkMetadata(page);
-    await mockIndexerSearch(page, store);
     await resetE2eListingsInBrowser(page);
 
     store.upsertActive(
@@ -406,7 +399,7 @@ test.describe("Explore page sorts by Newest correctly (#493)", () => {
 
   test.beforeEach(async ({ page }) => {
     store.reset();
-    await setupMarketplaceMocks(page, store);
+    await setupMarketplaceMocks(page, store, { categoryByCid });
     await mockExtraArtworkMetadata(page);
     await resetE2eListingsInBrowser(page);
 
@@ -464,5 +457,240 @@ test.describe("Explore page sorts by Newest correctly (#493)", () => {
       "Baobab Twilight",
       "Lagos Skyline",
     ]);
+  });
+});
+
+test.describe("Explore page applies category, price range, and status filters together (#584)", () => {
+  const store = new MarketplaceTestStore();
+
+  test.beforeEach(async ({ page }) => {
+    store.reset();
+    await setupMarketplaceMocks(page, store, { categoryByCid });
+    await mockExtraArtworkMetadata(page);
+    await resetE2eListingsInBrowser(page);
+
+    // Sculpture, active, mid-priced — should survive every filter combination.
+    store.upsertActive(
+      makeListing({
+        listing_id: 9801,
+        metadata_cid: CID_BAOBAB,
+        price: String(10 * 10_000_000),
+        status: "Active",
+      }),
+    );
+    // Wrong category — excluded once "Sculpture" is selected.
+    store.upsertActive(
+      makeListing({
+        listing_id: 9802,
+        metadata_cid: CID_LAGOS,
+        price: String(10 * 10_000_000),
+        status: "Active",
+      }),
+    );
+    // Right category, too expensive — excluded once the price range is applied.
+    store.upsertActive(
+      makeListing({
+        listing_id: 9803,
+        metadata_cid: CID_KENTE,
+        price: String(50 * 10_000_000),
+        status: "Active",
+      }),
+    );
+    // Right category and price, wrong status — excluded once "Active" is selected.
+    store.upsertActive(
+      makeListing({
+        listing_id: 9804,
+        metadata_cid: CID_ADINKRA,
+        price: String(10 * 10_000_000),
+        status: "Sold",
+      }),
+    );
+  });
+
+  test("narrows the grid to listings matching category, price range, and status simultaneously", async ({
+    page,
+  }) => {
+    const listingsRequest = waitForListingsRequest(page);
+    await page.goto("/explore");
+    await listingsRequest;
+
+    await expect(page.getByText("Baobab Twilight")).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText("Lagos Skyline")).toBeVisible();
+    await expect(page.getByText("Kente Weave")).toBeVisible();
+    await expect(page.getByText("Adinkra Carving")).toBeVisible();
+
+    await page.getByRole("button", { name: /advanced filters/i }).click();
+
+    // Category filter
+    await page.getByRole("combobox").nth(1).selectOption("Sculpture");
+    await expect(page.getByText("Lagos Skyline")).toHaveCount(0);
+    await expect(page.getByText("Baobab Twilight")).toBeVisible();
+    await expect(page.getByText("Kente Weave")).toBeVisible();
+    await expect(page.getByText("Adinkra Carving")).toBeVisible();
+
+    // Price range filter (stacks on top of category)
+    const minPriceRequest = page.waitForRequest(
+      (req) =>
+        req.method() === "GET" &&
+        req.url().includes(`${INDEXER_URL}/listings`) &&
+        req.url().includes(`minPrice=${5 * 10_000_000}`),
+    );
+    await page.getByPlaceholder("Min").fill(String(5 * 10_000_000));
+    await minPriceRequest;
+
+    const maxPriceRequest = page.waitForRequest(
+      (req) =>
+        req.method() === "GET" &&
+        req.url().includes(`${INDEXER_URL}/listings`) &&
+        req.url().includes(`maxPrice=${15 * 10_000_000}`),
+    );
+    await page.getByPlaceholder("Max").fill(String(15 * 10_000_000));
+    await maxPriceRequest;
+
+    await expect(page.getByText("Kente Weave")).toHaveCount(0);
+    await expect(page.getByText("Baobab Twilight")).toBeVisible();
+    await expect(page.getByText("Adinkra Carving")).toBeVisible();
+
+    // Status filter (stacks on top of category + price range)
+    const statusRequest = page.waitForRequest(
+      (req) =>
+        req.method() === "GET" &&
+        req.url().includes(`${INDEXER_URL}/listings`) &&
+        req.url().includes("status=Active"),
+    );
+    await page.getByRole("button", { name: "Active", exact: true }).click();
+    await statusRequest;
+
+    await expect(page.getByText("Adinkra Carving")).toHaveCount(0);
+    await expect(page.getByText("Baobab Twilight")).toBeVisible();
+    await expect(
+      page.getByText(/Found\s+1\s+results\s+matching\s+your\s+criteria/i),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: /buy now/i })).toHaveCount(
+      1,
+    );
+  });
+});
+
+test.describe("Clearing all filters on the Explore page resets the view to default (#585)", () => {
+  const store = new MarketplaceTestStore();
+
+  test.beforeEach(async ({ page }) => {
+    store.reset();
+    await setupMarketplaceMocks(page, store, { categoryByCid });
+    await mockExtraArtworkMetadata(page);
+    await resetE2eListingsInBrowser(page);
+
+    store.upsertActive(
+      makeListing({
+        listing_id: 9901,
+        artist: TEST_PUBLIC_KEY,
+        metadata_cid: CID_BAOBAB,
+        price: String(10 * 10_000_000),
+        status: "Active",
+      }),
+    );
+    store.upsertActive(
+      makeListing({
+        listing_id: 9902,
+        artist: BUYER_PUBLIC_KEY,
+        metadata_cid: CID_LAGOS,
+        price: String(50 * 10_000_000),
+        status: "Active",
+      }),
+    );
+    store.upsertActive(
+      makeListing({
+        listing_id: 9903,
+        artist: BUYER_PUBLIC_KEY,
+        metadata_cid: CID_NAIROBI,
+        price: String(10 * 10_000_000),
+        status: "Sold",
+      }),
+    );
+  });
+
+  test("resets search, category, price range, and status back to defaults", async ({
+    page,
+  }) => {
+    const listingsRequest = waitForListingsRequest(page);
+    await page.goto("/explore");
+    await listingsRequest;
+
+    await expect(page.getByText("Baobab Twilight")).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(
+      page.getByText(/Showing\s+1\s*-\s*3\s+of\s+3\s+artworks/i),
+    ).toBeVisible();
+
+    // Apply a mix of filters that narrows the grid down to a single result.
+    const query = TEST_PUBLIC_KEY.slice(0, 10);
+    const searchRequest = page.waitForRequest(
+      (req) =>
+        req.method() === "GET" &&
+        req.url().includes(`${INDEXER_URL}/listings`) &&
+        req.url().includes(`search=${encodeURIComponent(query)}`),
+    );
+    await page
+      .getByPlaceholder(/search by title, artist, or description/i)
+      .fill(query);
+    await searchRequest;
+
+    await page.getByRole("button", { name: /advanced filters/i }).click();
+    await page.getByRole("combobox").nth(1).selectOption("Sculpture");
+
+    const statusRequest = page.waitForRequest(
+      (req) =>
+        req.method() === "GET" &&
+        req.url().includes(`${INDEXER_URL}/listings`) &&
+        req.url().includes("status=Active"),
+    );
+    await page.getByRole("button", { name: "Active", exact: true }).click();
+    await statusRequest;
+
+    const minPriceRequest = page.waitForRequest(
+      (req) =>
+        req.method() === "GET" &&
+        req.url().includes(`${INDEXER_URL}/listings`) &&
+        req.url().includes(`minPrice=${5 * 10_000_000}`),
+    );
+    await page.getByPlaceholder("Min").fill(String(5 * 10_000_000));
+    await minPriceRequest;
+
+    await expect(page.getByText("Baobab Twilight")).toBeVisible();
+    await expect(page.getByText("Lagos Skyline")).toHaveCount(0);
+    await expect(page.getByText("Nairobi Streets")).toHaveCount(0);
+    await expect(
+      page.getByText(/Showing\s+1\s*-\s*1\s+of\s+1\s+artwork/i),
+    ).toBeVisible();
+
+    // Clear all filters from the advanced filters panel.
+    const resetRequest = waitForListingsRequest(page);
+    await page.getByRole("button", { name: /reset all filters/i }).click();
+    await resetRequest;
+
+    // Every input/control is back to its default state.
+    await expect(
+      page.getByPlaceholder(/search by title, artist, or description/i),
+    ).toHaveValue("");
+    await expect(page.getByPlaceholder("Min")).toHaveValue("");
+    await expect(page.getByRole("combobox").nth(1)).toHaveValue("All");
+    await expect(
+      page.getByRole("button", { name: "All", exact: true }),
+    ).toHaveClass(/bg-brand-500/);
+    await expect(
+      page.getByRole("button", { name: /reset all filters/i }),
+    ).toHaveCount(0);
+
+    // The full, unfiltered result set is showing again.
+    await expect(page.getByText("Baobab Twilight")).toBeVisible();
+    await expect(page.getByText("Lagos Skyline")).toBeVisible();
+    await expect(page.getByText("Nairobi Streets")).toBeVisible();
+    await expect(
+      page.getByText(/Showing\s+1\s*-\s*3\s+of\s+3\s+artworks/i),
+    ).toBeVisible();
   });
 });

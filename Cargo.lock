@@ -1407,6 +1407,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "soroban-lending"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
 name = "soroban-marketplace"
 version = "0.1.0"
 dependencies = [

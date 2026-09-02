@@ -46,6 +46,7 @@ export function Navbar() {
     disconnect,
     isWrongNetwork,
     status,
+    notifications: { notifications, unreadCount, markAllAsRead },
   } = useWalletContext();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -68,7 +69,10 @@ export function Navbar() {
   // Close user menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+      if (
+        userMenuRef.current &&
+        !userMenuRef.current.contains(e.target as Node)
+      ) {
         setUserMenuOpen(false);
       }
     };
@@ -80,67 +84,8 @@ export function Navbar() {
     };
   }, [userMenuOpen]);
 
-  const [notifications, setNotifications] = useState<any[]>([]);
-  const [unreadCount, setUnreadCount] = useState(0);
   const [panelOpen, setPanelOpen] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
-
-  const INDEXER_URL = (
-    process.env.NEXT_PUBLIC_INDEXER_URL ?? "http://localhost:4000"
-  ).replace(/\/$/, "");
-
-  const fetchNotifications = async () => {
-    if (!publicKey) return;
-    try {
-      const res = await fetch(`${INDEXER_URL}/notifications?address=${publicKey}`);
-      if (res.ok) {
-        const data = await res.json();
-        const list = data.notifications || [];
-        setNotifications(list);
-        setUnreadCount(list.filter((n: any) => !n.read).length);
-      }
-    } catch (err) {
-      console.error("Failed to fetch notifications:", err);
-    }
-  };
-
-  const markAllAsRead = async () => {
-    if (!publicKey) return;
-    try {
-      const res = await fetch(`${INDEXER_URL}/notifications?address=${publicKey}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-      });
-      if (res.ok) {
-        setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-        setUnreadCount(0);
-      }
-    } catch (err) {
-      console.error("Failed to mark notifications as read:", err);
-    }
-  };
-
-  useEffect(() => {
-    if (!publicKey) {
-      setNotifications([]);
-      setUnreadCount(0);
-      return;
-    }
-
-    fetchNotifications();
-
-    const eventSource = new EventSource(`${INDEXER_URL}/events/stream`);
-    eventSource.onmessage = () => {
-      fetchNotifications();
-    };
-    eventSource.onerror = () => {
-      // ignore
-    };
-
-    return () => {
-      eventSource.close();
-    };
-  }, [publicKey]);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
@@ -238,13 +183,14 @@ export function Navbar() {
                 <div className="relative" ref={panelRef}>
                   <button
                     data-testid="notification-bell"
+                    aria-label="Notifications"
                     onClick={() => setPanelOpen((prev) => !prev)}
                     className="relative flex items-center justify-center w-9 h-9 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-white/70 hover:text-white transition-colors"
                   >
                     <Bell size={18} />
                     {unreadCount > 0 && (
                       <span
-                        data-testid="notification-count"
+                        data-testid="notification-badge"
                         className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-brand-500 px-1 text-[9px] font-bold text-white ring-2 ring-midnight-950"
                       >
                         {unreadCount}
@@ -255,11 +201,13 @@ export function Navbar() {
                   {/* Notification Dropdown Panel */}
                   {panelOpen && (
                     <div
-                      data-testid="notification-panel"
+                      data-testid="notifications-dropdown"
                       className="absolute right-0 mt-2 w-80 rounded-2xl bg-midnight-900/98 backdrop-blur-xl border border-white/10 shadow-xl shadow-black/40 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200"
                     >
                       <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 bg-white/[0.02]">
-                        <span className="text-xs font-bold text-white">Notifications</span>
+                        <span className="text-xs font-bold text-white">
+                          Notifications
+                        </span>
                         {unreadCount > 0 && (
                           <button
                             onClick={markAllAsRead}
@@ -272,9 +220,14 @@ export function Navbar() {
 
                       <div className="max-h-72 overflow-y-auto divide-y divide-white/5">
                         {notifications.length === 0 ? (
-                          <div className="flex flex-col items-center justify-center py-8 text-center px-4">
+                          <div
+                            data-testid="notification-empty"
+                            className="flex flex-col items-center justify-center py-8 text-center px-4"
+                          >
                             <span className="text-2xl mb-2">🔔</span>
-                            <p className="text-xs text-white/40">No notifications yet</p>
+                            <p className="text-xs text-white/40">
+                              No notifications yet
+                            </p>
                           </div>
                         ) : (
                           notifications.map((n) => (
@@ -285,10 +238,15 @@ export function Navbar() {
                                 !n.read ? "bg-white/[0.01]" : ""
                               }`}
                             >
-                              <Link href={n.link || "#"} onClick={() => setPanelOpen(false)}>
+                              <Link
+                                href={n.link || "#"}
+                                onClick={() => setPanelOpen(false)}
+                              >
                                 <div className="flex items-start gap-3 flex-row">
                                   <div className="flex-1 min-w-0 text-left">
-                                    <p className={`text-xs text-white truncate ${!n.read ? "font-bold" : "font-medium"}`}>
+                                    <p
+                                      className={`text-xs text-white truncate ${!n.read ? "font-bold" : "font-medium"}`}
+                                    >
                                       {n.title}
                                     </p>
                                     <p className="text-[11px] text-white/50 mt-0.5 leading-normal whitespace-normal">
@@ -315,7 +273,9 @@ export function Navbar() {
                     aria-haspopup="true"
                     aria-expanded={userMenuOpen}
                   >
-                    <span className="text-xs font-mono text-white/90">{shortKey}</span>
+                    <span className="text-xs font-mono text-white/90">
+                      {shortKey}
+                    </span>
                     <ChevronDown
                       size={14}
                       className={`text-white/40 transition-transform duration-200 ${
@@ -344,7 +304,10 @@ export function Navbar() {
                             onClick={() => setUserMenuOpen(false)}
                             className="flex items-center gap-3 px-4 py-2.5 text-sm text-white/70 hover:text-white hover:bg-white/5 transition-colors"
                           >
-                            <Icon size={15} className="text-brand-400 shrink-0" />
+                            <Icon
+                              size={15}
+                              className="text-brand-400 shrink-0"
+                            />
                             {label}
                           </Link>
                         ))}
