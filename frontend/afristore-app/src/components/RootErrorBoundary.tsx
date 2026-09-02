@@ -34,7 +34,7 @@ export class RootErrorBoundary extends React.Component<
     console.error("RootErrorBoundary caught an error:", error, errorInfo);
 
     // Send to Sentry with additional context
-    Sentry.withScope((scope) => {
+    Sentry.withScope((scope: any) => {
       scope.setContext("errorBoundary", {
         componentStack: errorInfo.componentStack,
       });

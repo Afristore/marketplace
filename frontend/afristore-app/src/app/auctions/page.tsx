@@ -75,6 +75,14 @@ function AuctionCard({ auction }: { auction: Auction }) {
 
   const imageUrl = metadata?.image ? cidToGatewayUrl(metadata.image) : null;
   const currentBidXlm = parseFloat(stroopsToXlm(auction.highest_bid));
+  const now = Math.floor(Date.now() / 1000);
+  const remainingSecs = Math.max(0, auction.end_time - now);
+  const minutesRemaining = Math.floor(remainingSecs / 60);
+  const isEndingSoon =
+    auction.status === "Active" &&
+    remainingSecs > 0 &&
+    minutesRemaining > 0 &&
+    minutesRemaining <= 60;
 
   return (
     <Link
@@ -105,6 +113,12 @@ function AuctionCard({ auction }: { auction: Auction }) {
         >
           {auction.status}
         </span>
+
+        {isEndingSoon && (
+          <span className="absolute top-3 left-3 rounded-full bg-red-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-600 animate-pulse">
+            Ending Soon
+          </span>
+        )}
       </div>
 
       {/* Info */}

@@ -749,6 +749,126 @@ fn deploy_lazy_1155_fails_on_empty_name() {
     assert_eq!(result, Err(Ok(Error::EmptyName)));
 }
 
+// ── Issue #561: deploy_collection fails if collection name is empty ──────────
+//
+// Verify that deploying with an empty name:
+//   1. Returns EmptyName error
+//   2. Does NOT increment collection_count
+//   3. Does NOT record any collection in all_collections or collections_by_creator
+
+#[test]
+fn deploy_normal_721_empty_name_no_state_change() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let salt = BytesN::from_array(&env, &[0x60u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+
+    assert_eq!(client.collection_count(), 0u64);
+    assert!(client.all_collections().is_empty());
+
+    let result = client.try_deploy_normal_721(
+        &creator,
+        &String::from_str(&env, ""),
+        &String::from_str(&env, "SYM"),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &salt,
+    );
+    assert_eq!(result, Err(Ok(Error::EmptyName)));
+
+    // State must remain unchanged
+    assert_eq!(client.collection_count(), 0u64);
+    assert!(client.all_collections().is_empty());
+    assert!(client.collections_by_creator(&creator).is_empty());
+}
+
+#[test]
+fn deploy_normal_1155_empty_name_no_state_change() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let salt = BytesN::from_array(&env, &[0x61u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+
+    assert_eq!(client.collection_count(), 0u64);
+    assert!(client.all_collections().is_empty());
+
+    let result = client.try_deploy_normal_1155(
+        &creator,
+        &String::from_str(&env, ""),
+        &500u32,
+        &royalty_receiver,
+        &salt,
+    );
+    assert_eq!(result, Err(Ok(Error::EmptyName)));
+
+    assert_eq!(client.collection_count(), 0u64);
+    assert!(client.all_collections().is_empty());
+    assert!(client.collections_by_creator(&creator).is_empty());
+}
+
+#[test]
+fn deploy_lazy_721_empty_name_no_state_change() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let salt = BytesN::from_array(&env, &[0x62u8; 32]);
+    let creator_pubkey = BytesN::from_array(&env, &[0x09u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+
+    assert_eq!(client.collection_count(), 0u64);
+    assert!(client.all_collections().is_empty());
+
+    let result = client.try_deploy_lazy_721(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, ""),
+        &String::from_str(&env, "SYM"),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &salt,
+    );
+    assert_eq!(result, Err(Ok(Error::EmptyName)));
+
+    assert_eq!(client.collection_count(), 0u64);
+    assert!(client.all_collections().is_empty());
+    assert!(client.collections_by_creator(&creator).is_empty());
+}
+
+#[test]
+fn deploy_lazy_1155_empty_name_no_state_change() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let salt = BytesN::from_array(&env, &[0x63u8; 32]);
+    let creator_pubkey = BytesN::from_array(&env, &[0x0Au8; 32]);
+    let royalty_receiver = Address::generate(&env);
+
+    assert_eq!(client.collection_count(), 0u64);
+    assert!(client.all_collections().is_empty());
+
+    let result = client.try_deploy_lazy_1155(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, ""),
+        &500u32,
+        &royalty_receiver,
+        &salt,
+    );
+    assert_eq!(result, Err(Ok(Error::EmptyName)));
+
+    assert_eq!(client.collection_count(), 0u64);
+    assert!(client.all_collections().is_empty());
+    assert!(client.collections_by_creator(&creator).is_empty());
+}
+
 // ── Symbol length validation tests ──────────────────────────────
 
 /// Symbol of exactly max length (10) succeeds; symbol of 11+ fails.
@@ -1275,6 +1395,8 @@ fn deploys_staking_pool_for_nft_collection() {
     let reward_token = Address::generate(&env);
     let salt = BytesN::from_array(&env, &[0xAAu8; 32]);
 
+    client.add_approved_currency(&reward_token);
+
     let pool_a =
         client.deploy_staking_pool(&creator, &nft_address, &reward_token, &1_000_000i128, &salt);
 
@@ -1289,4 +1411,58 @@ fn deploys_staking_pool_for_nft_collection() {
         &BytesN::from_array(&env, &[0xBBu8; 32]),
     );
     assert_eq!(duplicate, Err(Ok(Error::StakingPoolAlreadyExists)));
+}
+
+#[test]
+fn rejects_unapproved_tokens_for_staking_and_splitter_deploys() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, admin, creator) = setup_launchpad_with_staking(&env);
+
+    let approved_reward = Address::generate(&env);
+    let approved_splitter = Address::generate(&env);
+    let unapproved = Address::generate(&env);
+    let nft_address = Address::generate(&env);
+    let beneficiaries = soroban_sdk::Vec::from_array(&env, [Address::generate(&env)]);
+    let shares = soroban_sdk::Vec::from_array(&env, [100u32]);
+
+    client.add_approved_currency(&approved_reward);
+    client.add_approved_currency(&approved_splitter);
+    client.add_approved_currency(&admin);
+
+    let staking_result = client.try_deploy_staking_pool(
+        &creator,
+        &nft_address,
+        &unapproved,
+        &1_000_000i128,
+        &BytesN::from_array(&env, &[0xCCu8; 32]),
+    );
+    assert_eq!(staking_result, Err(Ok(Error::InvalidCurrency)));
+
+    let splitter_result = client.try_deploy_splitter(
+        &creator,
+        &unapproved,
+        &beneficiaries,
+        &shares,
+        &BytesN::from_array(&env, &[0xDDu8; 32]),
+    );
+    assert_eq!(splitter_result, Err(Ok(Error::InvalidCurrency)));
+
+    let staking_ok = client.try_deploy_staking_pool(
+        &creator,
+        &Address::generate(&env),
+        &approved_reward,
+        &1_000_000i128,
+        &BytesN::from_array(&env, &[0xEEu8; 32]),
+    );
+    assert_ne!(staking_ok, Err(Ok(Error::InvalidCurrency)));
+
+    let splitter_ok = client.try_deploy_splitter(
+        &creator,
+        &approved_splitter,
+        &beneficiaries,
+        &shares,
+        &BytesN::from_array(&env, &[0xFFu8; 32]),
+    );
+    assert_ne!(splitter_ok, Err(Ok(Error::InvalidCurrency)));
 }

@@ -11,14 +11,17 @@ jest.mock("posthog-js", () => ({ capture: jest.fn() }));
 jest.mock("lucide-react", () =>
   Object.fromEntries(
     [
-      "X",
+       "X",
       "CreditCard",
       "Wallet",
       "CheckCircle2",
+      "AlertCircle",
+      "Info",
       "Loader2",
       "DollarSign",
       "Lock",
       "ArrowRight",
+      "CheckCircle",
     ].map((name) => [name, () => <span />]),
   ),
 );
@@ -28,6 +31,7 @@ const mockFetch = jest.fn();
 globalThis.fetch = mockFetch;
 
 import { CheckoutModal } from "@/components/CheckoutModal";
+import { ToastProvider, useToast } from "@/components/ToastProvider";
 
 const sampleListing = {
   listing_id: 1,
@@ -124,7 +128,7 @@ describe("CheckoutModal", () => {
 
   // ── Crypto flow ─────────────────────────────────────────────────────────────
 
-  it("calls onCryptoPurchase and onClose on successful crypto purchase", async () => {
+  it("shows a success modal and calls onPurchased on successful crypto purchase", async () => {
     const onClose = jest.fn();
     const onPurchased = jest.fn();
     const onCryptoPurchase = jest.fn().mockResolvedValue(true);
@@ -143,8 +147,14 @@ describe("CheckoutModal", () => {
 
     await user.click(screen.getByRole("button", { name: /pay.*xlm/i }));
     await waitFor(() => expect(onCryptoPurchase).toHaveBeenCalled());
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(onPurchased).toHaveBeenCalled();
+
+    // The success modal replaces the checkout form and stays open until dismissed.
+    expect(await screen.findByText(/purchase successful/i)).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: /done/i }));
+    expect(onClose).toHaveBeenCalled();
   });
 
   it("does not close on failed crypto purchase", async () => {
@@ -179,5 +189,52 @@ describe("CheckoutModal", () => {
     );
     expect(screen.getByText(/processing/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /processing/i })).toBeDisabled();
+  });
+
+  it("shows a toast error when the fiat checkout API rejects", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockRejectedValueOnce(new Error("Stripe checkout failed"));
+
+    function FiatCheckoutHarness() {
+      const { pushToast } = useToast();
+
+      const handleFiatCheckout = async () => {
+        try {
+          const response = await fetch("/api/fiat/checkout", {
+            method: "POST",
+          });
+
+          if (!response.ok) {
+            throw new Error("Ramp checkout failed");
+          }
+        } catch (error) {
+          pushToast(
+            error instanceof Error ? error.message : "Fiat checkout failed",
+            "error",
+          );
+        }
+      };
+
+      return (
+        <button type="button" onClick={handleFiatCheckout}>
+          Start Fiat Checkout
+        </button>
+      );
+    }
+
+    render(
+      <ToastProvider>
+        <FiatCheckoutHarness />
+      </ToastProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /start fiat checkout/i }));
+
+    expect(mockFetch).toHaveBeenCalledWith("/api/fiat/checkout", {
+      method: "POST",
+    });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /stripe|ramp|fiat checkout failed/i,
+    );
   });
 });
