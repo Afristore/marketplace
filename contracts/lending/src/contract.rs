@@ -17,12 +17,7 @@ pub struct LendingContract;
 
 #[contractimpl]
 impl LendingContract {
-    pub fn initialize(
-        env: Env,
-        admin: Address,
-        collateral_token: Address,
-        borrow_token: Address,
-    ) {
+    pub fn initialize(env: Env, admin: Address, collateral_token: Address, borrow_token: Address) {
         if is_initialized(&env) {
             panic_with_error!(&env, LendingError::AlreadyInitialized);
         }
@@ -48,12 +43,7 @@ impl LendingContract {
         is_paused(&env)
     }
 
-    pub fn borrow(
-        env: Env,
-        borrower: Address,
-        collateral_amount: i128,
-        borrow_amount: i128,
-    ) {
+    pub fn borrow(env: Env, borrower: Address, collateral_amount: i128, borrow_amount: i128) {
         if !is_initialized(&env) {
             panic_with_error!(&env, LendingError::NotInitialized);
         }
@@ -79,8 +69,10 @@ impl LendingContract {
         let borrow_token_addr = get_borrow_token(&env)
             .unwrap_or_else(|| panic_with_error!(&env, LendingError::NotInitialized));
 
+        let contract_addr = env.current_contract_address();
+
         let borrow_token_client = TokenClient::new(&env, &borrow_token_addr);
-        let available_liquidity = borrow_token_client.balance(&env.current_contract_address());
+        let available_liquidity = borrow_token_client.balance(&contract_addr);
         if available_liquidity < borrow_amount {
             panic_with_error!(&env, LendingError::InsufficientLiquidity);
         }
@@ -88,18 +80,10 @@ impl LendingContract {
         let collateral_token_client = TokenClient::new(&env, &collateral_token_addr);
 
         // Transfer collateral from borrower to contract
-        collateral_token_client.transfer(
-            &borrower,
-            &env.current_contract_address(),
-            &collateral_amount,
-        );
+        collateral_token_client.transfer(&borrower, &contract_addr, &collateral_amount);
 
         // Transfer borrow token from contract to borrower
-        borrow_token_client.transfer(
-            &env.current_contract_address(),
-            &borrower,
-            &borrow_amount,
-        );
+        borrow_token_client.transfer(&contract_addr, &borrower, &borrow_amount);
 
         // State update
         let existing = load_borrow_position(&env, &borrower);

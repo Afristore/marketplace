@@ -13,9 +13,7 @@ pub fn is_initialized(env: &Env) -> bool {
 }
 
 pub fn set_initialized(env: &Env) {
-    env.storage()
-        .instance()
-        .set(&DataKey::IsInitialized, &true);
+    env.storage().instance().set(&DataKey::IsInitialized, &true);
 }
 
 pub fn set_admin(env: &Env, admin: &Address) {

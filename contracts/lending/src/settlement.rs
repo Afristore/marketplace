@@ -23,7 +23,8 @@ pub fn calculate_settlement(
 
     // Calculate accrued interest based on elapsed seconds:
     // interest = borrow_amount * interest_rate_bps * elapsed / (10_000 * 31_536_000)
-    let interest = (position.borrow_amount as i128)
+    let interest = position
+        .borrow_amount
         .saturating_mul(interest_rate_bps as i128)
         .saturating_mul(elapsed as i128)
         / (10_000 * 31_536_000);
