@@ -1,5 +1,13 @@
 #![no_std]
 
+mod oracle;
+
+pub use oracle::{
+    get_price, token_to_usd, usd_to_token_amount, OracleConfig, PriceData,
+};
+
+#[contract]
+pub struct Contract;
 pub mod contract;
 pub mod events;
 pub mod interest;
