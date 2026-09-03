@@ -270,7 +270,6 @@ fn test_create_listing_negative_price() {
     );
 }
 
-
 // #[test] // Deprecated in V2 architecture
 #[should_panic(expected = "Error(Contract, #1)")]
 fn test_create_listing_empty_cid() {
@@ -3456,10 +3455,12 @@ fn test_create_listing_fails_if_price_zero_or_negative() {
             &1u64,
             &valid_recipients(&env, &artist),
         );
-        assert!(res.is_err(), "create_listing must fail when price is negative");
+        assert!(
+            res.is_err(),
+            "create_listing must fail when price is negative"
+        );
     });
 
     // Verify expected state: no listing was created
     assert_eq!(client.get_total_listings(), 0);
 }
-
