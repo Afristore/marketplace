@@ -163,6 +163,14 @@ describe("ListingCard", () => {
     });
   });
 
+  it("renders the listing price with thousands separators", async () => {
+    render(<ListingCard listing={makeListing({ price: 10_000_000_000n })} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("1,000 XLM")).toBeInTheDocument();
+    });
+  });
+
   it("renders the Active status badge for active listings", async () => {
     render(<ListingCard listing={makeListing({ status: "Active" })} />);
     await waitFor(() => {

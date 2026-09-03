@@ -28,6 +28,12 @@ const STATUS_BADGE: Record<string, string> = {
   Cancelled: "bg-red-100 text-red-600",
 };
 
+function formatPrice(stroops: bigint): string {
+  const [whole, fraction] = stroopsToXlm(stroops).split(".");
+  const formattedWhole = Intl.NumberFormat("en-US").format(BigInt(whole));
+  return fraction ? `${formattedWhole}.${fraction}` : formattedWhole;
+}
+
 export function ListingCard({ listing, onPurchased }: ListingCardProps) {
   const { publicKey, status } = useWalletContext();
   const { buy, isBuying, error: buyError } = useBuyArtwork(publicKey);
@@ -140,7 +146,7 @@ export function ListingCard({ listing, onPurchased }: ListingCardProps) {
             <div className="flex items-center gap-1.5 text-brand-600">
               <Tag size={14} />
               <span className="text-lg font-bold">
-                {stroopsToXlm(listing.price)} XLM
+                {formatPrice(listing.price)} XLM
               </span>
             </div>
 
