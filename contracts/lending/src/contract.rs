@@ -1,6 +1,4 @@
-use soroban_sdk::{
-    contract, contractimpl, panic_with_error, Address, Env, IntoVal, Symbol, Vec,
-};
+use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, IntoVal, Symbol, Vec};
 
 use crate::storage::{increment_listing_count, load_listing, save_listing};
 use crate::types::{InterestTier, LendingError, LendingListing, ListingStatus};
