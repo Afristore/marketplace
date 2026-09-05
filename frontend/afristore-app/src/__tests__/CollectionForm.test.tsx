@@ -108,6 +108,26 @@ describe("CollectionForm", () => {
     await waitFor(() => expect(mockDeploy).toHaveBeenCalled());
   });
 
+  it("rejects collection names containing special characters", async () => {
+    const user = userEvent.setup();
+    render(<CollectionForm />);
+
+    const nameInput = screen.getByPlaceholderText(/african legends/i);
+    const symbolInput = screen.getByPlaceholderText(/AFRL/i);
+    await user.type(nameInput, "My Collection!");
+    await user.type(symbolInput, "MC");
+
+    // Submit directly because the browser's pattern validation also blocks the button path.
+    nameInput.closest("form")?.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /only letters, numbers, spaces, hyphens, and underscores/i,
+    );
+    expect(mockDeploy).not.toHaveBeenCalled();
+  });
+
   it("shows success state with deployed address", async () => {
     mockDeploy.mockResolvedValueOnce("CDEPLOYED_ADDRESS_123");
     const user = userEvent.setup();
