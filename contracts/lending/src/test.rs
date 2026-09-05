@@ -51,11 +51,78 @@ mod mock_nft {
     }
 }
 
-use soroban_sdk::testutils::Address as _;
+use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::{symbol_short, vec, Address, Env, IntoVal, Symbol, Vec};
 
 use crate::contract::{LendingContract, LendingContractClient};
-use crate::types::{InterestTier, ListingStatus};
+use crate::types::{InterestTier, ListingStatus, PlatformConfig, Position, PositionStatus};
+
+#[derive(Clone, Debug)]
+struct MockToken {
+    address: Address,
+}
+
+fn create_token(env: &Env, _admin: &Address) -> (MockToken, Address) {
+    let address = Address::generate(env);
+    (MockToken { address: address.clone() }, address)
+}
+
+fn make_config(env: &Env, fee_receiver: Address, oracle: Address) -> PlatformConfig {
+    PlatformConfig {
+        admin: Address::generate(env),
+        fee_receiver,
+        platform_fee_bps: 200,
+        liquidator_fee_bps: 100,
+        min_buffer_bps: 12000,
+        max_buffer_bps: 20000,
+        min_liq_threshold_bps: 10500,
+        max_liq_threshold_bps: 12000,
+        oracle_address: oracle,
+        max_price_staleness_secs: 60,
+    }
+}
+
+fn set_config(env: &Env, config: &PlatformConfig) {
+    env.storage().persistent().set(&crate::storage::DataKey::Config, config);
+}
+
+fn make_position(
+    env: &Env,
+    lender: Address,
+    borrower: Address,
+    collateral_currency: Address,
+    collateral_amount: i128,
+) -> Position {
+    Position {
+        id: 1,
+        listing_id: 1,
+        lender,
+        borrower,
+        nft_contract: Address::generate(env),
+        token_id: 1,
+        declared_price_usd: 100_000_000,
+        collateral_currency,
+        collateral_amount,
+        interest_schedule_bps: vec![&env, 500u32],
+        liquidation_threshold_bps: 11000,
+        start_time: 0,
+        max_duration_secs: 90 * 86400,
+        status: PositionStatus::Active,
+    }
+}
+
+fn get_position(env: &Env, position_id: u64) -> Position {
+    env.storage()
+        .persistent()
+        .get(&crate::storage::DataKey::Position(position_id))
+        .expect("position not found")
+}
+
+fn set_position(env: &Env, position_id: u64, position: &Position) {
+    env.storage()
+        .persistent()
+        .set(&crate::storage::DataKey::Position(position_id), position);
+}
 
 fn setup() -> (
     Env,
@@ -291,12 +358,12 @@ fn test_health_factor_decreases_after_interest_accrues() {
     let fresh = client.health_factor(&position_id);
     assert_eq!(fresh, 15000);
 
-    // Advance 15 days => accrued interest = 10% * 15/30 = 5 USD => owed = 105 USD.
+    // Advance 15 days at a 5% monthly rate => accrued interest = 100 * 5% * 15/30 = 2.5 USD.
     env.ledger().with_mut(|l| l.timestamp = 1000 + 15 * 86400);
 
     let decreased = client.health_factor(&position_id);
-    // 150 / 105 => 142.857...% => 14285 bps.
-    assert_eq!(decreased, 14285);
+    // 150 / 102.5 => 14634 bps.
+    assert_eq!(decreased, 14634);
     assert!(decreased < fresh);
 }
 

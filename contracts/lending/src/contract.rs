@@ -1,15 +1,15 @@
-use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, IntoVal, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, panic_with_error, token, Address, Env, IntoVal, Symbol, Vec,
+};
 
 use crate::events;
 use crate::interest;
 use crate::oracle;
 use crate::settlement;
 use crate::storage::{
-    get_config, get_listing, get_position, is_currency_whitelisted, next_position_id, set_listing,
-    set_position, increment_listing_count, load_listing, save_listing
+    get_config, get_position, increment_listing_count, load_listing, save_listing, set_position,
 };
-use crate::types::{ListingStatus, Position, PositionStatus, 
-  InterestTier, LendingError, LendingListing, ListingStatus};
+use crate::types::{InterestTier, LendingError, LendingListing, ListingStatus, PositionStatus};
 
 #[contract]
 pub struct LendingContract;
@@ -155,6 +155,8 @@ impl LendingContract {
             result.platform_fee_usd,
             result.borrower_rem,
         );
+    }
+
     pub fn get_listing(env: Env, listing_id: u64) -> Option<LendingListing> {
         load_listing(&env, listing_id)
     }
