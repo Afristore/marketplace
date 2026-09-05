@@ -58,6 +58,11 @@ jest.mock("@/hooks/useTransientErrorToast", () => ({
   useTransientErrorToast: jest.fn(),
 }));
 
+// useCreateListing now lives in hooks/mutations and raises its own toasts.
+jest.mock("@/components/ToastProvider", () => ({
+  useToast: () => ({ pushToast: jest.fn() }),
+}));
+
 jest.mock("@/providers/PostHogProvider", () => ({
   trackEvent: {
     listingCreated: jest.fn(),

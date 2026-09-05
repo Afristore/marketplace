@@ -4,6 +4,7 @@ import prisma from '../db.js';
 import redis from '../redis.js';
 import { cacheMiddleware } from './cache-middleware.js';
 import { strictRateLimiter } from './rate-limit-middleware.js';
+import lendingRoutes from './lending.js';
 
 // ── Server-Sent Events ───────────────────────────────────────
 
@@ -95,6 +96,9 @@ function attachSseClient(req: Request, res: Response, address?: string) {
 }
 
 const router = Router();
+
+// Mount lending routes under /api/lending
+router.use('/api/lending', lendingRoutes);
 
 /** GET /events/stream — subscribe to all marketplace events (explore refresh). */
 router.get('/events/stream', (req: Request, res: Response) => {
@@ -650,6 +654,36 @@ router.get('/wallets/:address/portfolio', strictRateLimiter, async (req: Request
     }
 });
 
+// GET /lending/positions/:borrower — borrower's active and historical lending positions
+router.get('/lending/positions/:borrower', async (req: Request, res: Response) => {
+    const borrower = req.params.borrower as string;
+    try {
+        const positions = await prisma.lendingPosition.findMany({
+            where: { borrower },
+            orderBy: { createdAtLedger: 'desc' },
+        });
+        res.json(serialize(positions));
+    } catch (err) {
+        console.error('Error fetching lending positions for borrower', borrower, err);
+        res.status(500).json({ error: 'Failed to fetch lending positions' });
+    }
+});
+
+// GET /lending/positions/lender/:walletAddress — lender's funded positions
+router.get('/lending/positions/lender/:walletAddress', async (req: Request, res: Response) => {
+    const walletAddress = req.params.walletAddress as string;
+    try {
+        const positions = await prisma.lendingPosition.findMany({
+            where: { lender: walletAddress },
+            orderBy: { createdAtLedger: 'desc' },
+        });
+        res.json(serialize(positions));
+    } catch (err) {
+        console.error('Error fetching lending positions for lender', walletAddress, err);
+        res.status(500).json({ error: 'Failed to fetch lending positions' });
+    }
+});
+
 // GET /wallets/:address/preferences — user settings
 router.get('/wallets/:address/preferences', async (req: Request, res: Response) => {
     const address = req.params.address as string;
@@ -743,5 +777,7 @@ router.get('/collections/:address', async (req: Request, res: Response) => {
         res.status(500).json({ error: 'Failed to fetch collection' });
     }
 });
+
+router.use(lendingRoutes);
 
 export default router;

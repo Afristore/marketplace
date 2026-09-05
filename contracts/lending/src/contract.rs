@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, token, Address, Env};
+use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, IntoVal, Symbol, Vec};
 
 use crate::events;
 use crate::interest;
@@ -6,120 +6,81 @@ use crate::oracle;
 use crate::settlement;
 use crate::storage::{
     get_config, get_listing, get_position, is_currency_whitelisted, next_position_id, set_listing,
-    set_position,
+    set_position, increment_listing_count, load_listing, save_listing
 };
-use crate::types::{ListingStatus, Position, PositionStatus};
+use crate::types::{ListingStatus, Position, PositionStatus, 
+  InterestTier, LendingError, LendingListing, ListingStatus};
 
 #[contract]
 pub struct LendingContract;
 
 #[contractimpl]
 impl LendingContract {
-    pub fn cancel_listing(env: Env, listing_id: u64) {
-        let mut listing = get_listing(&env, listing_id);
-
-        listing.lender.require_auth();
-
-        if listing.status != ListingStatus::Open {
-            panic!("Listing is not Open");
-        }
-
-        // Return NFT to lender
-        let nft_client = token::Client::new(&env, &listing.nft_contract);
-        // Assuming NFT uses the standard token interface for transfer
-        nft_client.transfer(
-            &env.current_contract_address(),
-            &listing.lender,
-            &(listing.token_id as i128),
-        );
-
-        listing.status = ListingStatus::Cancelled;
-        set_listing(&env, listing_id, &listing);
-
-        #[allow(deprecated)]
-        // Emitting event (dummy implementation since event spec is not fully provided)
-        env.events()
-            .publish((soroban_sdk::symbol_short!("cancel"), listing_id), ());
-    }
-
-    pub fn borrow(
+    pub fn create_listing(
         env: Env,
-        listing_id: u64,
-        borrower: Address,
-        collateral_currency: Address,
-        collateral_amount: i128,
+        lender: Address,
+        collection: Address,
+        token_id: u64,
+        price: i128,
+        currency: Symbol,
+        min_duration: u64,
+        max_duration: u64,
+        interest_schedule: Vec<InterestTier>,
     ) -> u64 {
-        borrower.require_auth();
+        lender.require_auth();
 
-        let mut listing = get_listing(&env, listing_id);
-
-        if listing.status != ListingStatus::Open {
-            panic!("Listing is not Open");
+        if price <= 0 {
+            panic_with_error!(&env, LendingError::InvalidPrice);
         }
 
-        if !is_currency_whitelisted(&env, &collateral_currency) {
-            panic!("Collateral currency not whitelisted");
+        if interest_schedule.is_empty() {
+            panic_with_error!(&env, LendingError::EmptyInterestSchedule);
         }
 
-        let config = get_config(&env);
-        let oracle_price = oracle::get_price(&env, &config.oracle_address, &collateral_currency);
-
-        // oracle_price is likely USD per unit of collateral (7 decimals)
-        // token_to_usd: collateral_amount * oracle_price / 10^decimals
-        // For simplicity assuming both are 7 decimals
-        let collateral_value_usd = (collateral_amount * oracle_price) / 10_000_000;
-
-        let required_collateral =
-            (listing.declared_price_usd * (listing.min_collateral_buffer_bps as i128)) / 10_000;
-
-        if collateral_value_usd < required_collateral {
-            panic!("Under-collateralized");
+        if min_duration == 0 || max_duration < min_duration {
+            panic_with_error!(&env, LendingError::InvalidBounds);
         }
 
-        // Transfer collateral from borrower to contract
-        let collateral_client = token::Client::new(&env, &collateral_currency);
-        collateral_client.transfer(
-            &borrower,
-            &env.current_contract_address(),
-            &collateral_amount,
+        for tier in interest_schedule.iter() {
+            if tier.duration < min_duration
+                || tier.duration > max_duration
+                || tier.interest_bps > 10000
+            {
+                panic_with_error!(&env, LendingError::InvalidBounds);
+            }
+        }
+
+        // Transfer NFT from lender to contract for escrow
+        env.invoke_contract::<()>(
+            &collection,
+            &soroban_sdk::Symbol::new(&env, "transfer_from"),
+            soroban_sdk::vec![
+                &env,
+                env.current_contract_address().into_val(&env),
+                lender.clone().into_val(&env),
+                env.current_contract_address().into_val(&env),
+                token_id.into_val(&env),
+                1u64.into_val(&env),
+            ],
         );
 
-        // Transfer NFT from contract to borrower
-        let nft_client = token::Client::new(&env, &listing.nft_contract);
-        nft_client.transfer(
-            &env.current_contract_address(),
-            &borrower,
-            &(listing.token_id as i128),
-        );
-
-        listing.status = ListingStatus::Filled;
-        set_listing(&env, listing_id, &listing);
-
-        let position_id = next_position_id(&env);
-        let position = Position {
-            id: position_id,
+        let listing_id = increment_listing_count(&env);
+        let listing = LendingListing {
             listing_id,
-            lender: listing.lender.clone(),
-            borrower: borrower.clone(),
-            nft_contract: listing.nft_contract.clone(),
-            token_id: listing.token_id,
-            declared_price_usd: listing.declared_price_usd,
-            collateral_currency: collateral_currency.clone(),
-            collateral_amount,
-            interest_schedule_bps: listing.interest_schedule_bps.clone(),
-            liquidation_threshold_bps: listing.liquidation_threshold_bps,
-            start_time: env.ledger().timestamp(),
-            max_duration_secs: (listing.max_duration_days as u64) * 86400,
-            status: PositionStatus::Active,
+            lender,
+            collection,
+            token_id,
+            price,
+            currency,
+            min_duration,
+            max_duration,
+            interest_schedule,
+            status: ListingStatus::Open,
+            created_at: env.ledger().sequence(),
         };
 
-        set_position(&env, position_id, &position);
-
-        #[allow(deprecated)]
-        env.events()
-            .publish((soroban_sdk::symbol_short!("borrow"), position_id), ());
-
-        position_id
+        save_listing(&env, &listing);
+        listing_id
     }
 
     /// Read-only view used by keeper bots to decide when to call `liquidate()`.
@@ -194,5 +155,7 @@ impl LendingContract {
             result.platform_fee_usd,
             result.borrower_rem,
         );
+    pub fn get_listing(env: Env, listing_id: u64) -> Option<LendingListing> {
+        load_listing(&env, listing_id)
     }
 }
