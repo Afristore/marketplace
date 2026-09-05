@@ -1,6 +1,10 @@
 #![no_std]
 
 mod contract;
+mod events;
+mod interest;
+mod oracle;
+mod settlement;
 mod storage;
 mod types;
 
@@ -8,6 +12,5 @@ mod types;
 mod test;
 
 pub use contract::LendingContractClient;
-pub use types::*;
-
 pub use contract::LendingContract;
+pub use types::*;
