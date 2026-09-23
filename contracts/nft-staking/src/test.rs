@@ -122,6 +122,161 @@ fn mint_token(env: &Env, collection: &Address, to: &Address, token_id: u64) {
 /// out per second staked, per NFT position.
 const REWARD_RATE: i128 = 1_000_000;
 
+// Explicit nft-staking coverage for issues #826, #827, #828, and #830.
+
+#[test]
+fn test_get_reward_token_returns_initialized_asset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collection = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+    let staking_id = env.register_contract(None, crate::NftStaking);
+    let staking = NftStakingClient::new(&env, &staking_id);
+
+    staking.init(&admin, &collection, &reward_token, &7_500i128);
+
+    assert_eq!(
+        staking.get_reward_token(),
+        reward_token,
+        "get_reward_token must return the asset configured at initialization"
+    );
+}
+
+#[test]
+fn test_get_reward_token_reverts_before_initialization() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let staking_id = env.register_contract(None, crate::NftStaking);
+    let staking = NftStakingClient::new(&env, &staking_id);
+
+    let err = staking.try_get_reward_token().unwrap_err().unwrap();
+    assert_eq!(err, StakingError::NotInitialized.into());
+}
+
+#[test]
+fn test_get_reward_rate_returns_initialized_rate() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collection = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+    let staking_id = env.register_contract(None, crate::NftStaking);
+    let staking = NftStakingClient::new(&env, &staking_id);
+    let configured_rate = 42_000i128;
+
+    staking.init(&admin, &collection, &reward_token, &configured_rate);
+
+    assert_eq!(
+        staking.get_reward_rate(),
+        configured_rate,
+        "get_reward_rate must expose the configured rewards-per-second value"
+    );
+}
+
+#[test]
+fn test_get_reward_rate_reverts_before_initialization() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let staking_id = env.register_contract(None, crate::NftStaking);
+    let staking = NftStakingClient::new(&env, &staking_id);
+
+    let err = staking.try_get_reward_rate().unwrap_err().unwrap();
+    assert_eq!(err, StakingError::NotInitialized.into());
+}
+
+#[test]
+fn test_set_paused_blocks_and_restores_staking() {
+    let (env, staking, user, collection, _admin) = setup_with_mock();
+
+    mint_token(&env, &collection, &user, 0);
+
+    staking.set_paused(&true);
+    assert!(staking.is_paused(), "set_paused(true) must enable pause state");
+
+    let err = staking
+        .try_stake_erc721(&user, &collection, &0)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::ContractPaused.into());
+    assert_eq!(
+        staking.total_staked(),
+        0,
+        "paused stake attempts must not mutate total staked"
+    );
+
+    staking.set_paused(&false);
+    assert!(!staking.is_paused(), "set_paused(false) must clear pause state");
+
+    staking.stake_erc721(&user, &collection, &0);
+    assert_eq!(staking.total_staked(), 1);
+}
+
+#[test]
+fn test_stake_erc721_records_position_and_custodies_token() {
+    let (env, staking, user, collection, _admin) = setup_with_mock();
+
+    mint_token(&env, &collection, &user, 0);
+    staking.stake_erc721(&user, &collection, &0);
+
+    let pos = staking
+        .get_staked_position(&user, &collection, &0)
+        .expect("stake_erc721 must persist a position");
+
+    assert_eq!(pos.owner, user);
+    assert_eq!(pos.token_address, collection);
+    assert_eq!(pos.token_id, 0);
+    assert_eq!(staking.total_staked(), 1);
+
+    let owner: Address = env.invoke_contract(
+        &collection,
+        &Symbol::new(&env, "owner_of"),
+        soroban_sdk::vec![&env, 0u64.into_val(&env)],
+    );
+    assert_eq!(
+        owner, staking.address,
+        "stake_erc721 must transfer NFT custody to the staking contract"
+    );
+}
+
+#[test]
+fn test_stake_erc721_rejects_duplicate_position() {
+    let (env, staking, user, collection, _admin) = setup_with_mock();
+
+    mint_token(&env, &collection, &user, 0);
+    staking.stake_erc721(&user, &collection, &0);
+
+    let err = staking
+        .try_stake_erc721(&user, &collection, &0)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::AlreadyStaked.into());
+    assert_eq!(
+        staking.total_staked(),
+        1,
+        "duplicate stake attempts must not increment total staked"
+    );
+}
+
+#[test]
+fn test_stake_erc721_rejects_non_pool_collection() {
+    let (env, staking, user, collection, _admin) = setup_with_mock();
+    let wrong_collection = Address::generate(&env);
+
+    mint_token(&env, &collection, &user, 0);
+
+    let err = staking
+        .try_stake_erc721(&user, &wrong_collection, &0)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::InvalidToken.into());
+    assert_eq!(staking.total_staked(), 0);
+}
+
 /// Setup variant for exercising `claim_rewards`, which actually moves reward
 /// tokens. Unlike `setup_with_mock`, the reward token is a real Stellar Asset
 /// Contract (so `balance`/`transfer` work) and the staking contract is pre-funded
