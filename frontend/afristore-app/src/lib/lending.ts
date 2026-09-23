@@ -209,6 +209,52 @@ export async function getTokenBalance(
   }
 }
 
+export async function getTokenAllowance(
+  userPublicKey: string,
+  tokenAddress: string,
+  spenderAddress: string
+): Promise<bigint> {
+  if (isE2eMockChain()) {
+    return 1_000_000_000_000n;
+  }
+
+  try {
+    const rpc = getRpc();
+    const account = await rpc.getAccount(userPublicKey);
+    const tokenContract = new Contract(tokenAddress);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: getNetworkPassphrase(),
+    })
+      .addOperation(
+        tokenContract.call(
+          "allowance",
+          new Address(userPublicKey).toScVal(),
+          new Address(spenderAddress).toScVal()
+        )
+      )
+      .setTimeout(30)
+      .build();
+
+    const simResult = await rpc.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(simResult)) {
+      throw new Error("Failed to query token allowance");
+    }
+
+    const retVal = (
+      simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
+    ).result?.retval;
+    if (!retVal) return 0n;
+
+    const val = scValToNative(retVal);
+    return BigInt(val);
+  } catch (err) {
+    console.warn("getTokenAllowance error:", err);
+    return 0n;
+  }
+}
+
 export async function approveToken(
   userPublicKey: string,
   tokenAddress: string,
@@ -428,13 +474,22 @@ export async function borrow(
 
   const lendingContractId = getLendingContractId();
 
-  // Approve exact collateral token amount before calling borrow
-  await approveToken(
+  // Reuse an existing allowance when it already covers the collateral, so the
+  // user is not asked to sign (and pay gas for) a redundant approval tx.
+  const allowance = await getTokenAllowance(
     borrowerPublicKey,
     collateralCurrency,
-    lendingContractId,
-    amountBig
+    lendingContractId
   );
+  if (allowance < amountBig) {
+    // Approve the collateral token amount before calling borrow
+    await approveToken(
+      borrowerPublicKey,
+      collateralCurrency,
+      lendingContractId,
+      amountBig
+    );
+  }
 
   if (isE2eMockChain()) {
     return 101;
