@@ -1,7 +1,11 @@
 use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, IntoVal, Symbol, Vec};
 
-use crate::storage::{increment_listing_count, load_listing, save_listing};
-use crate::types::{InterestTier, LendingError, LendingListing, ListingStatus};
+use crate::events;
+use crate::settlement;
+use crate::storage::{
+    get_config, get_position, increment_listing_count, load_listing, save_listing, set_position,
+};
+use crate::types::{InterestTier, LendingError, LendingListing, ListingStatus, PositionStatus};
 
 #[contract]
 pub struct LendingContract;
@@ -73,6 +77,110 @@ impl LendingContract {
 
         save_listing(&env, &listing);
         listing_id
+    }
+
+    /// Borrower tops up collateral on an active position to improve its health factor.
+    ///
+    /// - Requires borrower auth.
+    /// - Panics if the position is not Active.
+    /// - Panics if the top-up amount is not positive.
+    /// - Transfers the extra collateral tokens from borrower to the contract.
+    /// - Increments `position.collateral_amount`; emits the `collateral_added` event.
+    pub fn add_collateral(env: Env, position_id: u64, amount: i128) {
+        let mut position = get_position(&env, position_id);
+
+        position.borrower.require_auth();
+
+        if position.status != PositionStatus::Active {
+            panic!("Position is not Active");
+        }
+
+        if amount <= 0 {
+            panic!("Collateral top-up amount must be positive");
+        }
+
+        // Transfer additional collateral from borrower to contract.
+        env.invoke_contract::<()>(
+            &position.collateral_currency,
+            &Symbol::new(&env, "transfer"),
+            soroban_sdk::vec![
+                &env,
+                position.borrower.clone().into_val(&env),
+                env.current_contract_address().into_val(&env),
+                amount.into_val(&env),
+            ],
+        );
+
+        position.collateral_amount += amount;
+        set_position(&env, position_id, &position);
+
+        events::emit_collateral_added(
+            &env,
+            position_id,
+            position.borrower.clone(),
+            amount,
+            position.collateral_amount,
+        );
+    }
+
+    /// Borrower voluntarily closes their position before term expiry.
+    ///
+    /// - Requires borrower auth.
+    /// - Panics if the position is not Active.
+    /// - Panics if the loan term has already expired (use liquidate() instead).
+    /// - Transfers the NFT: borrower → contract → lender.
+    /// - Calls settle() with no liquidator; emits position_returned event.
+    pub fn return_nft(env: Env, position_id: u64) {
+        let mut position = get_position(&env, position_id);
+
+        position.borrower.require_auth();
+
+        if position.status != PositionStatus::Active {
+            panic!("Position is not Active");
+        }
+
+        let now = env.ledger().timestamp();
+        let deadline = position.start_time + position.max_duration_secs;
+        if now > deadline {
+            panic!("Loan term has expired; use liquidate()");
+        }
+
+        // Transfer NFT from borrower back to contract, then to lender.
+        env.invoke_contract::<()>(
+            &position.nft_contract,
+            &Symbol::new(&env, "transfer"),
+            soroban_sdk::vec![
+                &env,
+                position.borrower.clone().into_val(&env),
+                env.current_contract_address().into_val(&env),
+                (position.token_id as i128).into_val(&env),
+            ],
+        );
+        env.invoke_contract::<()>(
+            &position.nft_contract,
+            &Symbol::new(&env, "transfer"),
+            soroban_sdk::vec![
+                &env,
+                env.current_contract_address().into_val(&env),
+                position.lender.clone().into_val(&env),
+                (position.token_id as i128).into_val(&env),
+            ],
+        );
+
+        // Settle collateral waterfall (no liquidator on voluntary return).
+        let config = get_config(&env);
+        let result = settlement::settle(&env, &position, None, &config);
+
+        position.status = PositionStatus::Returned;
+        set_position(&env, position_id, &position);
+
+        events::emit_position_returned(
+            &env,
+            position_id,
+            result.accrued_interest_usd,
+            result.platform_fee_usd,
+            result.borrower_rem,
+        );
     }
 
     pub fn get_listing(env: Env, listing_id: u64) -> Option<LendingListing> {

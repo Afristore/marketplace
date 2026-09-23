@@ -1,6 +1,10 @@
 #![no_std]
 
 mod contract;
+mod events;
+mod interest;
+mod oracle;
+mod settlement;
 mod storage;
 mod types;
 

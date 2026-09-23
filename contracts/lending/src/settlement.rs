@@ -1,4 +1,4 @@
-use soroban_sdk::{token, Address, Env};
+use soroban_sdk::{Address, Env, IntoVal, Symbol};
 
 use crate::oracle;
 use crate::types::{PlatformConfig, Position, SettleResult};
@@ -111,43 +111,62 @@ pub fn settle(
     };
 
     // ── Token transfers ───────────────────────────────────────────────────────
-    let col_client = token::Client::new(env, &position.collateral_currency);
 
     // Pay lender their principal + accrued interest
     if lender_payout > 0 {
-        col_client.transfer(
-            &env.current_contract_address(),
-            &position.lender,
-            &lender_payout,
+        env.invoke_contract::<()>(
+            &position.collateral_currency,
+            &Symbol::new(env, "transfer"),
+            soroban_sdk::vec![
+                env,
+                env.current_contract_address().into_val(env),
+                position.lender.clone().into_val(env),
+                lender_payout.into_val(env),
+            ],
         );
     }
 
     // Pay platform fee
     if platform_payout > 0 {
-        col_client.transfer(
-            &env.current_contract_address(),
-            &config.fee_receiver,
-            &platform_payout,
+        env.invoke_contract::<()>(
+            &position.collateral_currency,
+            &Symbol::new(env, "transfer"),
+            soroban_sdk::vec![
+                env,
+                env.current_contract_address().into_val(env),
+                config.fee_receiver.clone().into_val(env),
+                platform_payout.into_val(env),
+            ],
         );
     }
 
     // Pay liquidator fee (only on liquidation path)
     if let Some(ref liq_addr) = liquidator {
         if liquidator_payout > 0 {
-            col_client.transfer(
-                &env.current_contract_address(),
-                liq_addr,
-                &liquidator_payout,
+            env.invoke_contract::<()>(
+                &position.collateral_currency,
+                &Symbol::new(env, "transfer"),
+                soroban_sdk::vec![
+                    env,
+                    env.current_contract_address().into_val(env),
+                    liq_addr.clone().into_val(env),
+                    liquidator_payout.into_val(env),
+                ],
             );
         }
     }
 
     // Return any leftover collateral to the borrower
     if borrower_rem > 0 {
-        col_client.transfer(
-            &env.current_contract_address(),
-            &position.borrower,
-            &borrower_rem,
+        env.invoke_contract::<()>(
+            &position.collateral_currency,
+            &Symbol::new(env, "transfer"),
+            soroban_sdk::vec![
+                env,
+                env.current_contract_address().into_val(env),
+                position.borrower.clone().into_val(env),
+                borrower_rem.into_val(env),
+            ],
         );
     }
 
