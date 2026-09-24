@@ -67,8 +67,9 @@ mod mock_nft {
 }
 
 use soroban_sdk::{
-    testutils::{Address as _, Ledger, LedgerInfo},
+    testutils::{Address as _, Ledger, LedgerInfo, MockAuth, MockAuthInvoke},
     token::{StellarAssetClient, TokenClient},
+    xdr::{ScErrorCode, ScErrorType},
     Address, Env, IntoVal, Symbol,
 };
 
@@ -764,4 +765,462 @@ fn test_unstake_erc721_double_unstake_fails() {
         .unwrap();
     assert_eq!(err, StakingError::NotStaked.into());
     assert_eq!(staking.total_staked(), 0);
+}
+
+// ── Shared helpers for issues #822–#825 (init / admin / nft address) ─────────
+
+const MAX_REWARD_RATE: i128 = 1_000_000_000_000_000;
+
+/// Registers a staking contract that has *not* been initialized yet.
+fn setup_uninitialized() -> (Env, NftStakingClient<'static>) {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let staking_id = env.register_contract(None, crate::NftStaking);
+    let staking = NftStakingClient::new(&env, &staking_id);
+
+    (env, staking)
+}
+
+/// True if `addr` authorized the most recent top-level invocation.
+fn authorized(env: &Env, addr: &Address) -> bool {
+    env.auths().iter().any(|(a, _)| a == addr)
+}
+
+/// Error surfaced to the caller when a required `require_auth` is missing.
+fn auth_error() -> soroban_sdk::Error {
+    soroban_sdk::Error::from_type_and_code(ScErrorType::Context, ScErrorCode::InvalidAction)
+}
+
+/// Mocks a single-address authorization for `fn_name(args)` on the pool.
+fn mock_single_auth(
+    env: &Env,
+    staking: &NftStakingClient,
+    signer: &Address,
+    fn_name: &'static str,
+    args: soroban_sdk::Vec<soroban_sdk::Val>,
+) {
+    env.mock_auths(&[MockAuth {
+        address: signer,
+        invoke: &MockAuthInvoke {
+            contract: &staking.address,
+            fn_name,
+            args,
+            sub_invokes: &[],
+        },
+    }]);
+}
+
+// ── Issue #822: init ─────────────────────────────────────────────────────────
+
+/// Happy path: `init` persists admin, collection, reward token and rate, and
+/// leaves the pool unpaused and empty.
+#[test]
+fn test_init_stores_full_config() {
+    let (env, staking) = setup_uninitialized();
+    let admin = Address::generate(&env);
+    let nft = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+
+    staking.init(&admin, &nft, &reward_token, &1_000_000i128);
+
+    assert_eq!(staking.get_admin(), Some(admin));
+    assert_eq!(staking.get_nft_address(), nft);
+    assert_eq!(staking.get_reward_token(), reward_token);
+    assert_eq!(staking.get_reward_rate(), 1_000_000i128);
+    assert!(!staking.is_paused());
+    assert_eq!(staking.total_staked(), 0);
+}
+
+/// `init` requires the admin's authorization.
+#[test]
+fn test_init_requires_admin_auth() {
+    let (env, staking) = setup_uninitialized();
+    let admin = Address::generate(&env);
+
+    staking.init(
+        &admin,
+        &Address::generate(&env),
+        &Address::generate(&env),
+        &1i128,
+    );
+    assert!(authorized(&env, &admin));
+}
+
+/// Without the admin's signature `init` fails and nothing is stored.
+#[test]
+fn test_init_fails_without_admin_auth() {
+    let env = Env::default();
+    let staking_id = env.register(crate::NftStaking, ());
+    let staking = NftStakingClient::new(&env, &staking_id);
+
+    let err = staking
+        .try_init(
+            &Address::generate(&env),
+            &Address::generate(&env),
+            &Address::generate(&env),
+            &1i128,
+        )
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, auth_error());
+    assert_eq!(staking.get_admin(), None);
+}
+
+/// A second `init` reverts with `AlreadyInitialized` and cannot overwrite the
+/// original configuration, even when called by a different admin.
+#[test]
+fn test_init_twice_fails_and_preserves_config() {
+    let (env, staking, admin, _user1, _user2) = setup();
+    let original_nft = staking.get_nft_address();
+    let original_reward = staking.get_reward_token();
+
+    let attacker = Address::generate(&env);
+    let err = staking
+        .try_init(
+            &attacker,
+            &Address::generate(&env),
+            &Address::generate(&env),
+            &5i128,
+        )
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::AlreadyInitialized.into());
+
+    assert_eq!(staking.get_admin(), Some(admin));
+    assert_eq!(staking.get_nft_address(), original_nft);
+    assert_eq!(staking.get_reward_token(), original_reward);
+    assert_eq!(staking.get_reward_rate(), 1_000_000i128);
+}
+
+/// Zero and negative reward rates are rejected with `InvalidDuration`.
+#[test]
+fn test_init_rejects_non_positive_reward_rate() {
+    let (env, staking) = setup_uninitialized();
+    let admin = Address::generate(&env);
+    let nft = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+
+    for rate in [0i128, -1i128, i128::MIN] {
+        let err = staking
+            .try_init(&admin, &nft, &reward_token, &rate)
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, StakingError::InvalidDuration.into());
+    }
+    assert_eq!(staking.get_admin(), None);
+}
+
+/// Rates above the cap are rejected with `RewardRateTooHigh`.
+#[test]
+fn test_init_rejects_reward_rate_above_max() {
+    let (env, staking) = setup_uninitialized();
+    let admin = Address::generate(&env);
+    let nft = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+
+    for rate in [MAX_REWARD_RATE + 1, i128::MAX] {
+        let err = staking
+            .try_init(&admin, &nft, &reward_token, &rate)
+            .unwrap_err()
+            .unwrap();
+        assert_eq!(err, StakingError::RewardRateTooHigh.into());
+    }
+    assert_eq!(staking.get_admin(), None);
+}
+
+/// Boundary values: a rate of exactly 1 and exactly the cap are both accepted.
+#[test]
+fn test_init_accepts_boundary_reward_rates() {
+    for rate in [1i128, MAX_REWARD_RATE] {
+        let (env, staking) = setup_uninitialized();
+        staking.init(
+            &Address::generate(&env),
+            &Address::generate(&env),
+            &Address::generate(&env),
+            &rate,
+        );
+        assert_eq!(staking.get_reward_rate(), rate);
+    }
+}
+
+/// A rejected `init` does not burn the one-shot initializer: a subsequent
+/// valid call still succeeds.
+#[test]
+fn test_init_succeeds_after_failed_attempt() {
+    let (env, staking) = setup_uninitialized();
+    let admin = Address::generate(&env);
+    let nft = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+
+    assert!(staking
+        .try_init(&admin, &nft, &reward_token, &0i128)
+        .is_err());
+
+    staking.init(&admin, &nft, &reward_token, &42i128);
+    assert_eq!(staking.get_admin(), Some(admin));
+    assert_eq!(staking.get_nft_address(), nft);
+    assert_eq!(staking.get_reward_rate(), 42i128);
+}
+
+// ── Issue #823: set_admin ────────────────────────────────────────────────────
+
+/// Happy path: the admin is replaced and both the current and the incoming
+/// admin must authorize the rotation.
+#[test]
+fn test_set_admin_updates_admin_with_both_auths() {
+    let (env, staking, admin, new_admin, _user2) = setup();
+
+    staking.set_admin(&new_admin);
+
+    assert!(authorized(&env, &admin));
+    assert!(authorized(&env, &new_admin));
+    assert_eq!(staking.get_admin(), Some(new_admin));
+}
+
+/// Re-setting the current admin is a harmless no-op.
+#[test]
+fn test_set_admin_to_same_address() {
+    let (_env, staking, admin, _user1, _user2) = setup();
+
+    staking.set_admin(&admin);
+    assert_eq!(staking.get_admin(), Some(admin));
+}
+
+/// Before `init` there is no admin, so `set_admin` reverts with `Unauthorized`
+/// rather than letting the first caller claim the pool.
+#[test]
+fn test_set_admin_fails_before_init() {
+    let (env, staking) = setup_uninitialized();
+
+    let err = staking
+        .try_set_admin(&Address::generate(&env))
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::Unauthorized.into());
+    assert_eq!(staking.get_admin(), None);
+}
+
+/// Only the current admin signing is not enough: the new admin must consent.
+#[test]
+fn test_set_admin_fails_without_new_admin_auth() {
+    let (env, staking, admin, new_admin, _user2) = setup();
+
+    mock_single_auth(
+        &env,
+        &staking,
+        &admin,
+        "set_admin",
+        (&new_admin,).into_val(&env),
+    );
+    let err = staking.try_set_admin(&new_admin).unwrap_err().unwrap();
+    assert_eq!(err, auth_error());
+    assert_eq!(staking.get_admin(), Some(admin));
+}
+
+/// A non-admin cannot take over the pool by nominating themselves.
+#[test]
+fn test_set_admin_fails_when_called_by_non_admin() {
+    let (env, staking, admin, attacker, _user2) = setup();
+
+    mock_single_auth(
+        &env,
+        &staking,
+        &attacker,
+        "set_admin",
+        (&attacker,).into_val(&env),
+    );
+    let err = staking.try_set_admin(&attacker).unwrap_err().unwrap();
+    assert_eq!(err, auth_error());
+    assert_eq!(staking.get_admin(), Some(admin));
+}
+
+/// After rotation the new admin holds admin rights and the old one loses them.
+#[test]
+fn test_set_admin_transfers_admin_privileges() {
+    let (env, staking, old_admin, new_admin, _user2) = setup();
+
+    staking.set_admin(&new_admin);
+
+    mock_single_auth(
+        &env,
+        &staking,
+        &old_admin,
+        "set_paused",
+        (true,).into_val(&env),
+    );
+    let err = staking.try_set_paused(&true).unwrap_err().unwrap();
+    assert_eq!(err, auth_error());
+    assert!(!staking.is_paused());
+
+    mock_single_auth(
+        &env,
+        &staking,
+        &new_admin,
+        "set_paused",
+        (true,).into_val(&env),
+    );
+    staking.set_paused(&true);
+    assert!(staking.is_paused());
+}
+
+/// `set_admin` only touches the admin slot; pool config is left intact.
+#[test]
+fn test_set_admin_does_not_alter_pool_config() {
+    let (_env, staking, _admin, new_admin, _user2) = setup();
+    let nft = staking.get_nft_address();
+    let reward_token = staking.get_reward_token();
+
+    staking.set_admin(&new_admin);
+
+    assert_eq!(staking.get_nft_address(), nft);
+    assert_eq!(staking.get_reward_token(), reward_token);
+    assert_eq!(staking.get_reward_rate(), 1_000_000i128);
+}
+
+// ── Issue #824: get_admin ────────────────────────────────────────────────────
+
+/// Before `init` no admin is set.
+#[test]
+fn test_get_admin_none_before_init() {
+    let (_env, staking) = setup_uninitialized();
+    assert_eq!(staking.get_admin(), None);
+}
+
+/// After `init` the configured admin is returned.
+#[test]
+fn test_get_admin_returns_init_admin() {
+    let (_env, staking, admin, _user1, _user2) = setup();
+    assert_eq!(staking.get_admin(), Some(admin));
+}
+
+/// `get_admin` tracks every rotation made through `set_admin`.
+#[test]
+fn test_get_admin_reflects_successive_rotations() {
+    let (env, staking, _admin, second, _user2) = setup();
+    let third = Address::generate(&env);
+
+    staking.set_admin(&second);
+    assert_eq!(staking.get_admin(), Some(second));
+
+    staking.set_admin(&third);
+    assert_eq!(staking.get_admin(), Some(third));
+}
+
+/// `get_admin` is a public read: it needs no authorization.
+#[test]
+fn test_get_admin_requires_no_auth() {
+    let (env, staking, admin, _user1, _user2) = setup();
+
+    env.set_auths(&[]);
+    assert_eq!(staking.get_admin(), Some(admin));
+    assert!(env.auths().is_empty());
+}
+
+/// A failed `set_admin` leaves `get_admin` unchanged.
+#[test]
+fn test_get_admin_unchanged_after_failed_set_admin() {
+    let (env, staking, admin, attacker, _user2) = setup();
+
+    env.set_auths(&[]);
+    assert!(staking.try_set_admin(&attacker).is_err());
+    assert_eq!(staking.get_admin(), Some(admin));
+}
+
+// ── Issue #825: get_nft_address ──────────────────────────────────────────────
+
+/// Happy path: returns the collection passed to `init`.
+#[test]
+fn test_get_nft_address_returns_init_collection() {
+    let (_env, staking, _user, collection, _admin) = setup_with_mock();
+    assert_eq!(staking.get_nft_address(), collection);
+}
+
+/// Before `init` the getter reverts with `NotInitialized`.
+#[test]
+fn test_get_nft_address_fails_before_init() {
+    let (_env, staking) = setup_uninitialized();
+
+    let err = staking.try_get_nft_address().unwrap_err().unwrap();
+    assert_eq!(err, StakingError::NotInitialized.into());
+}
+
+/// A rejected `init` must not leave a partially stored collection behind.
+#[test]
+fn test_get_nft_address_fails_after_rejected_init() {
+    let (env, staking) = setup_uninitialized();
+
+    assert!(staking
+        .try_init(
+            &Address::generate(&env),
+            &Address::generate(&env),
+            &Address::generate(&env),
+            &(MAX_REWARD_RATE + 1),
+        )
+        .is_err());
+
+    let err = staking.try_get_nft_address().unwrap_err().unwrap();
+    assert_eq!(err, StakingError::NotInitialized.into());
+}
+
+/// The collection is immutable: re-init, admin rotation and pausing do not
+/// change it.
+#[test]
+fn test_get_nft_address_immutable_after_init() {
+    let (env, staking, _user, collection, _admin) = setup_with_mock();
+
+    assert!(staking
+        .try_init(
+            &Address::generate(&env),
+            &Address::generate(&env),
+            &Address::generate(&env),
+            &1i128,
+        )
+        .is_err());
+    staking.set_admin(&Address::generate(&env));
+    staking.set_paused(&true);
+
+    assert_eq!(staking.get_nft_address(), collection);
+}
+
+/// `get_nft_address` is a public read: it needs no authorization.
+#[test]
+fn test_get_nft_address_requires_no_auth() {
+    let (env, staking, _user, collection, _admin) = setup_with_mock();
+
+    env.set_auths(&[]);
+    assert_eq!(staking.get_nft_address(), collection);
+    assert!(env.auths().is_empty());
+}
+
+/// Each pool reports its own collection; pools do not share this slot.
+#[test]
+fn test_get_nft_address_is_per_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+    let nft_a = Address::generate(&env);
+    let nft_b = Address::generate(&env);
+
+    let pool_a = NftStakingClient::new(&env, &env.register(crate::NftStaking, ()));
+    let pool_b = NftStakingClient::new(&env, &env.register(crate::NftStaking, ()));
+    pool_a.init(&admin, &nft_a, &reward_token, &1i128);
+    pool_b.init(&admin, &nft_b, &reward_token, &1i128);
+
+    assert_eq!(pool_a.get_nft_address(), nft_a);
+    assert_eq!(pool_b.get_nft_address(), nft_b);
+}
+
+/// The stored collection is what gates staking: other collections are rejected.
+#[test]
+fn test_get_nft_address_gates_stake() {
+    let (env, staking, user, collection, _admin) = setup_with_mock();
+    let other = env.register(mock_nft::MockNft, ());
+    mint_token(&env, &other, &user, 0);
+
+    assert_ne!(staking.get_nft_address(), other);
+    let err = staking.try_stake(&user, &other, &0).unwrap_err().unwrap();
+    assert_eq!(err, StakingError::InvalidToken.into());
+    assert_eq!(staking.get_nft_address(), collection);
 }
