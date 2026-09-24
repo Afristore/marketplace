@@ -43,6 +43,7 @@ mod mock_nft {
 
 use soroban_sdk::{
     bytes, symbol_short,
+    testutils::MockAuth, testutils::MockAuthInvoke, IntoVal,
     testutils::Address as _,
     testutils::Events as _,
     testutils::Ledger,
@@ -3658,4 +3659,96 @@ fn test_is_artist_revoked_can_be_revoked_again_after_reinstatement() {
     client.revoke_artist(&artist2);
 
     assert!(client.is_artist_revoked(&artist2));
+}
+
+// ── Issue #873: revoke_artist must require the stored admin's auth ──────
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_revoke_artist_without_auth_panics() {
+    // Fresh env WITHOUT mock_all_auths so authorization is actually enforced.
+    let env = Env::default();
+    let contract_id = env.register(MarketplaceContract, ());
+    let client = MarketplaceContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "set_admin",
+            args: (admin.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.set_admin(&admin);
+
+    // No auth provided at all → require_auth inside require_admin fails.
+    client.revoke_artist(&Address::generate(&env));
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_revoke_artist_wrong_signer_panics() {
+    let env = Env::default();
+    let contract_id = env.register(MarketplaceContract, ());
+    let client = MarketplaceContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "set_admin",
+            args: (admin.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.set_admin(&admin);
+
+    // Someone else signs the call — the stored admin's auth is still missing.
+    let outsider = Address::generate(&env);
+    env.mock_auths(&[MockAuth {
+        address: &outsider,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "revoke_artist",
+            args: (Address::generate(&env),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.revoke_artist(&Address::generate(&env));
+}
+
+#[test]
+fn test_revoke_artist_with_admin_auth_succeeds() {
+    let env = Env::default();
+    let contract_id = env.register(MarketplaceContract, ());
+    let client = MarketplaceContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "set_admin",
+            args: (admin.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.set_admin(&admin);
+
+    // Admin signs the revocation → succeeds.
+    let artist_to_revoke = Address::generate(&env);
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "revoke_artist",
+            args: (artist_to_revoke.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.revoke_artist(&artist_to_revoke);
+    assert!(client.is_artist_revoked(&artist_to_revoke));
 }
