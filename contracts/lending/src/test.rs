@@ -175,6 +175,82 @@ fn test_borrow_success() {
 }
 
 #[test]
+fn test_add_collateral_transfers_and_updates_position() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let borrower = Address::generate(&env);
+    let collateral_admin = Address::generate(&env);
+    let (collateral, collateral_admin_client) = create_token(&env, &collateral_admin);
+    collateral_admin_client.mint(&borrower, &500);
+
+    env.as_contract(&contract_id, || {
+        set_position(
+            &env,
+            7,
+            &Position {
+                id: 7,
+                listing_id: 1,
+                lender: Address::generate(&env),
+                borrower: borrower.clone(),
+                nft_contract: Address::generate(&env),
+                token_id: 1,
+                declared_price_usd: 100,
+                collateral_currency: collateral.address.clone(),
+                collateral_amount: 100,
+                interest_schedule_bps: vec![&env, 100],
+                liquidation_threshold_bps: 11000,
+                start_time: 0,
+                max_duration_secs: 1000,
+                status: PositionStatus::Active,
+            },
+        );
+    });
+
+    client.add_collateral(&7, &250);
+    assert_eq!(collateral.balance(&borrower), 250);
+    assert_eq!(collateral.balance(&contract_id), 250);
+    env.as_contract(&contract_id, || {
+        assert_eq!(crate::storage::get_position(&env, 7).collateral_amount, 350);
+    });
+}
+
+#[test]
+#[should_panic(expected = "Amount must be greater than zero")]
+fn test_add_collateral_rejects_non_positive_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let borrower = Address::generate(&env);
+    let token = Address::generate(&env);
+    env.as_contract(&contract_id, || {
+        set_position(
+            &env,
+            1,
+            &Position {
+                id: 1,
+                listing_id: 1,
+                lender: Address::generate(&env),
+                borrower: borrower.clone(),
+                nft_contract: Address::generate(&env),
+                token_id: 1,
+                declared_price_usd: 1,
+                collateral_currency: token,
+                collateral_amount: 0,
+                interest_schedule_bps: vec![&env, 1],
+                liquidation_threshold_bps: 1,
+                start_time: 0,
+                max_duration_secs: 1,
+                status: PositionStatus::Active,
+            },
+        );
+    });
+    client.add_collateral(&1, &0);
+}
+
+#[test]
 #[should_panic(expected = "Under-collateralized")]
 fn test_borrow_under_collateralized() {
     let env = Env::default();
