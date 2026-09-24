@@ -176,9 +176,31 @@ export async function getTokenBalance(
     return 1_000_000_000_000n;
   }
 
+  let rpc: SorobanRpc.Server;
   try {
-    const rpc = getRpc();
-    const account = await rpc.getAccount(userPublicKey);
+    rpc = getRpc();
+  } catch (err) {
+    throw new Error(
+      `Failed to connect to RPC: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
+  let account;
+  try {
+    account = await rpc.getAccount(userPublicKey);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("not found") || msg.includes("does not exist")) {
+      throw new Error(
+        `Account ${userPublicKey} not found on network. Have you funded this wallet?`
+      );
+    }
+    throw new Error(
+      `Network error while fetching account ${userPublicKey}: ${msg}`
+    );
+  }
+
+  try {
     const tokenContract = new Contract(tokenAddress);
 
     const tx = new TransactionBuilder(account, {
@@ -193,7 +215,12 @@ export async function getTokenBalance(
 
     const simResult = await rpc.simulateTransaction(tx);
     if (SorobanRpc.Api.isSimulationError(simResult)) {
-      throw new Error("Failed to query token balance");
+      const errorMsg =
+        (simResult as SorobanRpc.Api.SimulateTransactionErrorResponse).error ??
+        "Unknown simulation error";
+      throw new Error(
+        `Token balance query failed for ${tokenAddress}: ${errorMsg}`
+      );
     }
 
     const retVal = (
@@ -204,8 +231,19 @@ export async function getTokenBalance(
     const val = scValToNative(retVal);
     return BigInt(val);
   } catch (err) {
-    console.warn("getTokenBalance error:", err);
-    return 0n;
+    // Re-throw our own errors, wrap unexpected ones
+    if (err instanceof Error && err.message.startsWith("Token balance query failed")) {
+      throw err;
+    }
+    if (err instanceof Error && err.message.startsWith("Network error")) {
+      throw err;
+    }
+    if (err instanceof Error && err.message.startsWith("Account")) {
+      throw err;
+    }
+    throw new Error(
+      `Unexpected error querying token balance for ${tokenAddress}: ${err instanceof Error ? err.message : String(err)}`
+    );
   }
 }
 
