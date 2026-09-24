@@ -3600,3 +3600,77 @@ fn test_set_protocol_fee_u32_max_panics() {
     // Overflow bound: the largest possible u32 must panic InvalidPrice
     client.set_protocol_fee(&artist, &u32::MAX);
 }
+
+// ── is_artist_revoked ───────────────────────────────────────────────
+//
+// The flag is read by the guards in create_listing and create_auction, so a
+// wrong answer here is a wrong answer about who may sell. These pin the
+// states an artist can be in rather than the mechanics of setting the flag.
+
+#[test]
+fn test_is_artist_revoked_is_false_before_any_revocation() {
+    let (env, client, admin, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&admin);
+    let artist = Address::generate(&env);
+
+    assert!(!client.is_artist_revoked(&artist));
+}
+
+#[test]
+fn test_is_artist_revoked_is_true_after_revocation() {
+    let (env, client, admin, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&admin);
+    let artist = Address::generate(&env);
+
+    client.revoke_artist(&artist);
+
+    assert!(client.is_artist_revoked(&artist));
+}
+
+#[test]
+fn test_is_artist_revoked_is_false_again_after_reinstatement() {
+    // A flag that gets set but never cleared is the failure this pins:
+    // reinstating must put the artist back to selling normally.
+    let (env, client, admin, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&admin);
+    let artist = Address::generate(&env);
+
+    client.revoke_artist(&artist);
+    assert!(client.is_artist_revoked(&artist));
+
+    client.reinstate_artist(&artist);
+    assert!(!client.is_artist_revoked(&artist));
+}
+
+#[test]
+fn test_is_artist_revoked_does_not_answer_for_a_different_artist() {
+    // A missing key and a false key are easy to conflate; this asserts the
+    // answer is about the address asked about.
+    let (env, client, admin, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&admin);
+    let revoked = Address::generate(&env);
+    let untouched = Address::generate(&env);
+
+    client.revoke_artist(&revoked);
+
+    assert!(client.is_artist_revoked(&revoked));
+    assert!(
+        !client.is_artist_revoked(&untouched),
+        "revoking one artist must not mark another as revoked"
+    );
+}
+
+#[test]
+fn test_revoking_twice_and_reinstating_an_untouched_artist_are_both_safe() {
+    let (env, client, admin, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&admin);
+    let artist = Address::generate(&env);
+    let untouched = Address::generate(&env);
+
+    client.revoke_artist(&artist);
+    client.revoke_artist(&artist); // already revoked: must stay revoked, not panic
+    assert!(client.is_artist_revoked(&artist));
+
+    client.reinstate_artist(&untouched); // nothing to clear: must not panic
+    assert!(!client.is_artist_revoked(&untouched));
+}
