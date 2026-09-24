@@ -1499,3 +1499,142 @@ fn rejects_unapproved_tokens_for_staking_and_splitter_deploys() {
     );
     assert_ne!(splitter_ok, Err(Ok(Error::InvalidCurrency)));
 }
+
+// ── platform_fee_token (issue #857) ─────────────────────────────────────────
+//
+// `initialize_stores_configuration` asserts the value once, right after
+// `initialize`. These cover the function itself: what it returns before anything is
+// set, replacing the value, the missing signature, the pre-initialize case, and the
+// fact that the fee token is configuration no other admin update may disturb.
+
+#[test]
+fn platform_fee_token_is_none_before_initialize() {
+    let env = Env::default();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+
+    // A setting nobody has set yet reads as None — not a panic, and not a default
+    // address that a caller could mistake for a real token.
+    assert_eq!(client.platform_fee_token(), None);
+}
+
+#[test]
+fn initialize_stores_the_platform_fee_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.initialize(&admin, &receiver, &250, &token);
+
+    assert_eq!(client.platform_fee_token(), Some(token));
+}
+
+#[test]
+fn set_platform_fee_token_replaces_the_initialized_one() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+    let replacement = Address::generate(&env);
+
+    client.set_platform_fee_token(&replacement);
+
+    assert_eq!(client.platform_fee_token(), Some(replacement));
+}
+
+#[test]
+fn set_platform_fee_token_twice_keeps_the_last_value() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+
+    client.set_platform_fee_token(&first);
+    client.set_platform_fee_token(&second);
+
+    assert_eq!(client.platform_fee_token(), Some(second));
+}
+
+#[test]
+fn set_platform_fee_token_leaves_the_fee_receiver_and_bps_alone() {
+    let env = Env::default();
+    let (client, _admin, fee_receiver, _creator) = setup_launchpad(&env);
+    let token = Address::generate(&env);
+
+    client.update_platform_fee(&fee_receiver, &750);
+    client.set_platform_fee_token(&token);
+
+    let (receiver, fee_bps) = client.platform_fee();
+    assert_eq!(receiver, fee_receiver);
+    assert_eq!(fee_bps, 750);
+    assert_eq!(client.platform_fee_token(), Some(token));
+}
+
+#[test]
+fn update_platform_fee_does_not_clear_the_fee_token() {
+    let env = Env::default();
+    let (client, _admin, fee_receiver, _creator) = setup_launchpad(&env);
+    let token = client
+        .platform_fee_token()
+        .expect("setup_launchpad initializes a fee token");
+
+    client.update_platform_fee(&fee_receiver, &123);
+
+    // Three separate settings behind one "platform fee" idea; changing the receiver
+    // must not silently stop fees being collectable in the configured token.
+    assert_eq!(client.platform_fee_token(), Some(token));
+}
+
+#[test]
+fn set_platform_fee_token_before_initialize_reports_not_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+
+    // There is no admin yet, so nobody could be authorised to set this.
+    assert_eq!(
+        client.try_set_platform_fee_token(&Address::generate(&env)),
+        Err(Ok(Error::NotInitialized))
+    );
+}
+
+#[test]
+#[should_panic]
+fn set_platform_fee_token_without_a_signature_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let fee_token = Address::generate(&env);
+
+    client.initialize(&admin, &receiver, &0, &fee_token);
+
+    // From here the admin is not signing: with no mocked auths left, `require_auth`
+    // inside the setter has nothing that satisfies it.
+    env.mock_auths(&[]);
+
+    client.set_platform_fee_token(&Address::generate(&env));
+}
+
+#[test]
+fn set_platform_fee_token_accepts_a_currency_that_was_never_whitelisted() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+    let token = Address::generate(&env);
+
+    // The setter's doc comment says deploy functions use this token *instead of* the
+    // caller-supplied currency, so the fee token and the approved-currency whitelist
+    // are deliberately separate lists: a fee token does not have to be spendable.
+    assert!(!client.is_approved_currency(&token));
+
+    client.set_platform_fee_token(&token);
+
+    assert_eq!(client.platform_fee_token(), Some(token.clone()));
+    assert!(!client.is_approved_currency(&token));
+}
