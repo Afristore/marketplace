@@ -492,7 +492,7 @@ export async function borrow(
   );
 
   if (isE2eMockChain()) {
-    return 101;
+    return Math.floor(Date.now() / 1000);
   }
 
   const rpc = getRpc();
@@ -554,7 +554,7 @@ export async function borrow(
   if (retval) {
     return Number(scValToNative(retval));
   }
-  return 101;
+  throw new Error("Borrow transaction succeeded but returned no position ID");
 }
 
 export async function addCollateral(
