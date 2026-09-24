@@ -135,7 +135,7 @@ export function computeAccruedInterestUsd(
     const idx = Math.min(fullMonths, len - 1);
     const partialRateBps = BigInt(interestScheduleBps[idx]);
     totalInterest +=
-      (((declaredPriceUsd * partialRateBps) / 10000n) * partialDays) / 30n;
+      (declaredPriceUsd * partialRateBps * partialDays) / (10000n * 30n);
   }
 
   return totalInterest;
@@ -209,6 +209,52 @@ export async function getTokenBalance(
   }
 }
 
+export async function getTokenAllowance(
+  userPublicKey: string,
+  spenderAddress: string,
+  tokenAddress: string
+): Promise<bigint> {
+  if (isE2eMockChain()) {
+    return 1_000_000_000_000n;
+  }
+
+  try {
+    const rpc = getRpc();
+    const account = await rpc.getAccount(userPublicKey);
+    const tokenContract = new Contract(tokenAddress);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: getNetworkPassphrase(),
+    })
+      .addOperation(
+        tokenContract.call(
+          "allowance",
+          new Address(userPublicKey).toScVal(),
+          new Address(spenderAddress).toScVal()
+        )
+      )
+      .setTimeout(30)
+      .build();
+
+    const simResult = await rpc.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(simResult)) {
+      throw new Error("Failed to query token allowance");
+    }
+
+    const retVal = (
+      simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
+    ).result?.retval;
+    if (!retVal) return 0n;
+
+    const val = scValToNative(retVal);
+    return BigInt(val);
+  } catch (err) {
+    console.warn("getTokenAllowance error:", err);
+    return 0n;
+  }
+}
+
 export async function approveToken(
   userPublicKey: string,
   tokenAddress: string,
@@ -216,6 +262,15 @@ export async function approveToken(
   amount: bigint
 ): Promise<void> {
   if (isE2eMockChain()) {
+    return;
+  }
+
+  const currentAllowance = await getTokenAllowance(
+    userPublicKey,
+    spenderAddress,
+    tokenAddress
+  );
+  if (currentAllowance >= amount) {
     return;
   }
 
@@ -437,7 +492,7 @@ export async function borrow(
   );
 
   if (isE2eMockChain()) {
-    return 101;
+    return Math.floor(Date.now() / 1000);
   }
 
   const rpc = getRpc();
@@ -499,7 +554,7 @@ export async function borrow(
   if (retval) {
     return Number(scValToNative(retval));
   }
-  return 101;
+  throw new Error("Borrow transaction succeeded but returned no position ID");
 }
 
 export async function addCollateral(
@@ -599,6 +654,9 @@ export async function returnNFT(
 
   // If position fetch fails or returns null in tests/mock context, create fallback
   if (!pos) {
+    if (!isE2eMockChain()) {
+      throw new Error(`Position #${positionId} not found`);
+    }
     pos = {
       id: positionId,
       listing_id: 1n,
@@ -708,6 +766,9 @@ export async function liquidate(
   const liquidatorFeeBps = BigInt(platformConfig?.liquidator_fee_bps ?? 500); // 5% default
 
   if (!pos) {
+    if (!isE2eMockChain()) {
+      throw new Error(`Position #${positionId} not found`);
+    }
     pos = {
       id: positionId,
       listing_id: 1n,
