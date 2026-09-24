@@ -654,6 +654,9 @@ export async function returnNFT(
 
   // If position fetch fails or returns null in tests/mock context, create fallback
   if (!pos) {
+    if (!isE2eMockChain()) {
+      throw new Error(`Position #${positionId} not found`);
+    }
     pos = {
       id: positionId,
       listing_id: 1n,
@@ -763,6 +766,9 @@ export async function liquidate(
   const liquidatorFeeBps = BigInt(platformConfig?.liquidator_fee_bps ?? 500); // 5% default
 
   if (!pos) {
+    if (!isE2eMockChain()) {
+      throw new Error(`Position #${positionId} not found`);
+    }
     pos = {
       id: positionId,
       listing_id: 1n,
