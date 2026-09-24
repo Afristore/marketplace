@@ -76,6 +76,39 @@ fn setup_launchpad(env: &Env) -> (LaunchpadClient<'_>, Address, Address, Address
 }
 
 #[test]
+fn initialize_stores_configuration() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.initialize(&admin, &receiver, &250, &token);
+    assert_eq!(client.admin(), admin);
+    assert_eq!(client.platform_fee(), (receiver, 250));
+    assert_eq!(client.platform_fee_token(), Some(token));
+}
+
+#[test]
+fn initialize_can_only_be_called_once() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.initialize(&admin, &receiver, &0, &token);
+    assert_eq!(
+        client.try_initialize(&admin, &receiver, &0, &token),
+        Err(Ok(Error::AlreadyInitialized))
+    );
+}
+
+#[test]
 fn deploys_normal_721_twice_with_unique_addresses() {
     let env = Env::default();
     env.ledger().with_mut(|li| li.sequence_number = 1);

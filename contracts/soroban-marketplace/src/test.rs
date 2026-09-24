@@ -3464,3 +3464,139 @@ fn test_create_listing_fails_if_price_zero_or_negative() {
     // Verify expected state: no listing was created
     assert_eq!(client.get_total_listings(), 0);
 }
+
+// ── get_admin tests (Issue #862) ─────────────────────────────
+
+#[test]
+fn test_get_admin_none_before_set() {
+    let (_env, client, _artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    // Admin has never been set — must return None
+    assert_eq!(client.get_admin(), None);
+}
+
+#[test]
+fn test_get_admin_returns_some_after_set() {
+    let (env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    assert_eq!(client.get_admin(), Some(artist));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_set_admin_twice_panics_and_get_admin_keeps_first() {
+    let (env, client, artist, buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    assert_eq!(client.get_admin(), Some(artist.clone()));
+    // Second set_admin must panic Unauthorized — admin stays the first one
+    client.set_admin(&buyer);
+    let _ = env; // env kept for parity with setup()
+}
+
+#[test]
+fn test_get_admin_reflects_two_step_transfer() {
+    let (env, client, admin, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    let new_admin = Address::generate(&env);
+    client.set_admin(&admin);
+    assert_eq!(client.get_admin(), Some(admin.clone()));
+    client.transfer_admin(&admin, &new_admin);
+    // Admin unchanged until the successor accepts
+    assert_eq!(client.get_admin(), Some(admin.clone()));
+    client.accept_admin(&new_admin);
+    assert_eq!(client.get_admin(), Some(new_admin));
+}
+
+// ── get_treasury tests (Issue #863) ──────────────────────────
+
+#[test]
+fn test_get_treasury_none_before_set() {
+    let (_env, client, _artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    // Treasury has never been set — must return None
+    assert_eq!(client.get_treasury(), None);
+}
+
+#[test]
+fn test_get_treasury_returns_set_value() {
+    let (env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    let treasury = Address::generate(&env);
+    client.set_treasury(&artist, &treasury);
+    assert_eq!(client.get_treasury(), Some(treasury));
+}
+
+#[test]
+fn test_get_treasury_reflects_update() {
+    let (env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    let first = Address::generate(&env);
+    client.set_treasury(&artist, &first);
+    assert_eq!(client.get_treasury(), Some(first.clone()));
+    let second = Address::generate(&env);
+    client.set_treasury(&artist, &second);
+    // Getter must reflect the latest stored treasury
+    assert_eq!(client.get_treasury(), Some(second));
+}
+
+// ── get_protocol_fee tests (Issue #864) ──────────────────────
+
+#[test]
+fn test_get_protocol_fee_defaults_to_zero() {
+    let (_env, client, _artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    // No fee has been set — getter must fall back to 0
+    assert_eq!(client.get_protocol_fee(), 0u32);
+}
+
+#[test]
+fn test_get_protocol_fee_returns_set_value() {
+    let (_env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    client.set_protocol_fee(&artist, &250u32);
+    assert_eq!(client.get_protocol_fee(), 250u32);
+}
+
+#[test]
+fn test_get_protocol_fee_reflects_update() {
+    let (_env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    client.set_protocol_fee(&artist, &500u32);
+    assert_eq!(client.get_protocol_fee(), 500u32);
+    client.set_protocol_fee(&artist, &750u32);
+    assert_eq!(client.get_protocol_fee(), 750u32);
+}
+
+// ── protocol fee boundary / zero-value tests (Issue #865) ────
+
+#[test]
+fn test_get_protocol_fee_zero_bps_is_valid() {
+    let (_env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    // Zero-value edge case: 0 bps is the valid lower bound (matches default)
+    client.set_protocol_fee(&artist, &0u32);
+    assert_eq!(client.get_protocol_fee(), 0u32);
+}
+
+#[test]
+fn test_set_protocol_fee_max_boundary_accepted() {
+    let (_env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    // Upper bound is inclusive: exactly 1000 bps (10%) must be accepted
+    client.set_protocol_fee(&artist, &1000u32);
+    assert_eq!(client.get_protocol_fee(), 1000u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_set_protocol_fee_just_above_max_panics() {
+    let (_env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    // First value past the upper bound must panic InvalidPrice
+    client.set_protocol_fee(&artist, &1001u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_set_protocol_fee_u32_max_panics() {
+    let (_env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    // Overflow bound: the largest possible u32 must panic InvalidPrice
+    client.set_protocol_fee(&artist, &u32::MAX);
+}

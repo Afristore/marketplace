@@ -40,6 +40,28 @@ fn validate_bounds(
     }
 }
 
+/// Validate the platform / liquidator fee basis points shared by `initialize()`
+/// and `admin_set_fees()`.
+///
+/// Invariants enforced (all panic with descriptive messages on violation):
+///   1. Each fee must not exceed 10_000 bps (100%).
+///   2. Combined fees must be strictly less than 10_000 bps.
+/// Uses `checked_add` so `u32` overflow panics instead of silently saturating.
+fn validate_fees(platform_fee_bps: u32, liquidator_fee_bps: u32) {
+    let total = platform_fee_bps
+        .checked_add(liquidator_fee_bps)
+        .unwrap_or_else(|| panic!("Invalid fees: fee addition overflow"));
+    if platform_fee_bps > 10_000 {
+        panic!("Invalid fees: platform_fee_bps must not exceed 10000");
+    }
+    if liquidator_fee_bps > 10_000 {
+        panic!("Invalid fees: liquidator_fee_bps must not exceed 10000");
+    }
+    if total >= 10_000 {
+        panic!("Invalid fees: combined fees must be less than 10000");
+    }
+}
+
 #[contractimpl]
 impl LendingContract {
     // ── Config / Init ─────────────────────────────────────────────────────────
@@ -73,9 +95,7 @@ impl LendingContract {
             max_liq_threshold_bps,
         );
 
-        if platform_fee_bps.saturating_add(liquidator_fee_bps) >= 10000 {
-            panic!("Invalid fees: combined fees must be less than 10000");
-        }
+        validate_fees(platform_fee_bps, liquidator_fee_bps);
 
         let config = PlatformConfig {
             admin,
@@ -127,9 +147,7 @@ impl LendingContract {
         let mut config = get_config(&env);
         config.admin.require_auth();
 
-        if platform_fee_bps.saturating_add(liquidator_fee_bps) >= 10000 {
-            panic!("Invalid fees: combined fees must be less than 10000");
-        }
+        validate_fees(platform_fee_bps, liquidator_fee_bps);
 
         config.platform_fee_bps = platform_fee_bps;
         config.liquidator_fee_bps = liquidator_fee_bps;
