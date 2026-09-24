@@ -135,7 +135,7 @@ export function computeAccruedInterestUsd(
     const idx = Math.min(fullMonths, len - 1);
     const partialRateBps = BigInt(interestScheduleBps[idx]);
     totalInterest +=
-      (((declaredPriceUsd * partialRateBps) / 10000n) * partialDays) / 30n;
+      (declaredPriceUsd * partialRateBps * partialDays) / (10000n * 30n);
   }
 
   return totalInterest;
