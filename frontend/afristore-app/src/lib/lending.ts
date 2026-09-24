@@ -209,6 +209,52 @@ export async function getTokenBalance(
   }
 }
 
+export async function getTokenAllowance(
+  userPublicKey: string,
+  spenderAddress: string,
+  tokenAddress: string
+): Promise<bigint> {
+  if (isE2eMockChain()) {
+    return 1_000_000_000_000n;
+  }
+
+  try {
+    const rpc = getRpc();
+    const account = await rpc.getAccount(userPublicKey);
+    const tokenContract = new Contract(tokenAddress);
+
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: getNetworkPassphrase(),
+    })
+      .addOperation(
+        tokenContract.call(
+          "allowance",
+          new Address(userPublicKey).toScVal(),
+          new Address(spenderAddress).toScVal()
+        )
+      )
+      .setTimeout(30)
+      .build();
+
+    const simResult = await rpc.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(simResult)) {
+      throw new Error("Failed to query token allowance");
+    }
+
+    const retVal = (
+      simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
+    ).result?.retval;
+    if (!retVal) return 0n;
+
+    const val = scValToNative(retVal);
+    return BigInt(val);
+  } catch (err) {
+    console.warn("getTokenAllowance error:", err);
+    return 0n;
+  }
+}
+
 export async function approveToken(
   userPublicKey: string,
   tokenAddress: string,
@@ -216,6 +262,15 @@ export async function approveToken(
   amount: bigint
 ): Promise<void> {
   if (isE2eMockChain()) {
+    return;
+  }
+
+  const currentAllowance = await getTokenAllowance(
+    userPublicKey,
+    spenderAddress,
+    tokenAddress
+  );
+  if (currentAllowance >= amount) {
     return;
   }
 
