@@ -1499,3 +1499,603 @@ fn rejects_unapproved_tokens_for_staking_and_splitter_deploys() {
     );
     assert_ne!(splitter_ok, Err(Ok(Error::InvalidCurrency)));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #850 — Missing unit tests for `is_approved_currency`
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Happy path: a currency that was added via `add_approved_currency` reports
+/// `true` from `is_approved_currency`.
+#[test]
+fn is_approved_currency_returns_true_after_adding() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let fee_token = Address::generate(&env);
+    client.initialize(&admin, &fee_receiver, &0u32, &fee_token);
+
+    let token = Address::generate(&env);
+    client.add_approved_currency(&token);
+
+    assert!(
+        client.is_approved_currency(&token),
+        "currency added via add_approved_currency must be approved"
+    );
+}
+
+/// Edge case: a currency that was never registered returns `false`.
+#[test]
+fn is_approved_currency_returns_false_for_unknown_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let fee_token = Address::generate(&env);
+    client.initialize(&admin, &fee_receiver, &0u32, &fee_token);
+
+    let unknown = Address::generate(&env);
+    assert!(
+        !client.is_approved_currency(&unknown),
+        "unknown token must not be approved"
+    );
+}
+
+/// Edge case: currency is removed via `remove_approved_currency` → `false`.
+#[test]
+fn is_approved_currency_returns_false_after_removal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let fee_token = Address::generate(&env);
+    client.initialize(&admin, &fee_receiver, &0u32, &fee_token);
+
+    let token = Address::generate(&env);
+    client.add_approved_currency(&token);
+    assert!(client.is_approved_currency(&token));
+
+    client.remove_approved_currency(&token);
+    assert!(
+        !client.is_approved_currency(&token),
+        "currency removed via remove_approved_currency must no longer be approved"
+    );
+}
+
+/// Edge case: multiple currencies can be independently approved / revoked.
+#[test]
+fn is_approved_currency_independent_per_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let fee_token = Address::generate(&env);
+    client.initialize(&admin, &fee_receiver, &0u32, &fee_token);
+
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    client.add_approved_currency(&token_a);
+
+    assert!(client.is_approved_currency(&token_a));
+    assert!(!client.is_approved_currency(&token_b));
+
+    client.remove_approved_currency(&token_a);
+    client.add_approved_currency(&token_b);
+
+    assert!(!client.is_approved_currency(&token_a));
+    assert!(client.is_approved_currency(&token_b));
+}
+
+/// Edge case: re-adding a previously removed currency re-approves it.
+#[test]
+fn is_approved_currency_re_add_after_removal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let fee_token = Address::generate(&env);
+    client.initialize(&admin, &fee_receiver, &0u32, &fee_token);
+
+    let token = Address::generate(&env);
+
+    client.add_approved_currency(&token);
+    client.remove_approved_currency(&token);
+    assert!(!client.is_approved_currency(&token));
+
+    client.add_approved_currency(&token);
+    assert!(
+        client.is_approved_currency(&token),
+        "re-added currency must be approved again"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #851 — Missing unit tests for `collections_by_creator`
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Happy path: single collection is returned correctly.
+#[test]
+fn collections_by_creator_single_collection() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let royalty_receiver = Address::generate(&env);
+    let addr = client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Solo Collection"),
+        &String::from_str(&env, "SOLO"),
+        &50u64,
+        &250u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x70u8; 32]),
+    );
+
+    let colls = client.collections_by_creator(&creator);
+    assert_eq!(colls.len(), 1);
+    assert_eq!(colls.get(0).unwrap().address, addr);
+    assert_eq!(colls.get(0).unwrap().creator, creator);
+    assert!(matches!(colls.get(0).unwrap().kind, CollectionKind::Normal721));
+}
+
+/// Happy path: multiple collections from the same creator all appear in order.
+#[test]
+fn collections_by_creator_multiple_collections_same_creator() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let royalty_receiver = Address::generate(&env);
+    let creator_pubkey = BytesN::from_array(&env, &[0x0Bu8; 32]);
+
+    let addr1 = client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Coll Alpha"),
+        &String::from_str(&env, "CA"),
+        &100u64,
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x71u8; 32]),
+    );
+    let addr2 = client.deploy_normal_1155(
+        &creator,
+        &String::from_str(&env, "Coll Beta"),
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x72u8; 32]),
+    );
+    let addr3 = client.deploy_lazy_721(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "Coll Gamma"),
+        &String::from_str(&env, "CG"),
+        &200u64,
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x73u8; 32]),
+    );
+
+    let colls = client.collections_by_creator(&creator);
+    assert_eq!(colls.len(), 3);
+    assert_eq!(colls.get(0).unwrap().address, addr1);
+    assert_eq!(colls.get(1).unwrap().address, addr2);
+    assert_eq!(colls.get(2).unwrap().address, addr3);
+}
+
+/// Edge case: creator with no collections returns an empty list.
+#[test]
+fn collections_by_creator_empty_for_unknown_creator() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let stranger = Address::generate(&env);
+    let colls = client.collections_by_creator(&stranger);
+    assert!(
+        colls.is_empty(),
+        "unknown creator must return empty collection list"
+    );
+}
+
+/// Edge case: collections are scoped per creator — deploying for creator A
+/// must not appear in creator B's list and vice versa.
+#[test]
+fn collections_by_creator_isolated_between_creators() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator_a) = setup_launchpad(&env);
+    let creator_b = Address::generate(&env);
+
+    let royalty_receiver = Address::generate(&env);
+
+    let addr_a = client.deploy_normal_721(
+        &creator_a,
+        &String::from_str(&env, "A's Collection"),
+        &String::from_str(&env, "AC"),
+        &100u64,
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x74u8; 32]),
+    );
+    let addr_b = client.deploy_normal_1155(
+        &creator_b,
+        &String::from_str(&env, "B's Collection"),
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x75u8; 32]),
+    );
+
+    let colls_a = client.collections_by_creator(&creator_a);
+    let colls_b = client.collections_by_creator(&creator_b);
+
+    assert_eq!(colls_a.len(), 1);
+    assert_eq!(colls_a.get(0).unwrap().address, addr_a);
+
+    assert_eq!(colls_b.len(), 1);
+    assert_eq!(colls_b.get(0).unwrap().address, addr_b);
+}
+
+/// Edge case: all four collection kinds are correctly tracked per-creator.
+#[test]
+fn collections_by_creator_all_four_kinds() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let royalty_receiver = Address::generate(&env);
+    let creator_pubkey = BytesN::from_array(&env, &[0x0Cu8; 32]);
+
+    client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "K Normal721"),
+        &String::from_str(&env, "KN7"),
+        &100u64,
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x76u8; 32]),
+    );
+    client.deploy_normal_1155(
+        &creator,
+        &String::from_str(&env, "K Normal1155"),
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x77u8; 32]),
+    );
+    client.deploy_lazy_721(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "K Lazy721"),
+        &String::from_str(&env, "KL7"),
+        &200u64,
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x78u8; 32]),
+    );
+    client.deploy_lazy_1155(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "K Lazy1155"),
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x79u8; 32]),
+    );
+
+    let colls = client.collections_by_creator(&creator);
+    assert_eq!(colls.len(), 4);
+    assert!(matches!(colls.get(0).unwrap().kind, CollectionKind::Normal721));
+    assert!(matches!(colls.get(1).unwrap().kind, CollectionKind::Normal1155));
+    assert!(matches!(colls.get(2).unwrap().kind, CollectionKind::LazyMint721));
+    assert!(matches!(colls.get(3).unwrap().kind, CollectionKind::LazyMint1155));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #852 — Missing unit tests for `all_collections`
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Happy path: `all_collections` returns every collection regardless of creator.
+#[test]
+fn all_collections_returns_all_across_creators() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator_a) = setup_launchpad(&env);
+    let creator_b = Address::generate(&env);
+
+    let royalty_receiver = Address::generate(&env);
+
+    let addr_a1 = client.deploy_normal_721(
+        &creator_a,
+        &String::from_str(&env, "All A1"),
+        &String::from_str(&env, "AA1"),
+        &100u64,
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x80u8; 32]),
+    );
+    let addr_a2 = client.deploy_normal_1155(
+        &creator_a,
+        &String::from_str(&env, "All A2"),
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x81u8; 32]),
+    );
+    let addr_b1 = client.deploy_normal_721(
+        &creator_b,
+        &String::from_str(&env, "All B1"),
+        &String::from_str(&env, "AB1"),
+        &200u64,
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x82u8; 32]),
+    );
+
+    let all = client.all_collections();
+    assert_eq!(all.len(), 3);
+    assert_eq!(all.get(0).unwrap().address, addr_a1);
+    assert_eq!(all.get(1).unwrap().address, addr_a2);
+    assert_eq!(all.get(2).unwrap().address, addr_b1);
+}
+
+/// Edge case: `all_collections` is empty before any deployments.
+#[test]
+fn all_collections_empty_before_any_deploy() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let fee_token = Address::generate(&env);
+    client.initialize(&admin, &fee_receiver, &0u32, &fee_token);
+
+    assert!(
+        client.all_collections().is_empty(),
+        "all_collections must be empty before any deployment"
+    );
+}
+
+/// Edge case: `all_collections` grows exactly once per successful deploy.
+#[test]
+fn all_collections_increments_per_deploy() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let royalty_receiver = Address::generate(&env);
+    let creator_pubkey = BytesN::from_array(&env, &[0x0Du8; 32]);
+
+    assert_eq!(client.all_collections().len(), 0);
+
+    client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Inc 1"),
+        &String::from_str(&env, "I1"),
+        &100u64,
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x83u8; 32]),
+    );
+    assert_eq!(client.all_collections().len(), 1);
+
+    client.deploy_lazy_1155(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "Inc 2"),
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x84u8; 32]),
+    );
+    assert_eq!(client.all_collections().len(), 2);
+
+    client.deploy_normal_1155(
+        &creator,
+        &String::from_str(&env, "Inc 3"),
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x85u8; 32]),
+    );
+    assert_eq!(client.all_collections().len(), 3);
+}
+
+/// Edge case: a failed deploy (empty name) must NOT add an entry to
+/// `all_collections`.
+#[test]
+fn all_collections_not_updated_on_failed_deploy() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let royalty_receiver = Address::generate(&env);
+
+    // Ensure baseline is zero
+    assert!(client.all_collections().is_empty());
+
+    // Attempt a deploy that must fail (empty name)
+    let result = client.try_deploy_normal_721(
+        &creator,
+        &String::from_str(&env, ""),
+        &String::from_str(&env, "X"),
+        &100u64,
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x86u8; 32]),
+    );
+    assert_eq!(result, Err(Ok(Error::EmptyName)));
+
+    assert!(
+        client.all_collections().is_empty(),
+        "all_collections must not grow after a failed deploy"
+    );
+}
+
+/// Edge case: `all_collections` records the correct `kind` for each entry.
+#[test]
+fn all_collections_records_correct_kind_per_entry() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let royalty_receiver = Address::generate(&env);
+    let creator_pubkey = BytesN::from_array(&env, &[0x0Eu8; 32]);
+
+    client.deploy_lazy_721(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "Kind L721"),
+        &String::from_str(&env, "KL7"),
+        &100u64,
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x87u8; 32]),
+    );
+    client.deploy_lazy_1155(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "Kind L1155"),
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x88u8; 32]),
+    );
+    client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Kind N721"),
+        &String::from_str(&env, "KN7"),
+        &100u64,
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x89u8; 32]),
+    );
+    client.deploy_normal_1155(
+        &creator,
+        &String::from_str(&env, "Kind N1155"),
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x8Au8; 32]),
+    );
+
+    let all = client.all_collections();
+    assert_eq!(all.len(), 4);
+    assert!(matches!(all.get(0).unwrap().kind, CollectionKind::LazyMint721));
+    assert!(matches!(all.get(1).unwrap().kind, CollectionKind::LazyMint1155));
+    assert!(matches!(all.get(2).unwrap().kind, CollectionKind::Normal721));
+    assert!(matches!(all.get(3).unwrap().kind, CollectionKind::Normal1155));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #854 — Missing unit tests for `admin`
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Happy path: `admin()` returns the address supplied during `initialize`.
+#[test]
+fn admin_returns_initialized_address() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let fee_token = Address::generate(&env);
+
+    client.initialize(&admin, &fee_receiver, &0u32, &fee_token);
+
+    assert_eq!(
+        client.admin(),
+        admin,
+        "admin() must return the address set during initialize"
+    );
+}
+
+/// Happy path: after `transfer_admin`, `admin()` reflects the new admin.
+#[test]
+fn admin_reflects_new_admin_after_transfer() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, original_admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+
+    assert_ne!(
+        client.admin(),
+        original_admin,
+        "admin() must no longer equal the old admin after transfer"
+    );
+    assert_eq!(
+        client.admin(),
+        new_admin,
+        "admin() must equal the new admin after transfer"
+    );
+}
+
+/// Edge case: `admin()` is deterministic — multiple calls return the same value.
+#[test]
+fn admin_is_deterministic_across_calls() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let first = client.admin();
+    let second = client.admin();
+    let third = client.admin();
+
+    assert_eq!(first, admin);
+    assert_eq!(first, second);
+    assert_eq!(second, third);
+}
+
+/// Edge case: admin cannot be a non-admin address.  After transferring admin
+/// to `new_admin`, the original address must differ.
+#[test]
+fn admin_is_unique_address_not_arbitrary() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    // `creator` was never set as admin, so it must differ
+    assert_ne!(
+        client.admin(),
+        creator,
+        "admin() must not return an arbitrary non-admin address"
+    );
+}
+
+/// Edge case: chained transfers keep `admin()` consistent at each step.
+#[test]
+fn admin_consistent_across_multiple_transfers() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _original_admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let admin_2 = Address::generate(&env);
+    let admin_3 = Address::generate(&env);
+
+    client.transfer_admin(&admin_2);
+    assert_eq!(client.admin(), admin_2);
+
+    client.transfer_admin(&admin_3);
+    assert_eq!(client.admin(), admin_3);
+}
