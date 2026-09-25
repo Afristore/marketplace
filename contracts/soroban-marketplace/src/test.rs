@@ -3600,3 +3600,100 @@ fn test_set_protocol_fee_u32_max_panics() {
     // Overflow bound: the largest possible u32 must panic InvalidPrice
     client.set_protocol_fee(&artist, &u32::MAX);
 }
+
+// ── get_total_auctions (#880) ─────────────────────────────────────────────────
+
+#[test]
+fn test_get_total_auctions_zero_before_any_created() {
+    let (_env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    assert_eq!(client.get_total_auctions(), 0u64);
+}
+
+#[test]
+fn test_get_total_auctions_increments_after_each_create() {
+    let (env, client, artist, _buyer, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    assert_eq!(client.get_total_auctions(), 0u64);
+
+    client.create_auction(
+        &artist, &token_id, &collection_id, &1u64, &1u64,
+        &1_000_000_i128, &3600u64, &valid_recipients(&env, &artist),
+    );
+    assert_eq!(client.get_total_auctions(), 1u64);
+
+    let collection_id2 = env.register(mock_nft::MockNft, ());
+    client.create_auction(
+        &artist, &token_id, &collection_id2, &1u64, &1u64,
+        &2_000_000_i128, &7200u64, &valid_recipients(&env, &artist),
+    );
+    assert_eq!(client.get_total_auctions(), 2u64);
+}
+
+#[test]
+fn test_get_total_auctions_counts_auctions_from_different_artists() {
+    let (env, client, artist, buyer, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let collection_id2 = env.register(mock_nft::MockNft, ());
+
+    client.create_auction(
+        &artist, &token_id, &collection_id, &1u64, &1u64,
+        &1_000_000_i128, &3600u64, &valid_recipients(&env, &artist),
+    );
+    client.create_auction(
+        &buyer, &token_id, &collection_id2, &1u64, &1u64,
+        &1_000_000_i128, &3600u64, &valid_recipients(&env, &buyer),
+    );
+
+    assert_eq!(client.get_total_auctions(), 2u64);
+}
+
+// ── get_offer (#887) ──────────────────────────────────────────────────────────
+
+#[test]
+fn test_get_offer_returns_correct_fields() {
+    let (env, client, artist, buyer, token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let listing_id = create_test_listing(&env, &client, &artist, &token_id);
+    let amount = 5_000_000_i128;
+    let offer_id = client.make_offer(&buyer, &listing_id, &amount, &token_id);
+
+    let offer = client.get_offer(&offer_id);
+    assert_eq!(offer.offer_id, offer_id);
+    assert_eq!(offer.listing_id, listing_id);
+    assert_eq!(offer.offerer, buyer);
+    assert_eq!(offer.amount, amount);
+    assert_eq!(offer.token, token_id);
+    assert_eq!(offer.status, OfferStatus::Pending);
+}
+
+#[test]
+fn test_get_offer_ids_are_sequential() {
+    let (env, client, artist, buyer, token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let listing_id = create_test_listing(&env, &client, &artist, &token_id);
+
+    let offer_id_a = client.make_offer(&buyer, &listing_id, &1_000_000_i128, &token_id);
+    let offer_id_b = client.make_offer(&buyer, &listing_id, &2_000_000_i128, &token_id);
+
+    assert_eq!(offer_id_b, offer_id_a + 1);
+    assert_eq!(client.get_offer(&offer_id_a).amount, 1_000_000_i128);
+    assert_eq!(client.get_offer(&offer_id_b).amount, 2_000_000_i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #16)")]
+fn test_get_offer_nonexistent_id_panics() {
+    let (_env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    // Offer ID 999 was never created — must panic OfferNotFound
+    client.get_offer(&999u64);
+}
