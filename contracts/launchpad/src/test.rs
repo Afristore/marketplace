@@ -1499,3 +1499,137 @@ fn rejects_unapproved_tokens_for_staking_and_splitter_deploys() {
     );
     assert_ne!(splitter_ok, Err(Ok(Error::InvalidCurrency)));
 }
+
+// ── collection_count / platform_fee_token view coverage ──────────────────
+
+#[test]
+fn collection_count_is_zero_on_fresh_launchpad() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+
+    // Readable even before `initialize`, and defaults to zero.
+    assert_eq!(client.collection_count(), 0u64);
+
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.initialize(&admin, &receiver, &0u32, &token);
+    assert_eq!(client.collection_count(), 0u64);
+}
+
+#[test]
+fn collection_count_unchanged_by_admin_config_updates() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.initialize(&admin, &receiver, &0u32, &token);
+
+    client.set_platform_fee_token(&Address::generate(&env));
+    client.add_approved_currency(&Address::generate(&env));
+
+    assert_eq!(client.collection_count(), 0u64);
+}
+
+#[test]
+fn collection_count_matches_all_collections_length() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+    let royalty_receiver = Address::generate(&env);
+
+    assert_eq!(
+        client.collection_count(),
+        client.all_collections().len() as u64
+    );
+
+    client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Count Match"),
+        &String::from_str(&env, "CMT"),
+        &100u64,
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xA1u8; 32]),
+    );
+
+    assert_eq!(client.collection_count(), 1u64);
+    assert_eq!(
+        client.collection_count(),
+        client.all_collections().len() as u64
+    );
+}
+
+#[test]
+fn collection_count_is_independent_per_launchpad() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client_a, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+    let (client_b, _admin_b, _fee_receiver_b, _creator_b) = setup_launchpad(&env);
+
+    client_a.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Only In A"),
+        &String::from_str(&env, "OIA"),
+        &100u64,
+        &0u32,
+        &Address::generate(&env),
+        &BytesN::from_array(&env, &[0xA2u8; 32]),
+    );
+
+    assert_eq!(client_a.collection_count(), 1u64);
+    assert_eq!(client_b.collection_count(), 0u64);
+}
+
+#[test]
+fn platform_fee_token_is_none_before_initialize() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+
+    assert_eq!(client.platform_fee_token(), None);
+}
+
+#[test]
+fn platform_fee_token_reflects_admin_update() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let initial_token = Address::generate(&env);
+    client.initialize(&admin, &receiver, &0u32, &initial_token);
+    assert_eq!(client.platform_fee_token(), Some(initial_token));
+
+    let new_token = Address::generate(&env);
+    client.set_platform_fee_token(&new_token);
+    assert_eq!(client.platform_fee_token(), Some(new_token.clone()));
+
+    // A later update overwrites the previous value again.
+    let newest_token = Address::generate(&env);
+    client.set_platform_fee_token(&newest_token);
+    assert_eq!(client.platform_fee_token(), Some(newest_token));
+}
+
+#[test]
+fn platform_fee_token_unchanged_by_platform_fee_update() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.initialize(&admin, &receiver, &100u32, &token);
+
+    client.update_platform_fee(&Address::generate(&env), &500u32);
+
+    assert_eq!(client.platform_fee_token(), Some(token));
+}
