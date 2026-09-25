@@ -197,7 +197,10 @@ fn test_set_paused_blocks_and_restores_staking() {
     mint_token(&env, &collection, &user, 0);
 
     staking.set_paused(&true);
-    assert!(staking.is_paused(), "set_paused(true) must enable pause state");
+    assert!(
+        staking.is_paused(),
+        "set_paused(true) must enable pause state"
+    );
 
     let err = staking
         .try_stake_erc721(&user, &collection, &0)
@@ -211,7 +214,10 @@ fn test_set_paused_blocks_and_restores_staking() {
     );
 
     staking.set_paused(&false);
-    assert!(!staking.is_paused(), "set_paused(false) must clear pause state");
+    assert!(
+        !staking.is_paused(),
+        "set_paused(false) must clear pause state"
+    );
 
     staking.stake_erc721(&user, &collection, &0);
     assert_eq!(staking.total_staked(), 1);
@@ -678,7 +684,6 @@ fn test_unstake_fails_when_staked_by_different_user() {
         owner, staking.address,
         "NFT must remain in the staking pool's custody"
     );
-}
 }
 
 // ── Issue #829: is_paused ────────────────────────────────────────────────────

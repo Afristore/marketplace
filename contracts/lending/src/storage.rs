@@ -95,6 +95,11 @@ pub fn has_listing(env: &Env, id: u64) -> bool {
     env.storage().persistent().has(&DataKey::Listing(id))
 }
 
+pub fn remove_listing(env: &Env, id: u64) {
+    let key = DataKey::Listing(id);
+    env.storage().persistent().remove(&key);
+}
+
 pub fn get_position(env: &Env, id: u64) -> Position {
     let key = DataKey::Position(id);
     let position: Position = env.storage().persistent().get(&key).unwrap();

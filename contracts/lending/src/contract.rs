@@ -6,8 +6,8 @@ use crate::oracle;
 use crate::settlement::settle;
 use crate::storage::{
     extend_instance_ttl, get_config, get_currency_symbol, get_listing, get_position, has_config,
-    is_currency_whitelisted, next_position_id, set_config, set_currency_symbol, set_listing,
-    set_position,
+    is_currency_whitelisted, next_position_id, remove_listing, set_config, set_currency_symbol,
+    set_listing, set_position,
 };
 use crate::types::{ListingStatus, PlatformConfig, Position, PositionStatus};
 
@@ -256,6 +256,7 @@ impl LendingContract {
 
         listing.status = ListingStatus::Filled;
         set_listing(&env, listing_id, &listing);
+        remove_listing(&env, listing_id);
 
         let position_id = next_position_id(&env);
         let position = Position {
