@@ -35,17 +35,21 @@ export function BorrowConfirmModal({
 
   if (!isOpen || !listing) return null;
 
+  // Calculate collateral amount from declared price and buffer bps
+  const collateralAmount = Number(listing.declared_price_usd) * (1 + listing.min_collateral_buffer_bps / 10000);
+
   // Format amounts (7 decimals for USDC-like tokens)
-  const collateralFormatted = Number(listing.collateral_amount) / 10_000_000;
+  const collateralFormatted = collateralAmount / 10_000_000;
   const priceFormatted = Number(listing.declared_price_usd) / 10_000_000;
   const balanceFormatted = Number(userBalance) / 10_000_000;
 
   // Calculate liquidation threshold
   const liquidationThreshold = listing.liquidation_threshold_bps / 100;
-  const collateralRatio = Number(listing.collateral_amount) / Number(listing.declared_price_usd) * 100;
+  const collateralRatio = collateralAmount / Number(listing.declared_price_usd) * 100;
 
-  // Check if user has sufficient balance
-  const hasSufficientBalance = userBalance >= listing.collateral_amount;
+  // Check if user has sufficient balance (collateral in 7 decimal units)
+  const collateralBigInt = BigInt(Math.floor(collateralAmount));
+  const hasSufficientBalance = userBalance >= collateralBigInt;
 
   const handleConfirm = async () => {
     if (!agreedToTerms) return;

@@ -73,8 +73,12 @@ export function NFTCollateralCard({
     setImageUrl(`https://ui-avatars.com/api/?name=NFT#${listing.token_id}&background=0A1324&color=4AE292&size=400`);
   };
 
+  // Calculate collateral amount from declared price and buffer bps
+  // collateral = declared_price_usd * (1 + min_collateral_buffer_bps / 10000)
+  const collateralAmount = Number(listing.declared_price_usd) * (1 + listing.min_collateral_buffer_bps / 10000);
+
   // Format collateral amount (assuming 7 decimals for USDC-like tokens)
-  const collateralFormatted = Number(listing.collateral_amount) / 10_000_000;
+  const collateralFormatted = collateralAmount / 10_000_000;
 
   // Format declared price
   const priceFormatted = Number(listing.declared_price_usd) / 10_000_000;
