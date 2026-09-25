@@ -679,7 +679,6 @@ fn test_unstake_fails_when_staked_by_different_user() {
         "NFT must remain in the staking pool's custody"
     );
 }
-}
 
 // ── Issue #829: is_paused ────────────────────────────────────────────────────
 
