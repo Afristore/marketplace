@@ -146,6 +146,9 @@ impl Launchpad {
         admin.require_auth();
         storage::set_initialized(&env);
         storage::set_admin(&env, &admin);
+        if platform_fee_bps > 10_000 {
+            return Err(Error::InvalidFeeBps);
+        }
         storage::set_platform_fee(&env, &platform_fee_receiver, platform_fee_bps);
         storage::set_platform_fee_token(&env, &platform_fee_token);
         Ok(())
@@ -558,6 +561,9 @@ impl Launchpad {
     pub fn update_platform_fee(env: Env, receiver: Address, fee_bps: u32) -> Result<(), Error> {
         storage::extend_instance_ttl(&env);
         storage::require_admin(&env)?;
+        if fee_bps > 10_000 {
+            return Err(Error::InvalidFeeBps);
+        }
         storage::set_platform_fee(&env, &receiver, fee_bps);
         Ok(())
     }

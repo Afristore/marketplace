@@ -1077,6 +1077,48 @@ fn platform_fee_zero_fee() {
     assert_eq!(returned_bps, 0u32);
 }
 
+#[test]
+fn initialize_rejects_fee_bps_over_10000() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let result = client.try_initialize(&admin, &receiver, &10_001u32, &token);
+    assert_eq!(result, Err(Ok(Error::InvalidFeeBps)));
+}
+
+#[test]
+fn update_platform_fee_rejects_fee_bps_over_10000() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let new_receiver = Address::generate(&env);
+    let result = client.try_update_platform_fee(&new_receiver, &10_001u32);
+    assert_eq!(result, Err(Ok(Error::InvalidFeeBps)));
+}
+
+#[test]
+fn platform_fee_accepts_max_10000() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.initialize(&admin, &receiver, &10_000u32, &token);
+
+    let (returned_receiver, returned_bps) = client.platform_fee();
+    assert_eq!(returned_receiver, receiver);
+    assert_eq!(returned_bps, 10_000u32);
+}
+
 // ── Collections view tests ──────────────────────────────────────
 
 #[test]
