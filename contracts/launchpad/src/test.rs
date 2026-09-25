@@ -1042,6 +1042,41 @@ fn view_functions_return_correct_values() {
     assert_eq!(bps, 0u32);
 }
 
+#[test]
+fn platform_fee_returns_initialized_values() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+    let fee_bps = 500u32;
+
+    client.initialize(&admin, &receiver, &fee_bps, &token);
+
+    let (returned_receiver, returned_bps) = client.platform_fee();
+    assert_eq!(returned_receiver, receiver);
+    assert_eq!(returned_bps, fee_bps);
+}
+
+#[test]
+fn platform_fee_zero_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.initialize(&admin, &receiver, &0u32, &token);
+
+    let (returned_receiver, returned_bps) = client.platform_fee();
+    assert_eq!(returned_receiver, receiver);
+    assert_eq!(returned_bps, 0u32);
+}
+
 // ── Collections view tests ──────────────────────────────────────
 
 #[test]
