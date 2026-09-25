@@ -1543,7 +1543,10 @@ fn collection_count_matches_all_collections_length() {
     let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
     let royalty_receiver = Address::generate(&env);
 
-    assert_eq!(client.collection_count(), client.all_collections().len() as u64);
+    assert_eq!(
+        client.collection_count(),
+        client.all_collections().len() as u64
+    );
 
     client.deploy_normal_721(
         &creator,
@@ -1556,7 +1559,10 @@ fn collection_count_matches_all_collections_length() {
     );
 
     assert_eq!(client.collection_count(), 1u64);
-    assert_eq!(client.collection_count(), client.all_collections().len() as u64);
+    assert_eq!(
+        client.collection_count(),
+        client.all_collections().len() as u64
+    );
 }
 
 #[test]
