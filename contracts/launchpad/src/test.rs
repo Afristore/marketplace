@@ -1466,3 +1466,446 @@ fn rejects_unapproved_tokens_for_staking_and_splitter_deploys() {
     );
     assert_ne!(splitter_ok, Err(Ok(Error::InvalidCurrency)));
 }
+
+// ── Issue #858: Platform fee validation tests ────────────────────────────────
+
+/// Test that initialize fails when platform_fee_bps exceeds 10,000 (100%)
+#[test]
+fn initialize_fails_on_excessive_platform_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let fee_token = Address::generate(&env);
+
+    // Valid: 10,000 bps (100%) should succeed
+    let result_max = client.try_initialize(&admin, &fee_receiver, &10_000u32, &fee_token);
+    assert!(result_max.is_ok());
+}
+
+#[test]
+fn initialize_fails_on_platform_fee_overflow() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let fee_token = Address::generate(&env);
+
+    // Invalid: 10,001 bps (>100%) should fail
+    let result_overflow = client.try_initialize(&admin, &fee_receiver, &10_001u32, &fee_token);
+    assert_eq!(result_overflow, Err(Ok(Error::InvalidFee)));
+
+    // Invalid: Large value should fail
+    let result_large = client.try_initialize(&admin, &fee_receiver, &50_000u32, &fee_token);
+    assert_eq!(result_large, Err(Ok(Error::InvalidFee)));
+}
+
+/// Test that update_platform_fee fails when fee_bps exceeds 10,000 (100%)
+#[test]
+fn update_platform_fee_fails_on_excessive_fee() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let new_receiver = Address::generate(&env);
+
+    // Valid: 10,000 bps (100%) should succeed
+    let result_max = client.try_update_platform_fee(&new_receiver, &10_000u32);
+    assert!(result_max.is_ok());
+
+    // Invalid: 10,001 bps (>100%) should fail
+    let result_overflow = client.try_update_platform_fee(&new_receiver, &10_001u32);
+    assert_eq!(result_overflow, Err(Ok(Error::InvalidFee)));
+
+    // Invalid: Large value should fail
+    let result_large = client.try_update_platform_fee(&new_receiver, &100_000u32);
+    assert_eq!(result_large, Err(Ok(Error::InvalidFee)));
+}
+
+/// Test that set_platform_fee_token requires the token to be an approved currency
+#[test]
+fn set_platform_fee_token_requires_approved_currency() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let unapproved_token = Address::generate(&env);
+    let approved_token = Address::generate(&env);
+
+    // Add approved_token to the whitelist
+    client.add_approved_currency(&approved_token);
+
+    // Attempt to set unapproved token should fail
+    let result_unapproved = client.try_set_platform_fee_token(&unapproved_token);
+    assert_eq!(result_unapproved, Err(Ok(Error::InvalidCurrency)));
+
+    // Setting approved token should succeed
+    let result_approved = client.try_set_platform_fee_token(&approved_token);
+    assert!(result_approved.is_ok());
+    assert_eq!(client.platform_fee_token(), Some(approved_token));
+}
+
+// ── Issue #859: get_collection_by_id tests ───────────────────────────────────
+
+/// Test get_collection_by_id returns correct collection for deployed address
+#[test]
+fn get_collection_by_id_returns_deployed_collection() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let salt = BytesN::from_array(&env, &[0xA1u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+
+    // Deploy a Normal721 collection
+    let deployed_addr = client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Test Collection"),
+        &String::from_str(&env, "TEST"),
+        &1_000u64,
+        &500u32,
+        &royalty_receiver,
+        &salt,
+    );
+
+    // Query by deployed address
+    let collection = client.get_collection_by_id(&deployed_addr);
+    assert!(collection.is_some());
+
+    let record = collection.unwrap();
+    assert_eq!(record.address, deployed_addr);
+    assert_eq!(record.creator, creator);
+    assert!(matches!(record.kind, CollectionKind::Normal721));
+}
+
+/// Test get_collection_by_id returns None for non-existent address
+#[test]
+fn get_collection_by_id_returns_none_for_non_existent() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let non_existent_addr = Address::generate(&env);
+
+    // Query non-existent address
+    let collection = client.get_collection_by_id(&non_existent_addr);
+    assert!(collection.is_none());
+}
+
+/// Test get_collection_by_id distinguishes between multiple collections
+#[test]
+fn get_collection_by_id_distinguishes_multiple_collections() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let salt_a = BytesN::from_array(&env, &[0xA2u8; 32]);
+    let salt_b = BytesN::from_array(&env, &[0xA3u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+
+    // Deploy two different collections
+    let addr_721 = client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Collection 721"),
+        &String::from_str(&env, "C721"),
+        &500u64,
+        &300u32,
+        &royalty_receiver,
+        &salt_a,
+    );
+
+    let addr_1155 = client.deploy_normal_1155(
+        &creator,
+        &String::from_str(&env, "Collection 1155"),
+        &400u32,
+        &royalty_receiver,
+        &salt_b,
+    );
+
+    // Query both collections
+    let collection_721 = client.get_collection_by_id(&addr_721).unwrap();
+    let collection_1155 = client.get_collection_by_id(&addr_1155).unwrap();
+
+    // Verify they are distinct
+    assert_eq!(collection_721.address, addr_721);
+    assert!(matches!(collection_721.kind, CollectionKind::Normal721));
+
+    assert_eq!(collection_1155.address, addr_1155);
+    assert!(matches!(collection_1155.kind, CollectionKind::Normal1155));
+}
+
+// ── Issue #860: get_collections tests ────────────────────────────────────────
+
+/// Test get_collections returns empty vec when no collections deployed
+#[test]
+fn get_collections_returns_empty_when_no_deployments() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let collections = client.get_collections(&0u32, &10u32);
+    assert!(collections.is_empty());
+}
+
+/// Test get_collections pagination returns correct subset
+#[test]
+fn get_collections_pagination_works_correctly() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let royalty_receiver = Address::generate(&env);
+
+    // Deploy 5 collections
+    for i in 0..5 {
+        let salt = BytesN::from_array(&env, &[i as u8; 32]);
+        client.deploy_normal_721(
+            &creator,
+            &String::from_str(&env, "Collection"),
+            &String::from_str(&env, "COL"),
+            &100u64,
+            &500u32,
+            &royalty_receiver,
+            &salt,
+        );
+    }
+
+    // Test pagination: get first 3
+    let page_1 = client.get_collections(&0u32, &3u32);
+    assert_eq!(page_1.len(), 3);
+
+    // Test pagination: get next 2
+    let page_2 = client.get_collections(&3u32, &3u32);
+    assert_eq!(page_2.len(), 2);
+
+    // Test pagination: beyond range returns empty
+    let page_3 = client.get_collections(&10u32, &5u32);
+    assert!(page_3.is_empty());
+}
+
+/// Test get_collections respects limit parameter
+#[test]
+fn get_collections_respects_limit() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let royalty_receiver = Address::generate(&env);
+
+    // Deploy 10 collections
+    for i in 0..10 {
+        let salt = BytesN::from_array(&env, &[0xB0u8 + i as u8; 32]);
+        client.deploy_normal_721(
+            &creator,
+            &String::from_str(&env, "Collection"),
+            &String::from_str(&env, "COL"),
+            &100u64,
+            &500u32,
+            &royalty_receiver,
+            &salt,
+        );
+    }
+
+    // Request only 5 collections
+    let limited = client.get_collections(&0u32, &5u32);
+    assert_eq!(limited.len(), 5);
+
+    // Request all 10
+    let all = client.get_collections(&0u32, &10u32);
+    assert_eq!(all.len(), 10);
+
+    // Request more than available (limit exceeds total)
+    let excess = client.get_collections(&0u32, &20u32);
+    assert_eq!(excess.len(), 10);
+}
+
+/// Test get_collections returns correct collection types
+#[test]
+fn get_collections_returns_correct_types() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let royalty_receiver = Address::generate(&env);
+    let creator_pubkey = BytesN::from_array(&env, &[0x10u8; 32]);
+
+    // Deploy one of each type
+    client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "N721"),
+        &String::from_str(&env, "N721"),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xC1u8; 32]),
+    );
+
+    client.deploy_normal_1155(
+        &creator,
+        &String::from_str(&env, "N1155"),
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xC2u8; 32]),
+    );
+
+    client.deploy_lazy_721(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "L721"),
+        &String::from_str(&env, "L721"),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xC3u8; 32]),
+    );
+
+    client.deploy_lazy_1155(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "L1155"),
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xC4u8; 32]),
+    );
+
+    // Get all collections
+    let collections = client.get_collections(&0u32, &10u32);
+    assert_eq!(collections.len(), 4);
+
+    // Verify types
+    assert!(matches!(collections.get(0).unwrap().kind, CollectionKind::Normal721));
+    assert!(matches!(collections.get(1).unwrap().kind, CollectionKind::Normal1155));
+    assert!(matches!(collections.get(2).unwrap().kind, CollectionKind::LazyMint721));
+    assert!(matches!(collections.get(3).unwrap().kind, CollectionKind::LazyMint1155));
+}
+
+// ── Issue #861: get_staking_pool tests ────────────────────────────────────────
+
+/// Test get_staking_pool returns None for NFT without staking pool
+#[test]
+fn get_staking_pool_returns_none_for_non_existent() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _creator) = setup_launchpad_with_staking(&env);
+
+    let nft_address = Address::generate(&env);
+
+    // Query non-existent staking pool
+    let pool = client.get_staking_pool(&nft_address);
+    assert!(pool.is_none());
+}
+
+/// Test get_staking_pool returns correct address after deployment
+#[test]
+fn get_staking_pool_returns_deployed_pool() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, creator) = setup_launchpad_with_staking(&env);
+
+    let nft_address = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+    let salt = BytesN::from_array(&env, &[0xD1u8; 32]);
+
+    // Add reward token to approved currencies
+    client.add_approved_currency(&reward_token);
+
+    // Deploy staking pool
+    let deployed_pool = client.deploy_staking_pool(
+        &creator,
+        &nft_address,
+        &reward_token,
+        &1_000_000i128,
+        &salt,
+    );
+
+    // Query staking pool
+    let pool = client.get_staking_pool(&nft_address);
+    assert!(pool.is_some());
+    assert_eq!(pool.unwrap(), deployed_pool);
+}
+
+/// Test get_staking_pool returns correct pool for multiple NFTs
+#[test]
+fn get_staking_pool_distinguishes_multiple_nfts() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, creator) = setup_launchpad_with_staking(&env);
+
+    let nft_a = Address::generate(&env);
+    let nft_b = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+
+    // Add reward token to approved currencies
+    client.add_approved_currency(&reward_token);
+
+    // Deploy staking pools for two different NFTs
+    let pool_a = client.deploy_staking_pool(
+        &creator,
+        &nft_a,
+        &reward_token,
+        &500_000i128,
+        &BytesN::from_array(&env, &[0xD2u8; 32]),
+    );
+
+    let pool_b = client.deploy_staking_pool(
+        &creator,
+        &nft_b,
+        &reward_token,
+        &750_000i128,
+        &BytesN::from_array(&env, &[0xD3u8; 32]),
+    );
+
+    // Query both pools
+    let retrieved_pool_a = client.get_staking_pool(&nft_a);
+    let retrieved_pool_b = client.get_staking_pool(&nft_b);
+
+    // Verify correct pools are returned
+    assert_eq!(retrieved_pool_a, Some(pool_a.clone()));
+    assert_eq!(retrieved_pool_b, Some(pool_b.clone()));
+    assert_ne!(pool_a, pool_b);
+}
+
+/// Test get_staking_pool after failed duplicate deployment
+#[test]
+fn get_staking_pool_consistent_after_failed_duplicate() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, creator) = setup_launchpad_with_staking(&env);
+
+    let nft_address = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+
+    // Add reward token to approved currencies
+    client.add_approved_currency(&reward_token);
+
+    // Deploy first staking pool
+    let pool_original = client.deploy_staking_pool(
+        &creator,
+        &nft_address,
+        &reward_token,
+        &1_000_000i128,
+        &BytesN::from_array(&env, &[0xD4u8; 32]),
+    );
+
+    // Attempt duplicate deployment (should fail)
+    let duplicate_result = client.try_deploy_staking_pool(
+        &creator,
+        &nft_address,
+        &reward_token,
+        &2_000_000i128,
+        &BytesN::from_array(&env, &[0xD5u8; 32]),
+    );
+    assert_eq!(duplicate_result, Err(Ok(Error::StakingPoolAlreadyExists)));
+
+    // Verify original pool is still returned
+    let pool_after_fail = client.get_staking_pool(&nft_address);
+    assert_eq!(pool_after_fail, Some(pool_original));
+}
