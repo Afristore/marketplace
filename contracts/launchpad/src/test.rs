@@ -1499,3 +1499,639 @@ fn rejects_unapproved_tokens_for_staking_and_splitter_deploys() {
     );
     assert_ne!(splitter_ok, Err(Ok(Error::InvalidCurrency)));
 }
+
+// ── collection_count / platform_fee_token view coverage ──────────────────
+
+#[test]
+fn collection_count_is_zero_on_fresh_launchpad() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+
+    // Readable even before `initialize`, and defaults to zero.
+    assert_eq!(client.collection_count(), 0u64);
+
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.initialize(&admin, &receiver, &0u32, &token);
+    assert_eq!(client.collection_count(), 0u64);
+}
+
+#[test]
+fn collection_count_unchanged_by_admin_config_updates() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.initialize(&admin, &receiver, &0u32, &token);
+
+    client.set_platform_fee_token(&Address::generate(&env));
+    client.add_approved_currency(&Address::generate(&env));
+
+    assert_eq!(client.collection_count(), 0u64);
+}
+
+#[test]
+fn collection_count_matches_all_collections_length() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+    let royalty_receiver = Address::generate(&env);
+
+    assert_eq!(
+        client.collection_count(),
+        client.all_collections().len() as u64
+    );
+
+    client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Count Match"),
+        &String::from_str(&env, "CMT"),
+        &100u64,
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xA1u8; 32]),
+    );
+
+    assert_eq!(client.collection_count(), 1u64);
+    assert_eq!(
+        client.collection_count(),
+        client.all_collections().len() as u64
+    );
+}
+
+#[test]
+fn collection_count_is_independent_per_launchpad() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client_a, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+    let (client_b, _admin_b, _fee_receiver_b, _creator_b) = setup_launchpad(&env);
+
+    client_a.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Only In A"),
+        &String::from_str(&env, "OIA"),
+        &100u64,
+        &0u32,
+        &Address::generate(&env),
+        &BytesN::from_array(&env, &[0xA2u8; 32]),
+    );
+
+    assert_eq!(client_a.collection_count(), 1u64);
+    assert_eq!(client_b.collection_count(), 0u64);
+}
+
+#[test]
+fn platform_fee_token_is_none_before_initialize() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+
+    assert_eq!(client.platform_fee_token(), None);
+}
+
+#[test]
+fn platform_fee_token_reflects_admin_update() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let initial_token = Address::generate(&env);
+    client.initialize(&admin, &receiver, &0u32, &initial_token);
+    assert_eq!(client.platform_fee_token(), Some(initial_token));
+
+    let new_token = Address::generate(&env);
+    client.set_platform_fee_token(&new_token);
+    assert_eq!(client.platform_fee_token(), Some(new_token.clone()));
+
+    // A later update overwrites the previous value again.
+    let newest_token = Address::generate(&env);
+    client.set_platform_fee_token(&newest_token);
+    assert_eq!(client.platform_fee_token(), Some(newest_token));
+}
+
+#[test]
+fn platform_fee_token_unchanged_by_platform_fee_update() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.initialize(&admin, &receiver, &100u32, &token);
+
+    client.update_platform_fee(&Address::generate(&env), &500u32);
+
+    assert_eq!(client.platform_fee_token(), Some(token));
+}
+
+// ── Issues #899–#902: deploy_* happy-path and edge-case coverage ─────────────
+//
+// The four `deploy_*` entry points share the same shape (auth → validation →
+// fee → deploy → initialize → record), so the cases below run against each one
+// through a small dispatch helper and are instantiated once per function.
+
+use soroban_sdk::{
+    testutils::{Events as _, StellarAssetContract},
+    token, vec, Symbol,
+};
+
+const KIND_NORMAL_721: u8 = 0;
+const KIND_NORMAL_1155: u8 = 1;
+const KIND_LAZY_721: u8 = 2;
+const KIND_LAZY_1155: u8 = 3;
+
+const LAZY_PUBKEY: [u8; 32] = [9u8; 32];
+
+/// Calls the `deploy_*` function selected by `kind` with a fixed, valid
+/// argument set. `symbol`, `max_supply` are ignored for the 1155 variants.
+#[allow(clippy::too_many_arguments)]
+fn try_deploy(
+    env: &Env,
+    client: &LaunchpadClient<'_>,
+    kind: u8,
+    creator: &Address,
+    name: &str,
+    symbol: &str,
+    max_supply: u64,
+    royalty_bps: u32,
+    royalty_receiver: &Address,
+    salt: &BytesN<32>,
+) -> Result<Address, Option<Error>> {
+    let name = String::from_str(env, name);
+    let symbol = String::from_str(env, symbol);
+    let pubkey = BytesN::from_array(env, &LAZY_PUBKEY);
+    let result = match kind {
+        KIND_NORMAL_721 => client.try_deploy_normal_721(
+            creator,
+            &name,
+            &symbol,
+            &max_supply,
+            &royalty_bps,
+            royalty_receiver,
+            salt,
+        ),
+        KIND_NORMAL_1155 => {
+            client.try_deploy_normal_1155(creator, &name, &royalty_bps, royalty_receiver, salt)
+        }
+        KIND_LAZY_721 => client.try_deploy_lazy_721(
+            creator,
+            &pubkey,
+            &name,
+            &symbol,
+            &max_supply,
+            &royalty_bps,
+            royalty_receiver,
+            salt,
+        ),
+        _ => client.try_deploy_lazy_1155(
+            creator,
+            &pubkey,
+            &name,
+            &royalty_bps,
+            royalty_receiver,
+            salt,
+        ),
+    };
+    match result {
+        Ok(Ok(addr)) => Ok(addr),
+        Err(Ok(err)) => Err(Some(err)),
+        _ => Err(None),
+    }
+}
+
+fn read<T: soroban_sdk::TryFromVal<Env, soroban_sdk::Val>>(
+    env: &Env,
+    contract: &Address,
+    func: &str,
+) -> T {
+    env.invoke_contract::<T>(contract, &Symbol::new(env, func), vec![env])
+}
+
+fn is_kind(record_kind: &CollectionKind, kind: u8) -> bool {
+    matches!(
+        (record_kind, kind),
+        (CollectionKind::Normal721, KIND_NORMAL_721)
+            | (CollectionKind::Normal1155, KIND_NORMAL_1155)
+            | (CollectionKind::LazyMint721, KIND_LAZY_721)
+            | (CollectionKind::LazyMint1155, KIND_LAZY_1155)
+    )
+}
+
+/// Registers a Stellar asset as the platform fee token, sets a flat fee and
+/// mints `balance` of it to `creator`. Returns the token address.
+fn enable_fee(
+    env: &Env,
+    client: &LaunchpadClient<'_>,
+    creator: &Address,
+    fee: u32,
+    balance: i128,
+) -> Address {
+    let issuer = Address::generate(env);
+    let asset: StellarAssetContract = env.register_stellar_asset_contract_v2(issuer);
+    let token = asset.address();
+    client.set_platform_fee_token(&token);
+    let (receiver, _) = client.platform_fee();
+    client.update_platform_fee(&receiver, &fee);
+    token::StellarAssetClient::new(env, &token).mint(creator, &balance);
+    token
+}
+
+macro_rules! deploy_coverage_tests {
+    ($modname:ident, $kind:expr, $is_721:expr) => {
+        mod $modname {
+            use super::*;
+
+            fn ctx() -> (Env, LaunchpadClient<'static>, Address, Address) {
+                let env = Env::default();
+                env.ledger().with_mut(|li| li.sequence_number = 1);
+                // `Env` is a cheap handle onto shared host state; leaking one
+                // clone gives the client a 'static borrow for the test's life.
+                let env_ref: &'static Env =
+                    std::boxed::Box::leak(std::boxed::Box::new(env.clone()));
+                let (client, _admin, fee_receiver, creator) = setup_launchpad(env_ref);
+                (env, client, fee_receiver, creator)
+            }
+
+            fn salt(env: &Env, byte: u8) -> BytesN<32> {
+                BytesN::from_array(env, &[byte; 32])
+            }
+
+            #[test]
+            fn happy_path_initializes_and_registers_collection() {
+                let (env, client, _fr, creator) = ctx();
+                let royalty_receiver = Address::generate(&env);
+
+                let addr = try_deploy(
+                    &env,
+                    &client,
+                    $kind,
+                    &creator,
+                    "Happy",
+                    "HAPPY",
+                    500,
+                    750,
+                    &royalty_receiver,
+                    &salt(&env, 1),
+                )
+                .unwrap();
+
+                // The deployed contract was initialized in the same transaction.
+                assert_eq!(
+                    read::<String>(&env, &addr, "name"),
+                    String::from_str(&env, "Happy")
+                );
+                assert_eq!(read::<Address>(&env, &addr, "creator"), creator);
+                assert_eq!(
+                    read::<(Address, u32)>(&env, &addr, "royalty_info"),
+                    (royalty_receiver.clone(), 750)
+                );
+                if $is_721 {
+                    assert_eq!(
+                        read::<String>(&env, &addr, "symbol"),
+                        String::from_str(&env, "HAPPY")
+                    );
+                }
+
+                // The launchpad registry reflects the deploy.
+                let record = client.get_collection_by_id(&addr).unwrap();
+                assert_eq!(record.address, addr);
+                assert_eq!(record.creator, creator);
+                assert!(is_kind(&record.kind, $kind));
+                assert_eq!(client.collection_count(), 1);
+                assert_eq!(client.all_collections().len(), 1);
+                assert_eq!(client.collections_by_creator(&creator).len(), 1);
+            }
+
+            #[test]
+            fn happy_path_emits_deploy_event() {
+                let (env, client, _fr, creator) = ctx();
+                let royalty_receiver = Address::generate(&env);
+                try_deploy(
+                    &env,
+                    &client,
+                    $kind,
+                    &creator,
+                    "Evt",
+                    "EVT",
+                    10,
+                    0,
+                    &royalty_receiver,
+                    &salt(&env, 2),
+                )
+                .unwrap();
+
+                // `all()` covers the last invocation only; exactly one of the
+                // events it produced is the launchpad's own `deploy` event.
+                let launchpad_events = env.events().all().filter_by_contract(&client.address);
+                assert_eq!(launchpad_events.events().len(), 1);
+            }
+
+            #[test]
+            fn zero_royalty_and_unlimited_supply_are_accepted() {
+                let (env, client, _fr, creator) = ctx();
+                let royalty_receiver = Address::generate(&env);
+
+                let addr = try_deploy(
+                    &env,
+                    &client,
+                    $kind,
+                    &creator,
+                    "Edge",
+                    "EDGE",
+                    u64::MAX,
+                    0,
+                    &royalty_receiver,
+                    &salt(&env, 3),
+                )
+                .unwrap();
+
+                assert_eq!(
+                    read::<(Address, u32)>(&env, &addr, "royalty_info"),
+                    (royalty_receiver, 0)
+                );
+                // Only the normal 721 exposes `max_supply` as a view.
+                if $kind == KIND_NORMAL_721 {
+                    let max: u64 = read(&env, &addr, "max_supply");
+                    assert_eq!(max, u64::MAX);
+                }
+            }
+
+            #[test]
+            fn one_character_name_is_accepted() {
+                let (env, client, _fr, creator) = ctx();
+                let royalty_receiver = Address::generate(&env);
+
+                let result = try_deploy(
+                    &env,
+                    &client,
+                    $kind,
+                    &creator,
+                    "X",
+                    "X",
+                    1,
+                    0,
+                    &royalty_receiver,
+                    &salt(&env, 4),
+                );
+                assert!(result.is_ok());
+            }
+
+            #[test]
+            fn same_creator_and_salt_cannot_deploy_twice() {
+                let (env, client, _fr, creator) = ctx();
+                let royalty_receiver = Address::generate(&env);
+                let s = salt(&env, 5);
+
+                let first = try_deploy(
+                    &env,
+                    &client,
+                    $kind,
+                    &creator,
+                    "Dup",
+                    "DUP",
+                    10,
+                    0,
+                    &royalty_receiver,
+                    &s,
+                );
+                assert!(first.is_ok());
+
+                let second = try_deploy(
+                    &env,
+                    &client,
+                    $kind,
+                    &creator,
+                    "Dup",
+                    "DUP",
+                    10,
+                    0,
+                    &royalty_receiver,
+                    &s,
+                );
+                assert!(second.is_err());
+                // The failed second deploy leaves the registry untouched.
+                assert_eq!(client.collection_count(), 1);
+                assert_eq!(client.collections_by_creator(&creator).len(), 1);
+            }
+
+            #[test]
+            fn requires_creator_authorization() {
+                let (env, client, _fr, creator) = ctx();
+                let royalty_receiver = Address::generate(&env);
+
+                // Drop the blanket auth mock installed by `setup_launchpad`.
+                env.set_auths(&[]);
+                let result = try_deploy(
+                    &env,
+                    &client,
+                    $kind,
+                    &creator,
+                    "NoAuth",
+                    "NA",
+                    10,
+                    0,
+                    &royalty_receiver,
+                    &salt(&env, 6),
+                );
+                assert!(result.is_err());
+                assert_eq!(client.collection_count(), 0);
+            }
+
+            #[test]
+            fn platform_fee_is_transferred_from_creator_to_receiver() {
+                let (env, client, fee_receiver, creator) = ctx();
+                let royalty_receiver = Address::generate(&env);
+                let token = enable_fee(&env, &client, &creator, 250, 1_000);
+                let token_client = token::Client::new(&env, &token);
+
+                try_deploy(
+                    &env,
+                    &client,
+                    $kind,
+                    &creator,
+                    "Paid",
+                    "PAID",
+                    10,
+                    0,
+                    &royalty_receiver,
+                    &salt(&env, 7),
+                )
+                .unwrap();
+
+                assert_eq!(token_client.balance(&creator), 750);
+                assert_eq!(token_client.balance(&fee_receiver), 250);
+                assert_eq!(client.collection_count(), 1);
+            }
+
+            #[test]
+            fn zero_fee_does_not_move_tokens() {
+                let (env, client, fee_receiver, creator) = ctx();
+                let royalty_receiver = Address::generate(&env);
+                let token = enable_fee(&env, &client, &creator, 0, 1_000);
+                let token_client = token::Client::new(&env, &token);
+
+                try_deploy(
+                    &env,
+                    &client,
+                    $kind,
+                    &creator,
+                    "Free",
+                    "FREE",
+                    10,
+                    0,
+                    &royalty_receiver,
+                    &salt(&env, 8),
+                )
+                .unwrap();
+
+                assert_eq!(token_client.balance(&creator), 1_000);
+                assert_eq!(token_client.balance(&fee_receiver), 0);
+            }
+
+            #[test]
+            fn insufficient_fee_balance_fails_without_registering() {
+                let (env, client, fee_receiver, creator) = ctx();
+                let royalty_receiver = Address::generate(&env);
+                let token = enable_fee(&env, &client, &creator, 250, 100);
+                let token_client = token::Client::new(&env, &token);
+
+                let result = try_deploy(
+                    &env,
+                    &client,
+                    $kind,
+                    &creator,
+                    "Broke",
+                    "BROKE",
+                    10,
+                    0,
+                    &royalty_receiver,
+                    &salt(&env, 9),
+                );
+
+                assert!(result.is_err());
+                assert_eq!(token_client.balance(&creator), 100);
+                assert_eq!(token_client.balance(&fee_receiver), 0);
+                assert_eq!(client.collection_count(), 0);
+                assert_eq!(client.collections_by_creator(&creator).len(), 0);
+            }
+
+            #[test]
+            fn validation_runs_before_fee_is_charged() {
+                let (env, client, fee_receiver, creator) = ctx();
+                let royalty_receiver = Address::generate(&env);
+                let token = enable_fee(&env, &client, &creator, 250, 1_000);
+                let token_client = token::Client::new(&env, &token);
+
+                let result = try_deploy(
+                    &env,
+                    &client,
+                    $kind,
+                    &creator,
+                    "",
+                    "SYM",
+                    10,
+                    0,
+                    &royalty_receiver,
+                    &salt(&env, 10),
+                );
+
+                assert_eq!(result, Err(Some(Error::EmptyName)));
+                assert_eq!(token_client.balance(&creator), 1_000);
+                assert_eq!(token_client.balance(&fee_receiver), 0);
+            }
+
+            #[test]
+            fn same_salt_from_different_creators_registers_both() {
+                let (env, client, _fr, creator) = ctx();
+                let other = Address::generate(&env);
+                let royalty_receiver = Address::generate(&env);
+                let s = salt(&env, 11);
+
+                let a = try_deploy(
+                    &env,
+                    &client,
+                    $kind,
+                    &creator,
+                    "A",
+                    "A",
+                    10,
+                    0,
+                    &royalty_receiver,
+                    &s,
+                )
+                .unwrap();
+                let b = try_deploy(
+                    &env,
+                    &client,
+                    $kind,
+                    &other,
+                    "B",
+                    "B",
+                    10,
+                    0,
+                    &royalty_receiver,
+                    &s,
+                )
+                .unwrap();
+
+                assert_ne!(a, b);
+                assert_eq!(client.collection_count(), 2);
+                assert_eq!(client.collections_by_creator(&creator).len(), 1);
+                assert_eq!(client.collections_by_creator(&other).len(), 1);
+            }
+
+            #[test]
+            fn symbol_of_exactly_ten_characters_is_accepted() {
+                if !$is_721 {
+                    return; // 1155 variants take no symbol
+                }
+                let (env, client, _fr, creator) = ctx();
+                let royalty_receiver = Address::generate(&env);
+
+                let ok = try_deploy(
+                    &env,
+                    &client,
+                    $kind,
+                    &creator,
+                    "Sym",
+                    "ABCDEFGHIJ",
+                    10,
+                    0,
+                    &royalty_receiver,
+                    &salt(&env, 12),
+                );
+                assert!(ok.is_ok());
+
+                let too_long = try_deploy(
+                    &env,
+                    &client,
+                    $kind,
+                    &creator,
+                    "Sym",
+                    "ABCDEFGHIJK",
+                    10,
+                    0,
+                    &royalty_receiver,
+                    &salt(&env, 13),
+                );
+                assert_eq!(too_long, Err(Some(Error::SymbolTooLong)));
+                assert_eq!(client.collection_count(), 1);
+            }
+        }
+    };
+}
+
+deploy_coverage_tests!(deploy_normal_721_coverage, KIND_NORMAL_721, true);
+deploy_coverage_tests!(deploy_normal_1155_coverage, KIND_NORMAL_1155, false);
+deploy_coverage_tests!(deploy_lazy_721_coverage, KIND_LAZY_721, true);
+deploy_coverage_tests!(deploy_lazy_1155_coverage, KIND_LAZY_1155, false);

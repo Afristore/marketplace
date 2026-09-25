@@ -3697,3 +3697,62 @@ fn test_get_offer_nonexistent_id_panics() {
     // Offer ID 999 was never created — must panic OfferNotFound
     client.get_offer(&999u64);
 }
+
+// ── is_artist_revoked view coverage ─────────────────────────
+
+#[test]
+fn test_is_artist_revoked_defaults_to_false() {
+    let (env, client, admin, _, _, _, _) = setup();
+    client.set_admin(&admin);
+
+    // An address that was never moderated is not revoked.
+    assert!(!client.is_artist_revoked(&Address::generate(&env)));
+}
+
+#[test]
+fn test_is_artist_revoked_is_per_artist() {
+    let (env, client, admin, artist2, _, _, _) = setup();
+    client.set_admin(&admin);
+    let other = Address::generate(&env);
+
+    client.revoke_artist(&artist2);
+
+    assert!(client.is_artist_revoked(&artist2));
+    assert!(!client.is_artist_revoked(&other));
+}
+
+#[test]
+fn test_is_artist_revoked_repeated_revoke_is_idempotent() {
+    let (_env, client, admin, artist2, _, _, _) = setup();
+    client.set_admin(&admin);
+
+    client.revoke_artist(&artist2);
+    client.revoke_artist(&artist2);
+    assert!(client.is_artist_revoked(&artist2));
+
+    // A single reinstatement clears the flag.
+    client.reinstate_artist(&artist2);
+    assert!(!client.is_artist_revoked(&artist2));
+}
+
+#[test]
+fn test_is_artist_revoked_reinstate_unrevoked_stays_false() {
+    let (_env, client, admin, artist2, _, _, _) = setup();
+    client.set_admin(&admin);
+
+    client.reinstate_artist(&artist2);
+
+    assert!(!client.is_artist_revoked(&artist2));
+}
+
+#[test]
+fn test_is_artist_revoked_can_be_revoked_again_after_reinstatement() {
+    let (_env, client, admin, artist2, _, _, _) = setup();
+    client.set_admin(&admin);
+
+    client.revoke_artist(&artist2);
+    client.reinstate_artist(&artist2);
+    client.revoke_artist(&artist2);
+
+    assert!(client.is_artist_revoked(&artist2));
+}
