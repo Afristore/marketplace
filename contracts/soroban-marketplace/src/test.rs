@@ -4144,3 +4144,180 @@ fn test_buying_existing_listing_after_whitelist_emptied_succeeds() {
     client.remove_token_from_whitelist(&token_id);
     assert!(client.buy_artwork(&buyer, &listing_id));
 }
+
+// ── Query coverage: issues #881–#884 ────────────────────────────────────
+
+#[test]
+fn test_get_artist_auctions_returns_only_the_artists_auctions() {
+    let (env, client, artist, _, token_id, _contract_id, collection_id) = setup();
+    let other_artist = Address::generate(&env);
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let first = client.create_auction(
+        &artist,
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &1_000_000_i128,
+        &3600u64,
+        &valid_recipients(&env, &artist),
+    );
+    let second = client.create_auction(
+        &artist,
+        &token_id,
+        &collection_id,
+        &2u64,
+        &1u64,
+        &2_000_000_i128,
+        &3600u64,
+        &valid_recipients(&env, &artist),
+    );
+    client.create_auction(
+        &other_artist,
+        &token_id,
+        &collection_id,
+        &3u64,
+        &1u64,
+        &3_000_000_i128,
+        &3600u64,
+        &valid_recipients(&env, &other_artist),
+    );
+
+    let auctions = client.get_artist_auctions(&artist);
+    assert_eq!(auctions, vec![&env, first, second]);
+}
+
+#[test]
+fn test_get_artist_auctions_returns_empty_for_artist_without_auctions() {
+    let (env, client, _, _, _, _contract_id, _) = setup();
+
+    let auctions = client.get_artist_auctions(&Address::generate(&env));
+
+    assert!(auctions.is_empty());
+}
+
+#[test]
+fn test_get_active_listings_returns_requested_slice() {
+    let (env, client, artist, _, token_id, _contract_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    for _ in 0..5 {
+        create_test_listing(&env, &client, &artist, &token_id);
+    }
+
+    assert_eq!(client.get_active_listings(&2, &1), vec![&env, 2u64, 3u64]);
+}
+
+#[test]
+fn test_get_active_listings_handles_empty_and_out_of_range_requests() {
+    let (env, client, artist, _, token_id, _contract_id, _) = setup();
+
+    assert!(client.get_active_listings(&10, &0).is_empty());
+
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    create_test_listing(&env, &client, &artist, &token_id);
+
+    assert!(client.get_active_listings(&0, &0).is_empty());
+    assert!(client.get_active_listings(&10, &1).is_empty());
+    assert!(client.get_active_listings(&10, &100).is_empty());
+}
+
+#[test]
+fn test_get_active_listings_excludes_cancelled_listings() {
+    let (env, client, artist, _, token_id, _contract_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let first = create_test_listing(&env, &client, &artist, &token_id);
+    let cancelled = create_test_listing(&env, &client, &artist, &token_id);
+    let third = create_test_listing(&env, &client, &artist, &token_id);
+    client.cancel_listing(&artist, &cancelled);
+
+    assert_eq!(
+        client.get_active_listings(&10, &0),
+        vec![&env, first, third]
+    );
+}
+
+#[test]
+fn test_get_active_listings_page_uses_start_and_limit() {
+    let (env, client, artist, _, token_id, _contract_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    for _ in 0..5 {
+        create_test_listing(&env, &client, &artist, &token_id);
+    }
+
+    assert_eq!(
+        client.get_active_listings_page(&2, &2),
+        vec![&env, 3u64, 4u64]
+    );
+}
+
+#[test]
+fn test_get_active_listings_page_handles_boundaries() {
+    let (env, client, artist, _, token_id, _contract_id, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    create_test_listing(&env, &client, &artist, &token_id);
+    create_test_listing(&env, &client, &artist, &token_id);
+
+    assert_eq!(client.get_active_listings_page(&1, &10), vec![&env, 2u64]);
+    assert!(client.get_active_listings_page(&0, &0).is_empty());
+    assert!(client.get_active_listings_page(&2, &10).is_empty());
+}
+
+#[test]
+fn test_get_offers_by_listing_returns_listing_offers_in_order() {
+    let (env, client, artist, buyer, token_id, _contract_id, _) = setup();
+    let second_buyer = Address::generate(&env);
+    StellarAssetClient::new(&env, &token_id).mint(&second_buyer, &100_000_000_000_i128);
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    let listing_id = create_test_listing(&env, &client, &artist, &token_id);
+
+    let first_offer = client.make_offer(&buyer, &listing_id, &4_000_000_i128, &token_id);
+    let second_offer = client.make_offer(&second_buyer, &listing_id, &6_000_000_i128, &token_id);
+
+    let offers = client.get_offers_by_listing(&listing_id);
+    assert_eq!(offers.len(), 2);
+    assert_eq!(offers.get(0).unwrap().offer_id, first_offer);
+    assert_eq!(offers.get(0).unwrap().offerer, buyer);
+    assert_eq!(offers.get(0).unwrap().amount, 4_000_000_i128);
+    assert_eq!(offers.get(0).unwrap().status, OfferStatus::Pending);
+    assert_eq!(offers.get(1).unwrap().offer_id, second_offer);
+    assert_eq!(offers.get(1).unwrap().offerer, second_buyer);
+    assert_eq!(offers.get(1).unwrap().amount, 6_000_000_i128);
+    assert_eq!(offers.get(1).unwrap().status, OfferStatus::Pending);
+}
+
+#[test]
+fn test_get_offers_by_listing_does_not_mix_listings() {
+    let (env, client, artist, buyer, token_id, _contract_id, _) = setup();
+    let second_buyer = Address::generate(&env);
+    StellarAssetClient::new(&env, &token_id).mint(&second_buyer, &100_000_000_000_i128);
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+    let first_listing = create_test_listing(&env, &client, &artist, &token_id);
+    let second_listing = create_test_listing(&env, &client, &artist, &token_id);
+
+    let first_offer = client.make_offer(&buyer, &first_listing, &4_000_000_i128, &token_id);
+    client.make_offer(&second_buyer, &second_listing, &6_000_000_i128, &token_id);
+
+    let offers = client.get_offers_by_listing(&first_listing);
+    assert_eq!(offers.len(), 1);
+    assert_eq!(offers.get(0).unwrap().offer_id, first_offer);
+    assert_eq!(offers.get(0).unwrap().listing_id, first_listing);
+}
+
+#[test]
+fn test_get_offers_by_listing_returns_empty_for_listing_without_offers() {
+    let (_env, client, _, _, _, _contract_id, _) = setup();
+
+    assert!(client.get_offers_by_listing(&999u64).is_empty());
+}
