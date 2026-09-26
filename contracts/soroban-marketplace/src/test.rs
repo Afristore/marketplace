@@ -46,8 +46,10 @@ use soroban_sdk::{
     testutils::Address as _,
     testutils::Events as _,
     testutils::Ledger,
+    testutils::MockAuth,
+    testutils::MockAuthInvoke,
     token::{StellarAssetClient, TokenClient},
-    vec, Address, Env,
+    vec, Address, Env, IntoVal,
 };
 
 /// Helper — deploy the contract and a real test token, returning
@@ -3463,4 +3465,682 @@ fn test_create_listing_fails_if_price_zero_or_negative() {
 
     // Verify expected state: no listing was created
     assert_eq!(client.get_total_listings(), 0);
+}
+
+// ── get_admin tests (Issue #862) ─────────────────────────────
+
+#[test]
+fn test_get_admin_none_before_set() {
+    let (_env, client, _artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    // Admin has never been set — must return None
+    assert_eq!(client.get_admin(), None);
+}
+
+#[test]
+fn test_get_admin_returns_some_after_set() {
+    let (env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    assert_eq!(client.get_admin(), Some(artist));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_set_admin_twice_panics_and_get_admin_keeps_first() {
+    let (env, client, artist, buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    assert_eq!(client.get_admin(), Some(artist.clone()));
+    // Second set_admin must panic Unauthorized — admin stays the first one
+    client.set_admin(&buyer);
+    let _ = env; // env kept for parity with setup()
+}
+
+#[test]
+fn test_get_admin_reflects_two_step_transfer() {
+    let (env, client, admin, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    let new_admin = Address::generate(&env);
+    client.set_admin(&admin);
+    assert_eq!(client.get_admin(), Some(admin.clone()));
+    client.transfer_admin(&admin, &new_admin);
+    // Admin unchanged until the successor accepts
+    assert_eq!(client.get_admin(), Some(admin.clone()));
+    client.accept_admin(&new_admin);
+    assert_eq!(client.get_admin(), Some(new_admin));
+}
+
+// ── get_treasury tests (Issue #863) ──────────────────────────
+
+#[test]
+fn test_get_treasury_none_before_set() {
+    let (_env, client, _artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    // Treasury has never been set — must return None
+    assert_eq!(client.get_treasury(), None);
+}
+
+#[test]
+fn test_get_treasury_returns_set_value() {
+    let (env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    let treasury = Address::generate(&env);
+    client.set_treasury(&artist, &treasury);
+    assert_eq!(client.get_treasury(), Some(treasury));
+}
+
+#[test]
+fn test_get_treasury_reflects_update() {
+    let (env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    let first = Address::generate(&env);
+    client.set_treasury(&artist, &first);
+    assert_eq!(client.get_treasury(), Some(first.clone()));
+    let second = Address::generate(&env);
+    client.set_treasury(&artist, &second);
+    // Getter must reflect the latest stored treasury
+    assert_eq!(client.get_treasury(), Some(second));
+}
+
+// ── get_protocol_fee tests (Issue #864) ──────────────────────
+
+#[test]
+fn test_get_protocol_fee_defaults_to_zero() {
+    let (_env, client, _artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    // No fee has been set — getter must fall back to 0
+    assert_eq!(client.get_protocol_fee(), 0u32);
+}
+
+#[test]
+fn test_get_protocol_fee_returns_set_value() {
+    let (_env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    client.set_protocol_fee(&artist, &250u32);
+    assert_eq!(client.get_protocol_fee(), 250u32);
+}
+
+#[test]
+fn test_get_protocol_fee_reflects_update() {
+    let (_env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    client.set_protocol_fee(&artist, &500u32);
+    assert_eq!(client.get_protocol_fee(), 500u32);
+    client.set_protocol_fee(&artist, &750u32);
+    assert_eq!(client.get_protocol_fee(), 750u32);
+}
+
+// ── protocol fee boundary / zero-value tests (Issue #865) ────
+
+#[test]
+fn test_get_protocol_fee_zero_bps_is_valid() {
+    let (_env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    // Zero-value edge case: 0 bps is the valid lower bound (matches default)
+    client.set_protocol_fee(&artist, &0u32);
+    assert_eq!(client.get_protocol_fee(), 0u32);
+}
+
+#[test]
+fn test_set_protocol_fee_max_boundary_accepted() {
+    let (_env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    // Upper bound is inclusive: exactly 1000 bps (10%) must be accepted
+    client.set_protocol_fee(&artist, &1000u32);
+    assert_eq!(client.get_protocol_fee(), 1000u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_set_protocol_fee_just_above_max_panics() {
+    let (_env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    // First value past the upper bound must panic InvalidPrice
+    client.set_protocol_fee(&artist, &1001u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_set_protocol_fee_u32_max_panics() {
+    let (_env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    // Overflow bound: the largest possible u32 must panic InvalidPrice
+    client.set_protocol_fee(&artist, &u32::MAX);
+}
+
+// ── is_artist_revoked view coverage ─────────────────────────
+
+#[test]
+fn test_is_artist_revoked_defaults_to_false() {
+    let (env, client, admin, _, _, _, _) = setup();
+    client.set_admin(&admin);
+
+    // An address that was never moderated is not revoked.
+    assert!(!client.is_artist_revoked(&Address::generate(&env)));
+}
+
+#[test]
+fn test_is_artist_revoked_is_per_artist() {
+    let (env, client, admin, artist2, _, _, _) = setup();
+    client.set_admin(&admin);
+    let other = Address::generate(&env);
+
+    client.revoke_artist(&artist2);
+
+    assert!(client.is_artist_revoked(&artist2));
+    assert!(!client.is_artist_revoked(&other));
+}
+
+#[test]
+fn test_is_artist_revoked_repeated_revoke_is_idempotent() {
+    let (_env, client, admin, artist2, _, _, _) = setup();
+    client.set_admin(&admin);
+
+    client.revoke_artist(&artist2);
+    client.revoke_artist(&artist2);
+    assert!(client.is_artist_revoked(&artist2));
+
+    // A single reinstatement clears the flag.
+    client.reinstate_artist(&artist2);
+    assert!(!client.is_artist_revoked(&artist2));
+}
+
+#[test]
+fn test_is_artist_revoked_reinstate_unrevoked_stays_false() {
+    let (_env, client, admin, artist2, _, _, _) = setup();
+    client.set_admin(&admin);
+
+    client.reinstate_artist(&artist2);
+
+    assert!(!client.is_artist_revoked(&artist2));
+}
+
+#[test]
+fn test_is_artist_revoked_can_be_revoked_again_after_reinstatement() {
+    let (_env, client, admin, artist2, _, _, _) = setup();
+    client.set_admin(&admin);
+
+    client.revoke_artist(&artist2);
+    client.reinstate_artist(&artist2);
+    client.revoke_artist(&artist2);
+
+    assert!(client.is_artist_revoked(&artist2));
+}
+
+// ── Artist moderation auth & coverage (Issues #873, #874, #875, #878) ────
+
+/// Build a single MockAuth for `address` invoking `fn_name` on the marketplace
+/// contract with `args`, without mocking every auth in the environment.
+fn mock_single_auth(
+    env: &Env,
+    contract: &Address,
+    address: &Address,
+    fn_name: &'static str,
+    args: soroban_sdk::Vec<soroban_sdk::Val>,
+) {
+    env.mock_auths(&[MockAuth {
+        address,
+        invoke: &MockAuthInvoke {
+            contract,
+            fn_name,
+            args,
+            sub_invokes: &[],
+        },
+    }]);
+}
+
+/// Fresh environment WITHOUT mock_all_auths so authorization is actually
+/// enforced; registers the contract and sets `admin` via an explicit mock
+/// auth. Returns (env, client, contract_id, admin).
+fn strict_setup() -> (Env, MarketplaceContractClient<'static>, Address, Address) {
+    let env = Env::default();
+    let contract_id = env.register(MarketplaceContract, ());
+    let client = MarketplaceContractClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    mock_single_auth(
+        &env,
+        &contract_id,
+        &admin,
+        "set_admin",
+        (admin.clone(),).into_val(&env),
+    );
+    client.set_admin(&admin);
+
+    (env, client, contract_id, admin)
+}
+
+// ── Issue #873: revoke_artist / reinstate_artist / whitelist must require
+// ── the stored admin's authorization (not just any signature).
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_revoke_artist_without_auth_panics() {
+    // Fresh env WITHOUT mock_all_auths: authorization is actually enforced.
+    let (env, client, _contract_id, _admin) = strict_setup();
+
+    // No auth is provided for the stored admin → require_admin must fail.
+    let artist_to_revoke = Address::generate(&env);
+    client.revoke_artist(&artist_to_revoke);
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_revoke_artist_wrong_signer_panics() {
+    let (env, client, contract_id, _admin) = strict_setup();
+
+    // Someone else signs the call, but require_admin demands the stored
+    // admin's auth — the outsider's auth cannot satisfy it.
+    let outsider = Address::generate(&env);
+    let artist_to_revoke = Address::generate(&env);
+    mock_single_auth(
+        &env,
+        &contract_id,
+        &outsider,
+        "revoke_artist",
+        (artist_to_revoke.clone(),).into_val(&env),
+    );
+    client.revoke_artist(&artist_to_revoke);
+}
+
+#[test]
+fn test_revoke_artist_with_admin_auth_succeeds() {
+    let (env, client, contract_id, admin) = strict_setup();
+
+    // The stored admin signs the revocation → succeeds.
+    let artist_to_revoke = Address::generate(&env);
+    mock_single_auth(
+        &env,
+        &contract_id,
+        &admin,
+        "revoke_artist",
+        (artist_to_revoke.clone(),).into_val(&env),
+    );
+    client.revoke_artist(&artist_to_revoke);
+    assert!(client.is_artist_revoked(&artist_to_revoke));
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_reinstate_artist_without_auth_panics() {
+    let (env, client, contract_id, admin) = strict_setup();
+
+    // Revoke first (with proper auth), then attempt reinstatement with no
+    // auth at all — must fail just like revoke.
+    let artist = Address::generate(&env);
+    mock_single_auth(
+        &env,
+        &contract_id,
+        &admin,
+        "revoke_artist",
+        (artist.clone(),).into_val(&env),
+    );
+    client.revoke_artist(&artist);
+    assert!(client.is_artist_revoked(&artist));
+
+    client.reinstate_artist(&artist);
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_reinstate_artist_wrong_signer_panics() {
+    let (env, client, contract_id, admin) = strict_setup();
+
+    let artist = Address::generate(&env);
+    mock_single_auth(
+        &env,
+        &contract_id,
+        &admin,
+        "revoke_artist",
+        (artist.clone(),).into_val(&env),
+    );
+    client.revoke_artist(&artist);
+
+    // A non-admin signs the reinstatement — must be rejected.
+    let outsider = Address::generate(&env);
+    mock_single_auth(
+        &env,
+        &contract_id,
+        &outsider,
+        "reinstate_artist",
+        (artist.clone(),).into_val(&env),
+    );
+    client.reinstate_artist(&artist);
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_remove_token_from_whitelist_without_auth_panics() {
+    let (env, client, _contract_id, _admin) = strict_setup();
+
+    // Whitelist mutation requires the stored admin's auth too.
+    let token = Address::generate(&env);
+    client.remove_token_from_whitelist(&token);
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_add_token_to_whitelist_without_auth_panics() {
+    let (env, client, _contract_id, _admin) = strict_setup();
+
+    let token = Address::generate(&env);
+    client.add_token_to_whitelist(&token);
+}
+
+// ── Issue #874: revoke_artist coverage ──────────────────────────────────
+
+#[test]
+fn test_revoke_artist_is_idempotent() {
+    let (env, client, _artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    let target = Address::generate(&env);
+
+    client.revoke_artist(&target);
+    assert!(client.is_artist_revoked(&target));
+
+    // Revoking an already-revoked artist must succeed and keep them revoked.
+    client.revoke_artist(&target);
+    assert!(client.is_artist_revoked(&target));
+}
+
+#[test]
+fn test_revoke_artist_emits_artist_revoked_event() {
+    let (env, client, _artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    let target = Address::generate(&env);
+    client.revoke_artist(&target);
+
+    assert!(
+        has_event_with_topic(&env.events().all(), "art_rvkd"),
+        "ArtistRevoked event was not emitted"
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #15)")]
+fn test_revocation_is_checked_before_whitelist() {
+    let (env, client, artist, _buyer, token_id, _contract_id, collection_id) = setup();
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    client.revoke_artist(&artist);
+
+    // Non-empty whitelist that excludes token_id: if the whitelist check ran
+    // first, this call would fail with Unauthorized (#5). Failing with
+    // ArtistRevoked (#15) proves the revocation gate fires first.
+    client.add_token_to_whitelist(&Address::generate(&env));
+    client.create_listing(
+        &artist,
+        &5_000_000_i128,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &valid_recipients(&env, &artist),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_revoked_artist_cannot_create_auction() {
+    let (env, client, artist, _buyer, token_id, _contract_id, collection_id) = setup();
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    client.revoke_artist(&artist);
+
+    client.create_auction(
+        &artist,
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &1_000_000_i128,
+        &3600u64,
+        &valid_recipients(&env, &artist),
+    );
+}
+
+#[test]
+fn test_revoke_artist_only_affects_target() {
+    let (env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    let other = Address::generate(&env);
+    client.revoke_artist(&other);
+
+    assert!(client.is_artist_revoked(&other));
+    assert!(!client.is_artist_revoked(&artist));
+}
+
+// ── Issue #875: reinstate_artist coverage ────────────────────────────────
+
+#[test]
+fn test_reinstate_artist_is_idempotent() {
+    let (env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    // Reinstate without any prior revocation — must not panic.
+    client.reinstate_artist(&artist);
+    assert!(!client.is_artist_revoked(&artist));
+
+    client.reinstate_artist(&artist);
+    assert!(!client.is_artist_revoked(&artist));
+}
+
+#[test]
+fn test_reinstate_artist_does_not_revoke_others() {
+    let (env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    let other = Address::generate(&env);
+    client.revoke_artist(&other);
+    assert!(client.is_artist_revoked(&other));
+
+    // Reinstating a never-revoked artist must not clear someone else's
+    // revocation.
+    client.reinstate_artist(&artist);
+    assert!(client.is_artist_revoked(&other));
+    assert!(!client.is_artist_revoked(&artist));
+}
+
+#[test]
+fn test_reinstate_artist_emits_artist_reinstated_event() {
+    let (env, client, artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    client.revoke_artist(&artist);
+    client.reinstate_artist(&artist);
+
+    assert!(
+        has_event_with_topic(&env.events().all(), "art_rnst"),
+        "ArtistReinstated event was not emitted"
+    );
+}
+
+#[test]
+fn test_reinstated_artist_can_create_listing_again() {
+    let (env, client, artist, _buyer, token_id, _contract_id, collection_id) = setup();
+    let admin = Address::generate(&env);
+    client.set_admin(&admin);
+
+    client.revoke_artist(&artist);
+    assert!(client.is_artist_revoked(&artist));
+
+    client.reinstate_artist(&artist);
+    assert!(!client.is_artist_revoked(&artist));
+
+    // The reinstated artist can list again (whitelist is empty ⇒ any token).
+    let listing_id = client.create_listing(
+        &artist,
+        &5_000_000_i128,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &valid_recipients(&env, &artist),
+    );
+    assert_eq!(listing_id, 1u64);
+}
+
+// ── Issue #878: remove_token_from_whitelist coverage ─────────────────────
+
+#[test]
+fn test_remove_token_from_whitelist_removes_only_target() {
+    let (env, client, _artist, _buyer, token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&Address::generate(&env));
+
+    let other = Address::generate(&env);
+    client.add_token_to_whitelist(&token_id);
+    client.add_token_to_whitelist(&other);
+    assert_eq!(client.get_token_whitelist().len(), 2u32);
+
+    client.remove_token_from_whitelist(&other);
+    let whitelist = client.get_token_whitelist();
+    assert_eq!(whitelist.len(), 1u32);
+    assert_eq!(whitelist.get(0).unwrap(), token_id);
+
+    // Removing a token that is not on the list changes nothing.
+    let stranger = Address::generate(&env);
+    client.remove_token_from_whitelist(&stranger);
+    assert_eq!(client.get_token_whitelist().len(), 1u32);
+    assert_eq!(client.get_token_whitelist().get(0).unwrap(), token_id);
+}
+
+#[test]
+fn test_remove_token_from_whitelist_is_idempotent() {
+    let (env, client, _artist, _buyer, token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&Address::generate(&env));
+
+    client.add_token_to_whitelist(&token_id);
+    client.remove_token_from_whitelist(&token_id);
+
+    // Removing an already-absent token must not panic and must leave an
+    // empty (not deleted) whitelist entry.
+    client.remove_token_from_whitelist(&token_id);
+    assert_eq!(client.get_token_whitelist().len(), 0u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_removed_token_cannot_back_new_listings() {
+    let (env, client, artist, _buyer, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&Address::generate(&env));
+
+    client.add_token_to_whitelist(&token_id);
+    client.remove_token_from_whitelist(&token_id);
+
+    // The whitelist is non-empty again and no longer contains token_id, so
+    // creating a new listing in that token must be rejected.
+    client.add_token_to_whitelist(&Address::generate(&env));
+    client.create_listing(
+        &artist,
+        &5_000_000_i128,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &valid_recipients(&env, &artist),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_removed_token_cannot_back_new_auctions() {
+    let (env, client, artist, _buyer, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&Address::generate(&env));
+
+    client.add_token_to_whitelist(&token_id);
+    client.remove_token_from_whitelist(&token_id);
+    client.add_token_to_whitelist(&Address::generate(&env));
+
+    client.create_auction(
+        &artist,
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &1_000_000_i128,
+        &3600u64,
+        &valid_recipients(&env, &artist),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #25)")]
+fn test_buying_existing_listing_after_token_removed_panics() {
+    let (env, client, artist, buyer, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&Address::generate(&env));
+
+    client.add_token_to_whitelist(&token_id);
+    let listing_id = client.create_listing(
+        &artist,
+        &5_000_000_i128,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &valid_recipients(&env, &artist),
+    );
+
+    // Keep the whitelist non-empty so the empty-whitelist allow-all rule
+    // does not mask the removal, then buy against the removed token: the
+    // check applies at purchase time too.
+    client.add_token_to_whitelist(&Address::generate(&env));
+    client.remove_token_from_whitelist(&token_id);
+    client.buy_artwork(&buyer, &listing_id);
+}
+
+#[test]
+fn test_empty_whitelist_after_removal_allows_any_token() {
+    let (env, client, artist, _buyer, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&Address::generate(&env));
+
+    client.add_token_to_whitelist(&token_id);
+    client.remove_token_from_whitelist(&token_id);
+    assert_eq!(client.get_token_whitelist().len(), 0u32);
+
+    // With the whitelist empty again, any token is accepted (documented
+    // allow-all rule of is_token_whitelisted).
+    let listing_id = client.create_listing(
+        &artist,
+        &5_000_000_i128,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &valid_recipients(&env, &artist),
+    );
+    assert_eq!(listing_id, 1u64);
+}
+
+#[test]
+fn test_buying_existing_listing_after_whitelist_emptied_succeeds() {
+    let (env, client, artist, buyer, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&Address::generate(&env));
+
+    client.add_token_to_whitelist(&token_id);
+    let listing_id = client.create_listing(
+        &artist,
+        &5_000_000_i128,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &valid_recipients(&env, &artist),
+    );
+
+    // Removing the last whitelisted token empties the whitelist, which
+    // re-enables the allow-all rule: the existing listing stays buyable.
+    client.remove_token_from_whitelist(&token_id);
+    assert!(client.buy_artwork(&buyer, &listing_id));
 }

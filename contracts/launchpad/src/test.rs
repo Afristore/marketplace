@@ -76,6 +76,39 @@ fn setup_launchpad(env: &Env) -> (LaunchpadClient<'_>, Address, Address, Address
 }
 
 #[test]
+fn initialize_stores_configuration() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.initialize(&admin, &receiver, &250, &token);
+    assert_eq!(client.admin(), admin);
+    assert_eq!(client.platform_fee(), (receiver, 250));
+    assert_eq!(client.platform_fee_token(), Some(token));
+}
+
+#[test]
+fn initialize_can_only_be_called_once() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.initialize(&admin, &receiver, &0, &token);
+    assert_eq!(
+        client.try_initialize(&admin, &receiver, &0, &token),
+        Err(Ok(Error::AlreadyInitialized))
+    );
+}
+
+#[test]
 fn deploys_normal_721_twice_with_unique_addresses() {
     let env = Env::default();
     env.ledger().with_mut(|li| li.sequence_number = 1);
@@ -1007,6 +1040,83 @@ fn view_functions_return_correct_values() {
     let (receiver, bps) = client.platform_fee();
     assert_eq!(receiver, fee_receiver);
     assert_eq!(bps, 0u32);
+}
+
+#[test]
+fn platform_fee_returns_initialized_values() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+    let fee_bps = 500u32;
+
+    client.initialize(&admin, &receiver, &fee_bps, &token);
+
+    let (returned_receiver, returned_bps) = client.platform_fee();
+    assert_eq!(returned_receiver, receiver);
+    assert_eq!(returned_bps, fee_bps);
+}
+
+#[test]
+fn platform_fee_zero_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.initialize(&admin, &receiver, &0u32, &token);
+
+    let (returned_receiver, returned_bps) = client.platform_fee();
+    assert_eq!(returned_receiver, receiver);
+    assert_eq!(returned_bps, 0u32);
+}
+
+#[test]
+fn initialize_rejects_fee_bps_over_10000() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let result = client.try_initialize(&admin, &receiver, &10_001u32, &token);
+    assert_eq!(result, Err(Ok(Error::InvalidFeeBps)));
+}
+
+#[test]
+fn update_platform_fee_rejects_fee_bps_over_10000() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let new_receiver = Address::generate(&env);
+    let result = client.try_update_platform_fee(&new_receiver, &10_001u32);
+    assert_eq!(result, Err(Ok(Error::InvalidFeeBps)));
+}
+
+#[test]
+fn platform_fee_accepts_max_10000() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.initialize(&admin, &receiver, &10_000u32, &token);
+
+    let (returned_receiver, returned_bps) = client.platform_fee();
+    assert_eq!(returned_receiver, receiver);
+    assert_eq!(returned_bps, 10_000u32);
 }
 
 // ── Collections view tests ──────────────────────────────────────

@@ -150,6 +150,9 @@ impl Launchpad {
         }
         storage::set_initialized(&env);
         storage::set_admin(&env, &admin);
+        if platform_fee_bps > 10_000 {
+            return Err(Error::InvalidFeeBps);
+        }
         storage::set_platform_fee(&env, &platform_fee_receiver, platform_fee_bps);
         storage::set_platform_fee_token(&env, &platform_fee_token);
         Ok(())

@@ -4,7 +4,7 @@
 //!
 //! 1. Admin deploys this contract and calls `initialize`.
 //! 2. Admin uploads each of the 4 collection WASMs with:
-//!      `stellar contract upload --wasm <file>.wasm --network testnet`
+//!    `stellar contract upload --wasm <file>.wasm --network testnet`
 //!    and then calls `set_wasm_hashes` with the 4 resulting 32-byte hashes.
 //! 3. Any user can now call one of the four `deploy_*` functions to launch
 //!    their own collection.  The factory calls `initialize` on the freshly
@@ -19,17 +19,21 @@
 //! The collection WASM is stored once on the network (identified by hash).
 //! Every `deploy()` call shares that same WASM — no bytecode duplication.
 //! Each instance gets completely isolated storage.
-#![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror, contractclient, symbol_short,
-    Address, BytesN, Env, String, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, BytesN, Env,
+    String, Vec,
 };
+
+/// Platform fees are expressed in basis points; 10_000 bps = 100 %.
+pub const MAX_FEE_BPS: u32 = 10_000;
 
 // ─── Cross-contract clients ───────────────────────────────────────────────────
 // We define minimal interfaces for the four collection types so the factory
 // can call `initialize` on freshly deployed contracts in the same transaction.
 
+// Only the generated `*Client` types are used; the traits themselves never are.
+#[allow(dead_code)]
 mod iface {
     use soroban_sdk::{contractclient, Address, BytesN, Env, String};
 
@@ -84,7 +88,7 @@ mod iface {
     }
 }
 
-use iface::{Normal721Client, Normal1155Client, Lazy721Client, Lazy1155Client};
+use iface::{Lazy1155Client, Lazy721Client, Normal1155Client, Normal721Client};
 
 // ─── Errors ──────────────────────────────────────────────────────────────────
 
@@ -93,16 +97,17 @@ use iface::{Normal721Client, Normal1155Client, Lazy721Client, Lazy1155Client};
 #[repr(u32)]
 pub enum Error {
     AlreadyInitialized = 1,
-    NotInitialized     = 2,
-    NotAdmin           = 3,
-    WasmHashNotSet     = 4,
+    NotInitialized = 2,
+    NotAdmin = 3,
+    WasmHashNotSet = 4,
+    InvalidFeeBps = 5,
 }
 
 // ─── Data types ───────────────────────────────────────────────────────────────
 
 /// Which of the four collection types was deployed.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CollectionKind {
     Normal721,
     Normal1155,
@@ -112,10 +117,10 @@ pub enum CollectionKind {
 
 /// A record stored for every deployed collection.
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CollectionRecord {
     pub address: Address,
-    pub kind:    CollectionKind,
+    pub kind: CollectionKind,
     pub creator: Address,
 }
 
@@ -126,15 +131,15 @@ pub enum DataKey {
     Initialized,
     Admin,
     PlatformFeeReceiver,
-    PlatformFeeBps,      // future: charge creators on deploy
+    PlatformFeeBps, // future: charge creators on deploy
     WasmNormal721,
     WasmNormal1155,
     WasmLazy721,
     WasmLazy1155,
     CollectionCount,
     // Persistent storage
-    ByCreator(Address),  // Address → Vec<CollectionRecord>
-    AllCollections,      // Vec<CollectionRecord>  (global registry)
+    ByCreator(Address), // Address → Vec<CollectionRecord>
+    AllCollections,     // Vec<CollectionRecord>  (global registry)
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -156,10 +161,15 @@ impl Launchpad {
             return Err(Error::AlreadyInitialized);
         }
         admin.require_auth();
-        env.storage().instance().set(&DataKey::Initialized,         &true);
-        env.storage().instance().set(&DataKey::Admin,                &admin);
-        env.storage().instance().set(&DataKey::PlatformFeeReceiver,  &platform_fee_receiver);
-        env.storage().instance().set(&DataKey::PlatformFeeBps,       &platform_fee_bps);
+        Self::validate_fee_bps(platform_fee_bps)?;
+        env.storage().instance().set(&DataKey::Initialized, &true);
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::PlatformFeeReceiver, &platform_fee_receiver);
+        env.storage()
+            .instance()
+            .set(&DataKey::PlatformFeeBps, &platform_fee_bps);
         env.storage().instance().extend_ttl(50_000, 100_000);
         Ok(())
     }
@@ -177,16 +187,24 @@ impl Launchpad {
     /// ```
     pub fn set_wasm_hashes(
         env: Env,
-        wasm_normal_721:  BytesN<32>,
+        wasm_normal_721: BytesN<32>,
         wasm_normal_1155: BytesN<32>,
-        wasm_lazy_721:    BytesN<32>,
-        wasm_lazy_1155:   BytesN<32>,
+        wasm_lazy_721: BytesN<32>,
+        wasm_lazy_1155: BytesN<32>,
     ) -> Result<(), Error> {
         Self::only_admin(&env)?;
-        env.storage().instance().set(&DataKey::WasmNormal721,  &wasm_normal_721);
-        env.storage().instance().set(&DataKey::WasmNormal1155, &wasm_normal_1155);
-        env.storage().instance().set(&DataKey::WasmLazy721,    &wasm_lazy_721);
-        env.storage().instance().set(&DataKey::WasmLazy1155,   &wasm_lazy_1155);
+        env.storage()
+            .instance()
+            .set(&DataKey::WasmNormal721, &wasm_normal_721);
+        env.storage()
+            .instance()
+            .set(&DataKey::WasmNormal1155, &wasm_normal_1155);
+        env.storage()
+            .instance()
+            .set(&DataKey::WasmLazy721, &wasm_lazy_721);
+        env.storage()
+            .instance()
+            .set(&DataKey::WasmLazy1155, &wasm_lazy_1155);
         Ok(())
     }
 
@@ -201,19 +219,22 @@ impl Launchpad {
         creator: Address,
         name: String,
         symbol: String,
-        max_supply: u64,         // pass u64::MAX for unlimited
-        royalty_bps: u32,        // e.g. 500 = 5 %
+        max_supply: u64,  // pass u64::MAX for unlimited
+        royalty_bps: u32, // e.g. 500 = 5 %
         royalty_receiver: Address,
         salt: BytesN<32>,
     ) -> Result<Address, Error> {
         creator.require_auth();
 
-        let wasm: BytesN<32> = env.storage().instance()
+        let wasm: BytesN<32> = env
+            .storage()
+            .instance()
             .get(&DataKey::WasmNormal721)
             .ok_or(Error::WasmHashNotSet)?;
 
         // Deploy a new contract instance that shares the Normal721 WASM
-        let addr = env.deployer()
+        let addr = env
+            .deployer()
             .with_current_contract(salt)
             .deploy_v2(wasm, ());
 
@@ -247,16 +268,23 @@ impl Launchpad {
     ) -> Result<Address, Error> {
         creator.require_auth();
 
-        let wasm: BytesN<32> = env.storage().instance()
+        let wasm: BytesN<32> = env
+            .storage()
+            .instance()
             .get(&DataKey::WasmNormal1155)
             .ok_or(Error::WasmHashNotSet)?;
 
-        let addr = env.deployer()
+        let addr = env
+            .deployer()
             .with_current_contract(salt)
             .deploy_v2(wasm, ());
 
-        Normal1155Client::new(&env, &addr)
-            .initialize(&creator, &name, &royalty_bps, &royalty_receiver);
+        Normal1155Client::new(&env, &addr).initialize(
+            &creator,
+            &name,
+            &royalty_bps,
+            &royalty_receiver,
+        );
 
         Self::_record(&env, &creator, &addr, CollectionKind::Normal1155);
         env.events().publish(
@@ -284,11 +312,14 @@ impl Launchpad {
     ) -> Result<Address, Error> {
         creator.require_auth();
 
-        let wasm: BytesN<32> = env.storage().instance()
+        let wasm: BytesN<32> = env
+            .storage()
+            .instance()
             .get(&DataKey::WasmLazy721)
             .ok_or(Error::WasmHashNotSet)?;
 
-        let addr = env.deployer()
+        let addr = env
+            .deployer()
             .with_current_contract(salt)
             .deploy_v2(wasm, ());
 
@@ -323,11 +354,14 @@ impl Launchpad {
     ) -> Result<Address, Error> {
         creator.require_auth();
 
-        let wasm: BytesN<32> = env.storage().instance()
+        let wasm: BytesN<32> = env
+            .storage()
+            .instance()
             .get(&DataKey::WasmLazy1155)
             .ok_or(Error::WasmHashNotSet)?;
 
-        let addr = env.deployer()
+        let addr = env
+            .deployer()
             .with_current_contract(salt)
             .deploy_v2(wasm, ());
 
@@ -355,14 +389,15 @@ impl Launchpad {
         Ok(())
     }
 
-    pub fn update_platform_fee(
-        env: Env,
-        receiver: Address,
-        fee_bps: u32,
-    ) -> Result<(), Error> {
+    pub fn update_platform_fee(env: Env, receiver: Address, fee_bps: u32) -> Result<(), Error> {
         Self::only_admin(&env)?;
-        env.storage().instance().set(&DataKey::PlatformFeeReceiver, &receiver);
-        env.storage().instance().set(&DataKey::PlatformFeeBps,       &fee_bps);
+        Self::validate_fee_bps(fee_bps)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::PlatformFeeReceiver, &receiver);
+        env.storage()
+            .instance()
+            .set(&DataKey::PlatformFeeBps, &fee_bps);
         Ok(())
     }
 
@@ -370,20 +405,25 @@ impl Launchpad {
 
     /// All collections deployed by a specific creator.
     pub fn collections_by_creator(env: Env, creator: Address) -> Vec<CollectionRecord> {
-        env.storage().persistent()
+        env.storage()
+            .persistent()
             .get(&DataKey::ByCreator(creator))
             .unwrap_or(Vec::new(&env))
     }
 
     /// Global registry of every collection ever deployed through this launchpad.
     pub fn all_collections(env: Env) -> Vec<CollectionRecord> {
-        env.storage().persistent()
+        env.storage()
+            .persistent()
             .get(&DataKey::AllCollections)
             .unwrap_or(Vec::new(&env))
     }
 
     pub fn collection_count(env: Env) -> u64 {
-        env.storage().instance().get(&DataKey::CollectionCount).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::CollectionCount)
+            .unwrap_or(0)
     }
 
     pub fn admin(env: Env) -> Address {
@@ -392,19 +432,35 @@ impl Launchpad {
 
     pub fn platform_fee(env: Env) -> (Address, u32) {
         (
-            env.storage().instance().get(&DataKey::PlatformFeeReceiver).unwrap(),
-            env.storage().instance().get(&DataKey::PlatformFeeBps).unwrap_or(0),
+            env.storage()
+                .instance()
+                .get(&DataKey::PlatformFeeReceiver)
+                .unwrap(),
+            env.storage()
+                .instance()
+                .get(&DataKey::PlatformFeeBps)
+                .unwrap_or(0),
         )
     }
 
     // ── Private helpers ───────────────────────────────────────────────────
 
     fn only_admin(env: &Env) -> Result<Address, Error> {
-        let admin: Address = env.storage().instance()
+        let admin: Address = env
+            .storage()
+            .instance()
             .get(&DataKey::Admin)
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
         Ok(admin)
+    }
+
+    /// A fee of 0 bps is valid and disables the platform fee.
+    fn validate_fee_bps(fee_bps: u32) -> Result<(), Error> {
+        if fee_bps > MAX_FEE_BPS {
+            return Err(Error::InvalidFeeBps);
+        }
+        Ok(())
     }
 
     fn _record(env: &Env, creator: &Address, addr: &Address, kind: CollectionKind) {
@@ -415,26 +471,43 @@ impl Launchpad {
         };
 
         // Per-creator list
-        let mut by_creator: Vec<CollectionRecord> = env.storage().persistent()
+        let mut by_creator: Vec<CollectionRecord> = env
+            .storage()
+            .persistent()
             .get(&DataKey::ByCreator(creator.clone()))
             .unwrap_or(Vec::new(env));
         by_creator.push_back(rec.clone());
-        env.storage().persistent()
+        env.storage()
+            .persistent()
             .set(&DataKey::ByCreator(creator.clone()), &by_creator);
-        env.storage().persistent()
-            .extend_ttl(&DataKey::ByCreator(creator.clone()), 50_000, 100_000);
+        env.storage().persistent().extend_ttl(
+            &DataKey::ByCreator(creator.clone()),
+            50_000,
+            100_000,
+        );
 
         // Global list
-        let mut all: Vec<CollectionRecord> = env.storage().persistent()
+        let mut all: Vec<CollectionRecord> = env
+            .storage()
+            .persistent()
             .get(&DataKey::AllCollections)
             .unwrap_or(Vec::new(env));
         all.push_back(rec);
-        env.storage().persistent().set(&DataKey::AllCollections, &all);
-        env.storage().persistent().extend_ttl(&DataKey::AllCollections, 50_000, 100_000);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AllCollections, &all);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::AllCollections, 50_000, 100_000);
 
         // Counter
-        let n: u64 = env.storage().instance()
-            .get(&DataKey::CollectionCount).unwrap_or(0);
-        env.storage().instance().set(&DataKey::CollectionCount, &(n + 1));
+        let n: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::CollectionCount)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::CollectionCount, &(n + 1));
     }
 }
