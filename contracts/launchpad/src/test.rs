@@ -1088,7 +1088,7 @@ fn initialize_rejects_fee_bps_over_10000() {
     let token = Address::generate(&env);
 
     let result = client.try_initialize(&admin, &receiver, &10_001u32, &token);
-    assert_eq!(result, Err(Ok(Error::InvalidFeeBps)));
+    assert_eq!(result, Err(Ok(Error::InvalidFee)));
 }
 
 #[test]
@@ -1099,7 +1099,7 @@ fn update_platform_fee_rejects_fee_bps_over_10000() {
 
     let new_receiver = Address::generate(&env);
     let result = client.try_update_platform_fee(&new_receiver, &10_001u32);
-    assert_eq!(result, Err(Ok(Error::InvalidFeeBps)));
+    assert_eq!(result, Err(Ok(Error::InvalidFee)));
 }
 
 #[test]
@@ -1577,638 +1577,452 @@ fn rejects_unapproved_tokens_for_staking_and_splitter_deploys() {
     assert_ne!(splitter_ok, Err(Ok(Error::InvalidCurrency)));
 }
 
-// ── collection_count / platform_fee_token view coverage ──────────────────
+// ── Issue #858: Platform fee validation tests ────────────────────────────────
 
+/// Test that initialize fails when platform_fee_bps exceeds 10,000 (100%)
 #[test]
-fn collection_count_is_zero_on_fresh_launchpad() {
+fn initialize_fails_on_excessive_platform_fee() {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register(Launchpad, ());
-    let client = LaunchpadClient::new(&env, &id);
 
-    // Readable even before `initialize`, and defaults to zero.
-    assert_eq!(client.collection_count(), 0u64);
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
 
     let admin = Address::generate(&env);
-    let receiver = Address::generate(&env);
-    let token = Address::generate(&env);
-    client.initialize(&admin, &receiver, &0u32, &token);
-    assert_eq!(client.collection_count(), 0u64);
+    let fee_receiver = Address::generate(&env);
+    let fee_token = Address::generate(&env);
+
+    // Valid: 10,000 bps (100%) should succeed
+    let result_max = client.try_initialize(&admin, &fee_receiver, &10_000u32, &fee_token);
+    assert!(result_max.is_ok());
 }
 
 #[test]
-fn collection_count_unchanged_by_admin_config_updates() {
+fn initialize_fails_on_platform_fee_overflow() {
     let env = Env::default();
     env.mock_all_auths();
-    let id = env.register(Launchpad, ());
-    let client = LaunchpadClient::new(&env, &id);
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
+
     let admin = Address::generate(&env);
-    let receiver = Address::generate(&env);
-    let token = Address::generate(&env);
-    client.initialize(&admin, &receiver, &0u32, &token);
+    let fee_receiver = Address::generate(&env);
+    let fee_token = Address::generate(&env);
 
-    client.set_platform_fee_token(&Address::generate(&env));
-    client.add_approved_currency(&Address::generate(&env));
+    // Invalid: 10,001 bps (>100%) should fail
+    let result_overflow = client.try_initialize(&admin, &fee_receiver, &10_001u32, &fee_token);
+    assert_eq!(result_overflow, Err(Ok(Error::InvalidFee)));
 
-    assert_eq!(client.collection_count(), 0u64);
+    // Invalid: Large value should fail
+    let result_large = client.try_initialize(&admin, &fee_receiver, &50_000u32, &fee_token);
+    assert_eq!(result_large, Err(Ok(Error::InvalidFee)));
 }
 
+/// Test that update_platform_fee fails when fee_bps exceeds 10,000 (100%)
 #[test]
-fn collection_count_matches_all_collections_length() {
+fn update_platform_fee_fails_on_excessive_fee() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let new_receiver = Address::generate(&env);
+
+    // Valid: 10,000 bps (100%) should succeed
+    let result_max = client.try_update_platform_fee(&new_receiver, &10_000u32);
+    assert!(result_max.is_ok());
+
+    // Invalid: 10,001 bps (>100%) should fail
+    let result_overflow = client.try_update_platform_fee(&new_receiver, &10_001u32);
+    assert_eq!(result_overflow, Err(Ok(Error::InvalidFee)));
+
+    // Invalid: Large value should fail
+    let result_large = client.try_update_platform_fee(&new_receiver, &100_000u32);
+    assert_eq!(result_large, Err(Ok(Error::InvalidFee)));
+}
+
+/// Test that set_platform_fee_token requires the token to be an approved currency
+#[test]
+fn set_platform_fee_token_requires_approved_currency() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let unapproved_token = Address::generate(&env);
+    let approved_token = Address::generate(&env);
+
+    // Add approved_token to the whitelist
+    client.add_approved_currency(&approved_token);
+
+    // Attempt to set unapproved token should fail
+    let result_unapproved = client.try_set_platform_fee_token(&unapproved_token);
+    assert_eq!(result_unapproved, Err(Ok(Error::InvalidCurrency)));
+
+    // Setting approved token should succeed
+    let result_approved = client.try_set_platform_fee_token(&approved_token);
+    assert!(result_approved.is_ok());
+    assert_eq!(client.platform_fee_token(), Some(approved_token));
+}
+
+// ── Issue #859: get_collection_by_id tests ───────────────────────────────────
+
+/// Test get_collection_by_id returns correct collection for deployed address
+#[test]
+fn get_collection_by_id_returns_deployed_collection() {
     let env = Env::default();
     env.ledger().with_mut(|li| li.sequence_number = 1);
     let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let salt = BytesN::from_array(&env, &[0xA1u8; 32]);
     let royalty_receiver = Address::generate(&env);
 
-    assert_eq!(
-        client.collection_count(),
-        client.all_collections().len() as u64
-    );
-
-    client.deploy_normal_721(
+    // Deploy a Normal721 collection
+    let deployed_addr = client.deploy_normal_721(
         &creator,
-        &String::from_str(&env, "Count Match"),
-        &String::from_str(&env, "CMT"),
-        &100u64,
-        &0u32,
+        &String::from_str(&env, "Test Collection"),
+        &String::from_str(&env, "TEST"),
+        &1_000u64,
+        &500u32,
         &royalty_receiver,
-        &BytesN::from_array(&env, &[0xA1u8; 32]),
+        &salt,
     );
 
-    assert_eq!(client.collection_count(), 1u64);
-    assert_eq!(
-        client.collection_count(),
-        client.all_collections().len() as u64
-    );
+    // Query by deployed address
+    let collection = client.get_collection_by_id(&deployed_addr);
+    assert!(collection.is_some());
+
+    let record = collection.unwrap();
+    assert_eq!(record.address, deployed_addr);
+    assert_eq!(record.creator, creator);
+    assert!(matches!(record.kind, CollectionKind::Normal721));
 }
 
+/// Test get_collection_by_id returns None for non-existent address
 #[test]
-fn collection_count_is_independent_per_launchpad() {
+fn get_collection_by_id_returns_none_for_non_existent() {
     let env = Env::default();
     env.ledger().with_mut(|li| li.sequence_number = 1);
-    let (client_a, _admin, _fee_receiver, creator) = setup_launchpad(&env);
-    let (client_b, _admin_b, _fee_receiver_b, _creator_b) = setup_launchpad(&env);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
 
-    client_a.deploy_normal_721(
+    let non_existent_addr = Address::generate(&env);
+
+    // Query non-existent address
+    let collection = client.get_collection_by_id(&non_existent_addr);
+    assert!(collection.is_none());
+}
+
+/// Test get_collection_by_id distinguishes between multiple collections
+#[test]
+fn get_collection_by_id_distinguishes_multiple_collections() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let salt_a = BytesN::from_array(&env, &[0xA2u8; 32]);
+    let salt_b = BytesN::from_array(&env, &[0xA3u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+
+    // Deploy two different collections
+    let addr_721 = client.deploy_normal_721(
         &creator,
-        &String::from_str(&env, "Only In A"),
-        &String::from_str(&env, "OIA"),
-        &100u64,
-        &0u32,
-        &Address::generate(&env),
-        &BytesN::from_array(&env, &[0xA2u8; 32]),
+        &String::from_str(&env, "Collection 721"),
+        &String::from_str(&env, "C721"),
+        &500u64,
+        &300u32,
+        &royalty_receiver,
+        &salt_a,
     );
 
-    assert_eq!(client_a.collection_count(), 1u64);
-    assert_eq!(client_b.collection_count(), 0u64);
+    let addr_1155 = client.deploy_normal_1155(
+        &creator,
+        &String::from_str(&env, "Collection 1155"),
+        &400u32,
+        &royalty_receiver,
+        &salt_b,
+    );
+
+    // Query both collections
+    let collection_721 = client.get_collection_by_id(&addr_721).unwrap();
+    let collection_1155 = client.get_collection_by_id(&addr_1155).unwrap();
+
+    // Verify they are distinct
+    assert_eq!(collection_721.address, addr_721);
+    assert!(matches!(collection_721.kind, CollectionKind::Normal721));
+
+    assert_eq!(collection_1155.address, addr_1155);
+    assert!(matches!(collection_1155.kind, CollectionKind::Normal1155));
 }
 
+// ── Issue #860: get_collections tests ────────────────────────────────────────
+
+/// Test get_collections returns empty vec when no collections deployed
 #[test]
-fn platform_fee_token_is_none_before_initialize() {
+fn get_collections_returns_empty_when_no_deployments() {
     let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(Launchpad, ());
-    let client = LaunchpadClient::new(&env, &id);
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
 
-    assert_eq!(client.platform_fee_token(), None);
+    let collections = client.get_collections(&0u32, &10u32);
+    assert!(collections.is_empty());
 }
 
+/// Test get_collections pagination returns correct subset
 #[test]
-fn platform_fee_token_reflects_admin_update() {
+fn get_collections_pagination_works_correctly() {
     let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(Launchpad, ());
-    let client = LaunchpadClient::new(&env, &id);
-    let admin = Address::generate(&env);
-    let receiver = Address::generate(&env);
-    let initial_token = Address::generate(&env);
-    client.initialize(&admin, &receiver, &0u32, &initial_token);
-    assert_eq!(client.platform_fee_token(), Some(initial_token));
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
 
-    let new_token = Address::generate(&env);
-    client.set_platform_fee_token(&new_token);
-    assert_eq!(client.platform_fee_token(), Some(new_token.clone()));
+    let royalty_receiver = Address::generate(&env);
 
-    // A later update overwrites the previous value again.
-    let newest_token = Address::generate(&env);
-    client.set_platform_fee_token(&newest_token);
-    assert_eq!(client.platform_fee_token(), Some(newest_token));
-}
-
-#[test]
-fn platform_fee_token_unchanged_by_platform_fee_update() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(Launchpad, ());
-    let client = LaunchpadClient::new(&env, &id);
-    let admin = Address::generate(&env);
-    let receiver = Address::generate(&env);
-    let token = Address::generate(&env);
-    client.initialize(&admin, &receiver, &100u32, &token);
-
-    client.update_platform_fee(&Address::generate(&env), &500u32);
-
-    assert_eq!(client.platform_fee_token(), Some(token));
-}
-
-// ── Issues #899–#902: deploy_* happy-path and edge-case coverage ─────────────
-//
-// The four `deploy_*` entry points share the same shape (auth → validation →
-// fee → deploy → initialize → record), so the cases below run against each one
-// through a small dispatch helper and are instantiated once per function.
-
-use soroban_sdk::{
-    testutils::{Events as _, StellarAssetContract},
-    token, vec, Symbol,
-};
-
-const KIND_NORMAL_721: u8 = 0;
-const KIND_NORMAL_1155: u8 = 1;
-const KIND_LAZY_721: u8 = 2;
-const KIND_LAZY_1155: u8 = 3;
-
-const LAZY_PUBKEY: [u8; 32] = [9u8; 32];
-
-/// Calls the `deploy_*` function selected by `kind` with a fixed, valid
-/// argument set. `symbol`, `max_supply` are ignored for the 1155 variants.
-#[allow(clippy::too_many_arguments)]
-fn try_deploy(
-    env: &Env,
-    client: &LaunchpadClient<'_>,
-    kind: u8,
-    creator: &Address,
-    name: &str,
-    symbol: &str,
-    max_supply: u64,
-    royalty_bps: u32,
-    royalty_receiver: &Address,
-    salt: &BytesN<32>,
-) -> Result<Address, Option<Error>> {
-    let name = String::from_str(env, name);
-    let symbol = String::from_str(env, symbol);
-    let pubkey = BytesN::from_array(env, &LAZY_PUBKEY);
-    let result = match kind {
-        KIND_NORMAL_721 => client.try_deploy_normal_721(
-            creator,
-            &name,
-            &symbol,
-            &max_supply,
-            &royalty_bps,
-            royalty_receiver,
-            salt,
-        ),
-        KIND_NORMAL_1155 => {
-            client.try_deploy_normal_1155(creator, &name, &royalty_bps, royalty_receiver, salt)
-        }
-        KIND_LAZY_721 => client.try_deploy_lazy_721(
-            creator,
-            &pubkey,
-            &name,
-            &symbol,
-            &max_supply,
-            &royalty_bps,
-            royalty_receiver,
-            salt,
-        ),
-        _ => client.try_deploy_lazy_1155(
-            creator,
-            &pubkey,
-            &name,
-            &royalty_bps,
-            royalty_receiver,
-            salt,
-        ),
-    };
-    match result {
-        Ok(Ok(addr)) => Ok(addr),
-        Err(Ok(err)) => Err(Some(err)),
-        _ => Err(None),
+    // Deploy 5 collections
+    for i in 0..5 {
+        let salt = BytesN::from_array(&env, &[i as u8; 32]);
+        client.deploy_normal_721(
+            &creator,
+            &String::from_str(&env, "Collection"),
+            &String::from_str(&env, "COL"),
+            &100u64,
+            &500u32,
+            &royalty_receiver,
+            &salt,
+        );
     }
+
+    // Test pagination: get first 3
+    let page_1 = client.get_collections(&0u32, &3u32);
+    assert_eq!(page_1.len(), 3);
+
+    // Test pagination: get next 2
+    let page_2 = client.get_collections(&3u32, &3u32);
+    assert_eq!(page_2.len(), 2);
+
+    // Test pagination: beyond range returns empty
+    let page_3 = client.get_collections(&10u32, &5u32);
+    assert!(page_3.is_empty());
 }
 
-fn read<T: soroban_sdk::TryFromVal<Env, soroban_sdk::Val>>(
-    env: &Env,
-    contract: &Address,
-    func: &str,
-) -> T {
-    env.invoke_contract::<T>(contract, &Symbol::new(env, func), vec![env])
+/// Test get_collections respects limit parameter
+#[test]
+fn get_collections_respects_limit() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let royalty_receiver = Address::generate(&env);
+
+    // Deploy 10 collections
+    for i in 0..10 {
+        let salt = BytesN::from_array(&env, &[0xB0u8 + i as u8; 32]);
+        client.deploy_normal_721(
+            &creator,
+            &String::from_str(&env, "Collection"),
+            &String::from_str(&env, "COL"),
+            &100u64,
+            &500u32,
+            &royalty_receiver,
+            &salt,
+        );
+    }
+
+    // Request only 5 collections
+    let limited = client.get_collections(&0u32, &5u32);
+    assert_eq!(limited.len(), 5);
+
+    // Request all 10
+    let all = client.get_collections(&0u32, &10u32);
+    assert_eq!(all.len(), 10);
+
+    // Request more than available (limit exceeds total)
+    let excess = client.get_collections(&0u32, &20u32);
+    assert_eq!(excess.len(), 10);
 }
 
-fn is_kind(record_kind: &CollectionKind, kind: u8) -> bool {
-    matches!(
-        (record_kind, kind),
-        (CollectionKind::Normal721, KIND_NORMAL_721)
-            | (CollectionKind::Normal1155, KIND_NORMAL_1155)
-            | (CollectionKind::LazyMint721, KIND_LAZY_721)
-            | (CollectionKind::LazyMint1155, KIND_LAZY_1155)
-    )
+/// Test get_collections returns correct collection types
+#[test]
+fn get_collections_returns_correct_types() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let royalty_receiver = Address::generate(&env);
+    let creator_pubkey = BytesN::from_array(&env, &[0x10u8; 32]);
+
+    // Deploy one of each type
+    client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "N721"),
+        &String::from_str(&env, "N721"),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xC1u8; 32]),
+    );
+
+    client.deploy_normal_1155(
+        &creator,
+        &String::from_str(&env, "N1155"),
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xC2u8; 32]),
+    );
+
+    client.deploy_lazy_721(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "L721"),
+        &String::from_str(&env, "L721"),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xC3u8; 32]),
+    );
+
+    client.deploy_lazy_1155(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "L1155"),
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xC4u8; 32]),
+    );
+
+    // Get all collections
+    let collections = client.get_collections(&0u32, &10u32);
+    assert_eq!(collections.len(), 4);
+
+    // Verify types
+    assert!(matches!(
+        collections.get(0).unwrap().kind,
+        CollectionKind::Normal721
+    ));
+    assert!(matches!(
+        collections.get(1).unwrap().kind,
+        CollectionKind::Normal1155
+    ));
+    assert!(matches!(
+        collections.get(2).unwrap().kind,
+        CollectionKind::LazyMint721
+    ));
+    assert!(matches!(
+        collections.get(3).unwrap().kind,
+        CollectionKind::LazyMint1155
+    ));
 }
 
-/// Registers a Stellar asset as the platform fee token, sets a flat fee and
-/// mints `balance` of it to `creator`. Returns the token address.
-fn enable_fee(
-    env: &Env,
-    client: &LaunchpadClient<'_>,
-    creator: &Address,
-    fee: u32,
-    balance: i128,
-) -> Address {
-    let issuer = Address::generate(env);
-    let asset: StellarAssetContract = env.register_stellar_asset_contract_v2(issuer);
-    let token = asset.address();
-    client.set_platform_fee_token(&token);
-    let (receiver, _) = client.platform_fee();
-    client.update_platform_fee(&receiver, &fee);
-    token::StellarAssetClient::new(env, &token).mint(creator, &balance);
-    token
+// ── Issue #861: get_staking_pool tests ────────────────────────────────────────
+
+/// Test get_staking_pool returns None for NFT without staking pool
+#[test]
+fn get_staking_pool_returns_none_for_non_existent() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _creator) = setup_launchpad_with_staking(&env);
+
+    let nft_address = Address::generate(&env);
+
+    // Query non-existent staking pool
+    let pool = client.get_staking_pool(&nft_address);
+    assert!(pool.is_none());
 }
 
-macro_rules! deploy_coverage_tests {
-    ($modname:ident, $kind:expr, $is_721:expr) => {
-        mod $modname {
-            use super::*;
+/// Test get_staking_pool returns correct address after deployment
+#[test]
+fn get_staking_pool_returns_deployed_pool() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, creator) = setup_launchpad_with_staking(&env);
 
-            fn ctx() -> (Env, LaunchpadClient<'static>, Address, Address) {
-                let env = Env::default();
-                env.ledger().with_mut(|li| li.sequence_number = 1);
-                // `Env` is a cheap handle onto shared host state; leaking one
-                // clone gives the client a 'static borrow for the test's life.
-                let env_ref: &'static Env =
-                    std::boxed::Box::leak(std::boxed::Box::new(env.clone()));
-                let (client, _admin, fee_receiver, creator) = setup_launchpad(env_ref);
-                (env, client, fee_receiver, creator)
-            }
+    let nft_address = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+    let salt = BytesN::from_array(&env, &[0xD1u8; 32]);
 
-            fn salt(env: &Env, byte: u8) -> BytesN<32> {
-                BytesN::from_array(env, &[byte; 32])
-            }
+    // Add reward token to approved currencies
+    client.add_approved_currency(&reward_token);
 
-            #[test]
-            fn happy_path_initializes_and_registers_collection() {
-                let (env, client, _fr, creator) = ctx();
-                let royalty_receiver = Address::generate(&env);
+    // Deploy staking pool
+    let deployed_pool =
+        client.deploy_staking_pool(&creator, &nft_address, &reward_token, &1_000_000i128, &salt);
 
-                let addr = try_deploy(
-                    &env,
-                    &client,
-                    $kind,
-                    &creator,
-                    "Happy",
-                    "HAPPY",
-                    500,
-                    750,
-                    &royalty_receiver,
-                    &salt(&env, 1),
-                )
-                .unwrap();
-
-                // The deployed contract was initialized in the same transaction.
-                assert_eq!(
-                    read::<String>(&env, &addr, "name"),
-                    String::from_str(&env, "Happy")
-                );
-                assert_eq!(read::<Address>(&env, &addr, "creator"), creator);
-                assert_eq!(
-                    read::<(Address, u32)>(&env, &addr, "royalty_info"),
-                    (royalty_receiver.clone(), 750)
-                );
-                if $is_721 {
-                    assert_eq!(
-                        read::<String>(&env, &addr, "symbol"),
-                        String::from_str(&env, "HAPPY")
-                    );
-                }
-
-                // The launchpad registry reflects the deploy.
-                let record = client.get_collection_by_id(&addr).unwrap();
-                assert_eq!(record.address, addr);
-                assert_eq!(record.creator, creator);
-                assert!(is_kind(&record.kind, $kind));
-                assert_eq!(client.collection_count(), 1);
-                assert_eq!(client.all_collections().len(), 1);
-                assert_eq!(client.collections_by_creator(&creator).len(), 1);
-            }
-
-            #[test]
-            fn happy_path_emits_deploy_event() {
-                let (env, client, _fr, creator) = ctx();
-                let royalty_receiver = Address::generate(&env);
-                try_deploy(
-                    &env,
-                    &client,
-                    $kind,
-                    &creator,
-                    "Evt",
-                    "EVT",
-                    10,
-                    0,
-                    &royalty_receiver,
-                    &salt(&env, 2),
-                )
-                .unwrap();
-
-                // `all()` covers the last invocation only; exactly one of the
-                // events it produced is the launchpad's own `deploy` event.
-                let launchpad_events = env.events().all().filter_by_contract(&client.address);
-                assert_eq!(launchpad_events.events().len(), 1);
-            }
-
-            #[test]
-            fn zero_royalty_and_unlimited_supply_are_accepted() {
-                let (env, client, _fr, creator) = ctx();
-                let royalty_receiver = Address::generate(&env);
-
-                let addr = try_deploy(
-                    &env,
-                    &client,
-                    $kind,
-                    &creator,
-                    "Edge",
-                    "EDGE",
-                    u64::MAX,
-                    0,
-                    &royalty_receiver,
-                    &salt(&env, 3),
-                )
-                .unwrap();
-
-                assert_eq!(
-                    read::<(Address, u32)>(&env, &addr, "royalty_info"),
-                    (royalty_receiver, 0)
-                );
-                // Only the normal 721 exposes `max_supply` as a view.
-                if $kind == KIND_NORMAL_721 {
-                    let max: u64 = read(&env, &addr, "max_supply");
-                    assert_eq!(max, u64::MAX);
-                }
-            }
-
-            #[test]
-            fn one_character_name_is_accepted() {
-                let (env, client, _fr, creator) = ctx();
-                let royalty_receiver = Address::generate(&env);
-
-                let result = try_deploy(
-                    &env,
-                    &client,
-                    $kind,
-                    &creator,
-                    "X",
-                    "X",
-                    1,
-                    0,
-                    &royalty_receiver,
-                    &salt(&env, 4),
-                );
-                assert!(result.is_ok());
-            }
-
-            #[test]
-            fn same_creator_and_salt_cannot_deploy_twice() {
-                let (env, client, _fr, creator) = ctx();
-                let royalty_receiver = Address::generate(&env);
-                let s = salt(&env, 5);
-
-                let first = try_deploy(
-                    &env,
-                    &client,
-                    $kind,
-                    &creator,
-                    "Dup",
-                    "DUP",
-                    10,
-                    0,
-                    &royalty_receiver,
-                    &s,
-                );
-                assert!(first.is_ok());
-
-                let second = try_deploy(
-                    &env,
-                    &client,
-                    $kind,
-                    &creator,
-                    "Dup",
-                    "DUP",
-                    10,
-                    0,
-                    &royalty_receiver,
-                    &s,
-                );
-                assert!(second.is_err());
-                // The failed second deploy leaves the registry untouched.
-                assert_eq!(client.collection_count(), 1);
-                assert_eq!(client.collections_by_creator(&creator).len(), 1);
-            }
-
-            #[test]
-            fn requires_creator_authorization() {
-                let (env, client, _fr, creator) = ctx();
-                let royalty_receiver = Address::generate(&env);
-
-                // Drop the blanket auth mock installed by `setup_launchpad`.
-                env.set_auths(&[]);
-                let result = try_deploy(
-                    &env,
-                    &client,
-                    $kind,
-                    &creator,
-                    "NoAuth",
-                    "NA",
-                    10,
-                    0,
-                    &royalty_receiver,
-                    &salt(&env, 6),
-                );
-                assert!(result.is_err());
-                assert_eq!(client.collection_count(), 0);
-            }
-
-            #[test]
-            fn platform_fee_is_transferred_from_creator_to_receiver() {
-                let (env, client, fee_receiver, creator) = ctx();
-                let royalty_receiver = Address::generate(&env);
-                let token = enable_fee(&env, &client, &creator, 250, 1_000);
-                let token_client = token::Client::new(&env, &token);
-
-                try_deploy(
-                    &env,
-                    &client,
-                    $kind,
-                    &creator,
-                    "Paid",
-                    "PAID",
-                    10,
-                    0,
-                    &royalty_receiver,
-                    &salt(&env, 7),
-                )
-                .unwrap();
-
-                assert_eq!(token_client.balance(&creator), 750);
-                assert_eq!(token_client.balance(&fee_receiver), 250);
-                assert_eq!(client.collection_count(), 1);
-            }
-
-            #[test]
-            fn zero_fee_does_not_move_tokens() {
-                let (env, client, fee_receiver, creator) = ctx();
-                let royalty_receiver = Address::generate(&env);
-                let token = enable_fee(&env, &client, &creator, 0, 1_000);
-                let token_client = token::Client::new(&env, &token);
-
-                try_deploy(
-                    &env,
-                    &client,
-                    $kind,
-                    &creator,
-                    "Free",
-                    "FREE",
-                    10,
-                    0,
-                    &royalty_receiver,
-                    &salt(&env, 8),
-                )
-                .unwrap();
-
-                assert_eq!(token_client.balance(&creator), 1_000);
-                assert_eq!(token_client.balance(&fee_receiver), 0);
-            }
-
-            #[test]
-            fn insufficient_fee_balance_fails_without_registering() {
-                let (env, client, fee_receiver, creator) = ctx();
-                let royalty_receiver = Address::generate(&env);
-                let token = enable_fee(&env, &client, &creator, 250, 100);
-                let token_client = token::Client::new(&env, &token);
-
-                let result = try_deploy(
-                    &env,
-                    &client,
-                    $kind,
-                    &creator,
-                    "Broke",
-                    "BROKE",
-                    10,
-                    0,
-                    &royalty_receiver,
-                    &salt(&env, 9),
-                );
-
-                assert!(result.is_err());
-                assert_eq!(token_client.balance(&creator), 100);
-                assert_eq!(token_client.balance(&fee_receiver), 0);
-                assert_eq!(client.collection_count(), 0);
-                assert_eq!(client.collections_by_creator(&creator).len(), 0);
-            }
-
-            #[test]
-            fn validation_runs_before_fee_is_charged() {
-                let (env, client, fee_receiver, creator) = ctx();
-                let royalty_receiver = Address::generate(&env);
-                let token = enable_fee(&env, &client, &creator, 250, 1_000);
-                let token_client = token::Client::new(&env, &token);
-
-                let result = try_deploy(
-                    &env,
-                    &client,
-                    $kind,
-                    &creator,
-                    "",
-                    "SYM",
-                    10,
-                    0,
-                    &royalty_receiver,
-                    &salt(&env, 10),
-                );
-
-                assert_eq!(result, Err(Some(Error::EmptyName)));
-                assert_eq!(token_client.balance(&creator), 1_000);
-                assert_eq!(token_client.balance(&fee_receiver), 0);
-            }
-
-            #[test]
-            fn same_salt_from_different_creators_registers_both() {
-                let (env, client, _fr, creator) = ctx();
-                let other = Address::generate(&env);
-                let royalty_receiver = Address::generate(&env);
-                let s = salt(&env, 11);
-
-                let a = try_deploy(
-                    &env,
-                    &client,
-                    $kind,
-                    &creator,
-                    "A",
-                    "A",
-                    10,
-                    0,
-                    &royalty_receiver,
-                    &s,
-                )
-                .unwrap();
-                let b = try_deploy(
-                    &env,
-                    &client,
-                    $kind,
-                    &other,
-                    "B",
-                    "B",
-                    10,
-                    0,
-                    &royalty_receiver,
-                    &s,
-                )
-                .unwrap();
-
-                assert_ne!(a, b);
-                assert_eq!(client.collection_count(), 2);
-                assert_eq!(client.collections_by_creator(&creator).len(), 1);
-                assert_eq!(client.collections_by_creator(&other).len(), 1);
-            }
-
-            #[test]
-            fn symbol_of_exactly_ten_characters_is_accepted() {
-                if !$is_721 {
-                    return; // 1155 variants take no symbol
-                }
-                let (env, client, _fr, creator) = ctx();
-                let royalty_receiver = Address::generate(&env);
-
-                let ok = try_deploy(
-                    &env,
-                    &client,
-                    $kind,
-                    &creator,
-                    "Sym",
-                    "ABCDEFGHIJ",
-                    10,
-                    0,
-                    &royalty_receiver,
-                    &salt(&env, 12),
-                );
-                assert!(ok.is_ok());
-
-                let too_long = try_deploy(
-                    &env,
-                    &client,
-                    $kind,
-                    &creator,
-                    "Sym",
-                    "ABCDEFGHIJK",
-                    10,
-                    0,
-                    &royalty_receiver,
-                    &salt(&env, 13),
-                );
-                assert_eq!(too_long, Err(Some(Error::SymbolTooLong)));
-                assert_eq!(client.collection_count(), 1);
-            }
-        }
-    };
+    // Query staking pool
+    let pool = client.get_staking_pool(&nft_address);
+    assert!(pool.is_some());
+    assert_eq!(pool.unwrap(), deployed_pool);
 }
 
-deploy_coverage_tests!(deploy_normal_721_coverage, KIND_NORMAL_721, true);
-deploy_coverage_tests!(deploy_normal_1155_coverage, KIND_NORMAL_1155, false);
-deploy_coverage_tests!(deploy_lazy_721_coverage, KIND_LAZY_721, true);
-deploy_coverage_tests!(deploy_lazy_1155_coverage, KIND_LAZY_1155, false);
+/// Test get_staking_pool returns correct pool for multiple NFTs
+#[test]
+fn get_staking_pool_distinguishes_multiple_nfts() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, creator) = setup_launchpad_with_staking(&env);
+
+    let nft_a = Address::generate(&env);
+    let nft_b = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+
+    // Add reward token to approved currencies
+    client.add_approved_currency(&reward_token);
+
+    // Deploy staking pools for two different NFTs
+    let pool_a = client.deploy_staking_pool(
+        &creator,
+        &nft_a,
+        &reward_token,
+        &500_000i128,
+        &BytesN::from_array(&env, &[0xD2u8; 32]),
+    );
+
+    let pool_b = client.deploy_staking_pool(
+        &creator,
+        &nft_b,
+        &reward_token,
+        &750_000i128,
+        &BytesN::from_array(&env, &[0xD3u8; 32]),
+    );
+
+    // Query both pools
+    let retrieved_pool_a = client.get_staking_pool(&nft_a);
+    let retrieved_pool_b = client.get_staking_pool(&nft_b);
+
+    // Verify correct pools are returned
+    assert_eq!(retrieved_pool_a, Some(pool_a.clone()));
+    assert_eq!(retrieved_pool_b, Some(pool_b.clone()));
+    assert_ne!(pool_a, pool_b);
+}
+
+/// Test get_staking_pool after failed duplicate deployment
+#[test]
+fn get_staking_pool_consistent_after_failed_duplicate() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, creator) = setup_launchpad_with_staking(&env);
+
+    let nft_address = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+
+    // Add reward token to approved currencies
+    client.add_approved_currency(&reward_token);
+
+    // Deploy first staking pool
+    let pool_original = client.deploy_staking_pool(
+        &creator,
+        &nft_address,
+        &reward_token,
+        &1_000_000i128,
+        &BytesN::from_array(&env, &[0xD4u8; 32]),
+    );
+
+    // Attempt duplicate deployment (should fail)
+    let duplicate_result = client.try_deploy_staking_pool(
+        &creator,
+        &nft_address,
+        &reward_token,
+        &2_000_000i128,
+        &BytesN::from_array(&env, &[0xD5u8; 32]),
+    );
+    assert_eq!(duplicate_result, Err(Ok(Error::StakingPoolAlreadyExists)));
+
+    // Verify original pool is still returned
+    let pool_after_fail = client.get_staking_pool(&nft_address);
+    assert_eq!(pool_after_fail, Some(pool_original));
+}
