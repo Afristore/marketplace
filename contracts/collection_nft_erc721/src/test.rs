@@ -1196,12 +1196,7 @@ fn set_wasm_hashes_is_refused_without_the_admins_authorisation() {
     let launchpad = client.address.clone();
 
     let original = BytesN::from_array(&env, &[1u8; 32]);
-    client.set_wasm_hashes(
-        &original,
-        &BytesN::from_array(&env, &[2u8; 32]),
-        &BytesN::from_array(&env, &[3u8; 32]),
-        &BytesN::from_array(&env, &[4u8; 32]),
-    );
+    client.set_wasm_hashes(&original, &BytesN::from_array(&env, &[2u8; 32]), &BytesN::from_array(&env, &[3u8; 32]), &BytesN::from_array(&env, &[4u8; 32]));
     assert_eq!(stored_normal_721_hash(&env, &launchpad), Some(original.clone()));
 
     let attacker = BytesN::from_array(&env, &[9u8; 32]);
