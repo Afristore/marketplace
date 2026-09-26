@@ -1094,3 +1094,75 @@ fn collection_count_unchanged_by_admin_operations() {
 
     assert_eq!(client.collection_count(), 1u64);
 }
+
+// ── set_wasm_hashes authorisation ────────────────────────────────────────────
+
+/// Read a stored wasm hash straight out of the contract's instance storage.
+/// There is no public getter for these four, so the storage key is the only way
+/// to assert that a refused call left the value alone.
+fn stored_normal_721_hash(env: &Env, launchpad: &Address) -> Option<BytesN<32>> {
+    env.as_contract(launchpad, || {
+        env.storage()
+            .instance()
+            .get(&crate::contract::DataKey::WasmNormal721)
+    })
+}
+
+/// `set_wasm_hashes` is gated by `only_admin`, which calls `require_auth()` on
+/// the stored admin. With no authorisations the call must be refused *and* the
+/// previously stored hashes must survive untouched.
+#[test]
+fn set_wasm_hashes_is_refused_without_the_admins_authorisation() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad(&env);
+    let launchpad = client.address.clone();
+
+    let original = BytesN::from_array(&env, &[1u8; 32]);
+    client.set_wasm_hashes(
+        &original,
+        &BytesN::from_array(&env, &[2u8; 32]),
+        &BytesN::from_array(&env, &[3u8; 32]),
+        &BytesN::from_array(&env, &[4u8; 32]),
+    );
+    assert_eq!(stored_normal_721_hash(&env, &launchpad), Some(original.clone()));
+
+    let attacker = BytesN::from_array(&env, &[9u8; 32]);
+    env.set_auths(&[]);
+    let refused = client.try_set_wasm_hashes(
+        &attacker,
+        &BytesN::from_array(&env, &[9u8; 32]),
+        &BytesN::from_array(&env, &[9u8; 32]),
+        &BytesN::from_array(&env, &[9u8; 32]),
+    );
+
+    assert!(refused.is_err(), "an unauthorised caller must not set the wasm hashes");
+    assert_eq!(
+        stored_normal_721_hash(&env, &launchpad),
+        Some(original),
+        "a refused call must not overwrite the stored hashes"
+    );
+}
+
+/// The positive control: with the admin's authorisation the same call does
+/// replace the stored hash, so the test above cannot be passing because the
+/// entry point is broken for everyone.
+#[test]
+fn set_wasm_hashes_replaces_the_stored_hash_when_authorised() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad(&env);
+    let launchpad = client.address.clone();
+
+    let first = BytesN::from_array(&env, &[5u8; 32]);
+    let second = BytesN::from_array(&env, &[6u8; 32]);
+    let other = BytesN::from_array(&env, &[7u8; 32]);
+
+    client.set_wasm_hashes(&first, &other, &other, &other);
+    assert_eq!(stored_normal_721_hash(&env, &launchpad), Some(first.clone()));
+
+    client.set_wasm_hashes(&second, &other, &other, &other);
+    assert_eq!(
+        stored_normal_721_hash(&env, &launchpad),
+        Some(second),
+        "an authorised call must be able to replace the hash"
+    );
+}
