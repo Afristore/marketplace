@@ -1891,10 +1891,22 @@ fn get_collections_returns_correct_types() {
     assert_eq!(collections.len(), 4);
 
     // Verify types
-    assert!(matches!(collections.get(0).unwrap().kind, CollectionKind::Normal721));
-    assert!(matches!(collections.get(1).unwrap().kind, CollectionKind::Normal1155));
-    assert!(matches!(collections.get(2).unwrap().kind, CollectionKind::LazyMint721));
-    assert!(matches!(collections.get(3).unwrap().kind, CollectionKind::LazyMint1155));
+    assert!(matches!(
+        collections.get(0).unwrap().kind,
+        CollectionKind::Normal721
+    ));
+    assert!(matches!(
+        collections.get(1).unwrap().kind,
+        CollectionKind::Normal1155
+    ));
+    assert!(matches!(
+        collections.get(2).unwrap().kind,
+        CollectionKind::LazyMint721
+    ));
+    assert!(matches!(
+        collections.get(3).unwrap().kind,
+        CollectionKind::LazyMint1155
+    ));
 }
 
 // ── Issue #861: get_staking_pool tests ────────────────────────────────────────
@@ -1928,13 +1940,8 @@ fn get_staking_pool_returns_deployed_pool() {
     client.add_approved_currency(&reward_token);
 
     // Deploy staking pool
-    let deployed_pool = client.deploy_staking_pool(
-        &creator,
-        &nft_address,
-        &reward_token,
-        &1_000_000i128,
-        &salt,
-    );
+    let deployed_pool =
+        client.deploy_staking_pool(&creator, &nft_address, &reward_token, &1_000_000i128, &salt);
 
     // Query staking pool
     let pool = client.get_staking_pool(&nft_address);
