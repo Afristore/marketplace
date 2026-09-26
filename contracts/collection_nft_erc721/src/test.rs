@@ -1094,3 +1094,53 @@ fn collection_count_unchanged_by_admin_operations() {
 
     assert_eq!(client.collection_count(), 1u64);
 }
+
+// ── transfer_admin authorisation ─────────────────────────────────────────────
+
+/// `transfer_admin` is gated by `only_admin`, which calls `require_auth()` on
+/// the stored admin. This pins that: with no authorisations present the call
+/// must be refused *and* the stored admin must not move.
+#[test]
+fn transfer_admin_is_refused_without_the_admins_authorisation() {
+    let env = Env::default();
+    let (client, admin, _fee_receiver) = setup_launchpad(&env);
+    let stranger = Address::generate(&env);
+
+    env.set_auths(&[]);
+    let result = client.try_transfer_admin(&stranger);
+
+    assert!(
+        result.is_err(),
+        "an unauthorised caller must not be able to move the admin role"
+    );
+    assert_eq!(
+        client.admin(),
+        admin,
+        "a refused transfer must leave the stored admin untouched"
+    );
+}
+
+/// The happy path, and what it takes away: after a transfer the new admin holds
+/// the role and the previous one can no longer exercise it.
+#[test]
+fn transfer_admin_moves_the_role_and_the_old_admin_loses_it() {
+    let env = Env::default();
+    let (client, admin, _fee_receiver) = setup_launchpad(&env);
+    let new_admin = Address::generate(&env);
+
+    client.transfer_admin(&new_admin);
+    assert_eq!(client.admin(), new_admin);
+
+    env.set_auths(&[]);
+    let old_admin_call = client.try_transfer_admin(&admin);
+
+    assert!(
+        old_admin_call.is_err(),
+        "the previous admin must not be able to move the role back"
+    );
+    assert_eq!(
+        client.admin(),
+        new_admin,
+        "the stored admin must still be the new one"
+    );
+}
