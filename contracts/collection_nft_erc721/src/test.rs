@@ -1094,3 +1094,81 @@ fn collection_count_unchanged_by_admin_operations() {
 
     assert_eq!(client.collection_count(), 1u64);
 }
+// ── initialize: the parts that were not covered ──────────────────────────────
+
+/// `cannot_initialize_twice` asserts the error but not what survives it. A
+/// refused re-initialisation must leave the original configuration intact —
+/// otherwise a second caller could silently rewrite the collection.
+#[test]
+fn refused_reinitialisation_leaves_the_original_configuration_alone() {
+    let (env, client, _contract_id, creator) = setup();
+    let original_receiver = client.royalty_info().0;
+    let original_max_supply = client.max_supply();
+
+    let intruder_receiver = Address::generate(&env);
+    let result = client.try_initialize(
+        &Address::generate(&env),
+        &String::from_str(&env, "Hijacked"),
+        &String::from_str(&env, "HJK"),
+        &7u64,
+        &9_999u32,
+        &intruder_receiver,
+    );
+
+    assert_eq!(result, Err(Ok(Error::AlreadyInitialized)));
+    assert_eq!(client.name(), String::from_str(&env, "Test Collection 721"));
+    assert_eq!(client.symbol(), String::from_str(&env, "T721"));
+    assert_eq!(client.creator(), creator);
+    assert_eq!(client.max_supply(), original_max_supply);
+    assert_eq!(client.total_supply(), 0u64);
+    assert_eq!(client.next_token_id(), 0u64);
+    assert_eq!(
+        client.royalty_info(),
+        (original_receiver, 500u32),
+        "the royalty configuration must not have been rewritten"
+    );
+}
+
+/// The full royalty range is stored verbatim: the cap the launchpad enforces is
+/// 100%, and exactly at that cap the value must survive the round trip.
+#[test]
+fn initialize_stores_a_hundred_percent_royalty_verbatim() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(NormalNFT721, ());
+    let client = NormalNFT721Client::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    client.initialize(
+        &creator,
+        &String::from_str(&env, "At The Cap"),
+        &String::from_str(&env, "CAP"),
+        &1u64,
+        &10_000u32,
+        &receiver,
+    );
+
+    assert_eq!(client.royalty_info(), (receiver, 10_000u32));
+}
+
+/// "Unlimited" is expressed as `u64::MAX` (the comment on the parameter says so).
+/// It must be stored verbatim rather than clamped to something smaller.
+#[test]
+fn initialize_stores_unlimited_supply_verbatim() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(NormalNFT721, ());
+    let client = NormalNFT721Client::new(&env, &contract_id);
+
+    client.initialize(
+        &Address::generate(&env),
+        &String::from_str(&env, "Unlimited"),
+        &String::from_str(&env, "UNL"),
+        &u64::MAX,
+        &0u32,
+        &Address::generate(&env),
+    );
+
+    assert_eq!(client.max_supply(), u64::MAX);
+}
