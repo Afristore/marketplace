@@ -1347,12 +1347,7 @@ fn set_wasm_hashes_stores_an_all_zero_hash() {
     let (client, _admin, _fee) = setup_launchpad(&env);
 
     let zero = hash(&env, 0);
-    client.set_wasm_hashes(
-        &zero,
-        &hash(&env, 1),
-        &hash(&env, 2),
-        &hash(&env, 3),
-    );
+    client.set_wasm_hashes(&zero, &hash(&env, 1), &hash(&env, 2), &hash(&env, 3));
 
     assert_eq!(stored_wasm_hashes(&env, &client.address).0, zero);
 }
