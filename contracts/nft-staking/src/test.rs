@@ -123,6 +123,167 @@ fn mint_token(env: &Env, collection: &Address, to: &Address, token_id: u64) {
 /// out per second staked, per NFT position.
 const REWARD_RATE: i128 = 1_000_000;
 
+// Explicit nft-staking coverage for issues #826, #827, #828, and #830.
+
+#[test]
+fn test_get_reward_token_returns_initialized_asset() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collection = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+    let staking_id = env.register_contract(None, crate::NftStaking);
+    let staking = NftStakingClient::new(&env, &staking_id);
+
+    staking.init(&admin, &collection, &reward_token, &7_500i128);
+
+    assert_eq!(
+        staking.get_reward_token(),
+        reward_token,
+        "get_reward_token must return the asset configured at initialization"
+    );
+}
+
+#[test]
+fn test_get_reward_token_reverts_before_initialization() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let staking_id = env.register_contract(None, crate::NftStaking);
+    let staking = NftStakingClient::new(&env, &staking_id);
+
+    let err = staking.try_get_reward_token().unwrap_err().unwrap();
+    assert_eq!(err, StakingError::NotInitialized.into());
+}
+
+#[test]
+fn test_get_reward_rate_returns_initialized_rate() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let collection = Address::generate(&env);
+    let reward_token = Address::generate(&env);
+    let staking_id = env.register_contract(None, crate::NftStaking);
+    let staking = NftStakingClient::new(&env, &staking_id);
+    let configured_rate = 42_000i128;
+
+    staking.init(&admin, &collection, &reward_token, &configured_rate);
+
+    assert_eq!(
+        staking.get_reward_rate(),
+        configured_rate,
+        "get_reward_rate must expose the configured rewards-per-second value"
+    );
+}
+
+#[test]
+fn test_get_reward_rate_reverts_before_initialization() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let staking_id = env.register_contract(None, crate::NftStaking);
+    let staking = NftStakingClient::new(&env, &staking_id);
+
+    let err = staking.try_get_reward_rate().unwrap_err().unwrap();
+    assert_eq!(err, StakingError::NotInitialized.into());
+}
+
+#[test]
+fn test_set_paused_blocks_and_restores_staking() {
+    let (env, staking, user, collection, _admin) = setup_with_mock();
+
+    mint_token(&env, &collection, &user, 0);
+
+    staking.set_paused(&true);
+    assert!(
+        staking.is_paused(),
+        "set_paused(true) must enable pause state"
+    );
+
+    let err = staking
+        .try_stake_erc721(&user, &collection, &0)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::ContractPaused.into());
+    assert_eq!(
+        staking.total_staked(),
+        0,
+        "paused stake attempts must not mutate total staked"
+    );
+
+    staking.set_paused(&false);
+    assert!(
+        !staking.is_paused(),
+        "set_paused(false) must clear pause state"
+    );
+
+    staking.stake_erc721(&user, &collection, &0);
+    assert_eq!(staking.total_staked(), 1);
+}
+
+#[test]
+fn test_stake_erc721_records_position_and_custodies_token() {
+    let (env, staking, user, collection, _admin) = setup_with_mock();
+
+    mint_token(&env, &collection, &user, 0);
+    staking.stake_erc721(&user, &collection, &0);
+
+    let pos = staking
+        .get_staked_position(&user, &collection, &0)
+        .expect("stake_erc721 must persist a position");
+
+    assert_eq!(pos.owner, user);
+    assert_eq!(pos.token_address, collection);
+    assert_eq!(pos.token_id, 0);
+    assert_eq!(staking.total_staked(), 1);
+
+    let owner: Address = env.invoke_contract(
+        &collection,
+        &Symbol::new(&env, "owner_of"),
+        soroban_sdk::vec![&env, 0u64.into_val(&env)],
+    );
+    assert_eq!(
+        owner, staking.address,
+        "stake_erc721 must transfer NFT custody to the staking contract"
+    );
+}
+
+#[test]
+fn test_stake_erc721_rejects_duplicate_position() {
+    let (env, staking, user, collection, _admin) = setup_with_mock();
+
+    mint_token(&env, &collection, &user, 0);
+    staking.stake_erc721(&user, &collection, &0);
+
+    let err = staking
+        .try_stake_erc721(&user, &collection, &0)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::AlreadyStaked.into());
+    assert_eq!(
+        staking.total_staked(),
+        1,
+        "duplicate stake attempts must not increment total staked"
+    );
+}
+
+#[test]
+fn test_stake_erc721_rejects_non_pool_collection() {
+    let (env, staking, user, collection, _admin) = setup_with_mock();
+    let wrong_collection = Address::generate(&env);
+
+    mint_token(&env, &collection, &user, 0);
+
+    let err = staking
+        .try_stake_erc721(&user, &wrong_collection, &0)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::InvalidToken.into());
+    assert_eq!(staking.total_staked(), 0);
+}
+
 /// Setup variant for exercising `claim_rewards`, which actually moves reward
 /// tokens. Unlike `setup_with_mock`, the reward token is a real Stellar Asset
 /// Contract (so `balance`/`transfer` work) and the staking contract is pre-funded
@@ -1223,4 +1384,478 @@ fn test_get_nft_address_gates_stake() {
     let err = staking.try_stake(&user, &other, &0).unwrap_err().unwrap();
     assert_eq!(err, StakingError::InvalidToken.into());
     assert_eq!(staking.get_nft_address(), collection);
+}
+
+// ── Mock ERC-1155 for issues #831 / #833 ─────────────────────────────────────
+
+mod mock_erc1155 {
+    use soroban_sdk::{contract, contractimpl, contracttype, Address, Bytes, Env};
+
+    #[contracttype]
+    pub enum DataKey {
+        Balance(Address, u64),
+    }
+
+    #[contract]
+    pub struct MockErc1155;
+
+    #[contractimpl]
+    impl MockErc1155 {
+        pub fn mint(env: Env, to: Address, token_id: u64, amount: i128) {
+            let bal: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Balance(to.clone(), token_id))
+                .unwrap_or(0);
+            env.storage()
+                .persistent()
+                .set(&DataKey::Balance(to.clone(), token_id), &(bal + amount));
+        }
+
+        pub fn balance_of(env: Env, owner: Address, token_id: u64) -> i128 {
+            env.storage()
+                .persistent()
+                .get(&DataKey::Balance(owner, token_id))
+                .unwrap_or(0)
+        }
+
+        /// Mirrors the ERC-1155 entrypoint the staking pool invokes:
+        /// `safe_transfer_from(from, to, token_id, amount: i128, data)`.
+        pub fn safe_transfer_from(
+            env: Env,
+            from: Address,
+            to: Address,
+            token_id: u64,
+            amount: i128,
+            _data: Bytes,
+        ) {
+            let from_bal: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Balance(from.clone(), token_id))
+                .unwrap_or(0);
+            if from_bal < amount {
+                panic!("insufficient balance");
+            }
+            env.storage().persistent().set(
+                &DataKey::Balance(from.clone(), token_id),
+                &(from_bal - amount),
+            );
+            let to_bal: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Balance(to.clone(), token_id))
+                .unwrap_or(0);
+            env.storage()
+                .persistent()
+                .set(&DataKey::Balance(to.clone(), token_id), &(to_bal + amount));
+        }
+    }
+}
+
+/// Pool wired against a MockErc1155 collection. Returns
+/// `(env, staking, user, collection, admin)` like `setup_with_mock`.
+fn setup_erc1155() -> (Env, NftStakingClient<'static>, Address, Address, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let collection = env.register_contract(None, mock_erc1155::MockErc1155);
+    let reward_token = Address::generate(&env);
+
+    let staking_id = env.register_contract(None, crate::NftStaking);
+    let staking = NftStakingClient::new(&env, &staking_id);
+
+    staking.init(&admin, &collection, &reward_token, &1_000_000i128);
+
+    (env, staking, user, collection, admin)
+}
+
+fn mint_erc1155(env: &Env, collection: &Address, to: &Address, token_id: u64, amount: i128) {
+    env.invoke_contract::<()>(
+        collection,
+        &Symbol::new(env, "mint"),
+        soroban_sdk::vec![
+            env,
+            to.clone().into_val(env),
+            token_id.into_val(env),
+            amount.into_val(env),
+        ],
+    );
+}
+
+fn erc1155_balance(env: &Env, collection: &Address, owner: &Address, token_id: u64) -> i128 {
+    env.invoke_contract(
+        collection,
+        &Symbol::new(env, "balance_of"),
+        soroban_sdk::vec![env, owner.clone().into_val(env), token_id.into_val(env)],
+    )
+}
+
+// ── Issue #831: stake_erc1155 ───────────────────────────────────────────────
+
+/// Happy path: `stake_erc1155` creates a position, escrows the tokens in the
+/// pool, and records the stake against the user.
+#[test]
+fn test_stake_erc1155_happy_path_creates_position_and_escrows_tokens() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+
+    mint_erc1155(&env, &collection, &user, 0, 10);
+    staking.stake_erc1155(&user, &collection, &0, &4);
+
+    let pos = staking.get_staked_position(&user, &collection, &0).unwrap();
+    assert_eq!(pos.owner, user);
+    assert_eq!(pos.token_address, collection);
+    assert_eq!(pos.token_id, 0);
+    assert_eq!(pos.staked_at, env.ledger().timestamp());
+    assert_eq!(pos.rewards_earned, 0);
+
+    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(staking.get_user_stakes(&user).len(), 1);
+
+    // Tokens moved from the user into the pool's custody.
+    assert_eq!(erc1155_balance(&env, &collection, &user, 0), 6);
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 4);
+}
+
+/// Paused pool: `stake_erc1155` reverts with `ContractPaused` and moves nothing.
+#[test]
+fn test_stake_erc1155_fails_when_paused() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+
+    mint_erc1155(&env, &collection, &user, 0, 10);
+    staking.set_paused(&true);
+
+    let err = staking
+        .try_stake_erc1155(&user, &collection, &0, &1)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::ContractPaused.into());
+
+    assert!(staking
+        .get_staked_position(&user, &collection, &0)
+        .is_none());
+    assert_eq!(staking.total_staked(), 0);
+    assert_eq!(erc1155_balance(&env, &collection, &user, 0), 10);
+}
+
+/// Wrong collection: `stake_erc1155` reverts with `InvalidToken`.
+#[test]
+fn test_stake_erc1155_fails_with_wrong_token() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+    let wrong_token = Address::generate(&env);
+
+    mint_erc1155(&env, &collection, &user, 0, 10);
+
+    let err = staking
+        .try_stake_erc1155(&user, &wrong_token, &0, &1)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::InvalidToken.into());
+
+    assert_eq!(staking.total_staked(), 0);
+    assert_eq!(erc1155_balance(&env, &collection, &user, 0), 10);
+}
+
+/// Second stake of the same token id reverts with `AlreadyStaked` and the
+/// first position's escrow is untouched.
+#[test]
+fn test_stake_erc1155_double_stake_fails() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+
+    mint_erc1155(&env, &collection, &user, 0, 10);
+    staking.stake_erc1155(&user, &collection, &0, &4);
+
+    let err = staking
+        .try_stake_erc1155(&user, &collection, &0, &1)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::AlreadyStaked.into());
+
+    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(erc1155_balance(&env, &collection, &user, 0), 6);
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 4);
+}
+
+/// Staking more units than the user owns fails in the token transfer, and no
+/// position or escrow is created as a side effect.
+#[test]
+fn test_stake_erc1155_fails_when_insufficient_balance() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+
+    mint_erc1155(&env, &collection, &user, 0, 2);
+
+    // The mock's `safe_transfer_from` panics when from-balance < amount.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        staking.stake_erc1155(&user, &collection, &0, &5);
+    }));
+    assert!(result.is_err(), "staking more than owned must fail");
+
+    assert!(staking
+        .get_staked_position(&user, &collection, &0)
+        .is_none());
+    assert_eq!(staking.total_staked(), 0);
+    assert_eq!(erc1155_balance(&env, &collection, &user, 0), 2);
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 0);
+}
+
+/// Distinct token ids are distinct positions in the same pool.
+#[test]
+fn test_stake_erc1155_multiple_token_ids() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+
+    mint_erc1155(&env, &collection, &user, 0, 5);
+    mint_erc1155(&env, &collection, &user, 1, 5);
+    staking.stake_erc1155(&user, &collection, &0, &2);
+    staking.stake_erc1155(&user, &collection, &1, &3);
+
+    assert_eq!(staking.total_staked(), 2);
+    assert_eq!(staking.get_user_stakes(&user).len(), 2);
+    assert!(staking
+        .get_staked_position(&user, &collection, &0)
+        .is_some());
+    assert!(staking
+        .get_staked_position(&user, &collection, &1)
+        .is_some());
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 2);
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, 1), 3);
+}
+
+// ── Issue #833: unstake_erc1155 ─────────────────────────────────────────────
+
+/// Happy path: `unstake_erc1155` returns the escrowed tokens and clears all
+/// staking state.
+#[test]
+fn test_unstake_erc1155_happy_path_returns_tokens_and_clears_state() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+
+    mint_erc1155(&env, &collection, &user, 0, 10);
+    staking.stake_erc1155(&user, &collection, &0, &4);
+    assert_eq!(staking.total_staked(), 1);
+
+    staking.unstake_erc1155(&user, &collection, &0, &4);
+
+    assert!(staking
+        .get_staked_position(&user, &collection, &0)
+        .is_none());
+    assert_eq!(staking.total_staked(), 0);
+    assert_eq!(staking.get_user_stakes(&user).len(), 0);
+
+    // Tokens returned to the user; pool holds none.
+    assert_eq!(erc1155_balance(&env, &collection, &user, 0), 10);
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 0);
+}
+
+/// Never-staked token: `unstake_erc1155` reverts with `NotStaked` and does
+/// not move any tokens.
+#[test]
+fn test_unstake_erc1155_fails_when_not_staked() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+
+    mint_erc1155(&env, &collection, &user, 0, 10);
+
+    let err = staking
+        .try_unstake_erc1155(&user, &collection, &0, &1)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::NotStaked.into());
+
+    assert_eq!(staking.total_staked(), 0);
+    assert_eq!(erc1155_balance(&env, &collection, &user, 0), 10);
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 0);
+}
+
+/// Paused pool: `unstake_erc1155` reverts with `ContractPaused` and keeps the
+/// position plus escrow intact.
+#[test]
+fn test_unstake_erc1155_fails_when_paused() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+
+    mint_erc1155(&env, &collection, &user, 0, 10);
+    staking.stake_erc1155(&user, &collection, &0, &4);
+    staking.set_paused(&true);
+
+    let err = staking
+        .try_unstake_erc1155(&user, &collection, &0, &4)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::ContractPaused.into());
+
+    assert!(staking
+        .get_staked_position(&user, &collection, &0)
+        .is_some());
+    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 4);
+    assert_eq!(erc1155_balance(&env, &collection, &user, 0), 6);
+}
+
+/// Wrong collection: `unstake_erc1155` reverts with `InvalidToken`.
+#[test]
+fn test_unstake_erc1155_fails_with_wrong_token() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+    let wrong_token = Address::generate(&env);
+
+    mint_erc1155(&env, &collection, &user, 0, 10);
+    staking.stake_erc1155(&user, &collection, &0, &4);
+
+    let err = staking
+        .try_unstake_erc1155(&user, &wrong_token, &0, &4)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::InvalidToken.into());
+
+    assert!(staking
+        .get_staked_position(&user, &collection, &0)
+        .is_some());
+    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 4);
+}
+
+/// Second unstake of the same token id reverts with `NotStaked`.
+#[test]
+fn test_unstake_erc1155_double_unstake_fails() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+
+    mint_erc1155(&env, &collection, &user, 0, 10);
+    staking.stake_erc1155(&user, &collection, &0, &4);
+    staking.unstake_erc1155(&user, &collection, &0, &4);
+
+    let err = staking
+        .try_unstake_erc1155(&user, &collection, &0, &4)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::NotStaked.into());
+    assert_eq!(staking.total_staked(), 0);
+    assert_eq!(erc1155_balance(&env, &collection, &user, 0), 10);
+}
+
+/// Positions are keyed by the caller, so a non-staker cannot unstake (and
+/// thereby steal) another user's escrowed tokens.
+#[test]
+fn test_unstake_erc1155_fails_for_different_user() {
+    let (env, staking, victim, collection, _admin) = setup_erc1155();
+    let attacker = Address::generate(&env);
+
+    mint_erc1155(&env, &collection, &victim, 0, 10);
+    staking.stake_erc1155(&victim, &collection, &0, &4);
+
+    let err = staking
+        .try_unstake_erc1155(&attacker, &collection, &0, &4)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::NotStaked.into());
+
+    // Victim's position and the pool's escrow are intact.
+    assert!(staking
+        .get_staked_position(&victim, &collection, &0)
+        .is_some());
+    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 4);
+    assert_eq!(erc1155_balance(&env, &collection, &victim, 0), 6);
+    assert_eq!(erc1155_balance(&env, &collection, &attacker, 0), 0);
+}
+
+/// Accrual path: unstaking after time has elapsed still succeeds and returns
+/// the escrowed tokens (the reward accrual runs without moving reward tokens).
+#[test]
+fn test_unstake_erc1155_after_time_passes_still_returns_tokens() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+
+    env.ledger().set_timestamp(1000);
+    mint_erc1155(&env, &collection, &user, 0, 10);
+    staking.stake_erc1155(&user, &collection, &0, &4);
+
+    env.ledger().set_timestamp(2500);
+    staking.unstake_erc1155(&user, &collection, &0, &4);
+
+    assert!(staking
+        .get_staked_position(&user, &collection, &0)
+        .is_none());
+    assert_eq!(staking.total_staked(), 0);
+    assert_eq!(erc1155_balance(&env, &collection, &user, 0), 10);
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 0);
+}
+
+// ── Issue #834: get_staked_position ─────────────────────────────────────────
+
+/// Never-staked token: the getter returns `None`.
+#[test]
+fn test_get_staked_position_returns_none_when_never_staked() {
+    let (env, staking, user, collection, _admin) = setup_with_mock();
+
+    mint_token(&env, &collection, &user, 0);
+    assert!(staking
+        .get_staked_position(&user, &collection, &0)
+        .is_none());
+}
+
+/// After staking, every field of the position is populated correctly and
+/// `staked_at` mirrors the ledger timestamp at stake time.
+#[test]
+fn test_get_staked_position_returns_full_position_after_stake() {
+    let (env, staking, user, collection, _admin) = setup_with_mock();
+
+    env.ledger().set_timestamp(1234);
+    mint_token(&env, &collection, &user, 7);
+    staking.stake(&user, &collection, &7);
+
+    let pos = staking.get_staked_position(&user, &collection, &7).unwrap();
+    assert_eq!(pos.owner, user);
+    assert_eq!(pos.token_address, collection);
+    assert_eq!(pos.token_id, 7);
+    assert_eq!(pos.staked_at, 1234);
+    assert_eq!(pos.rewards_earned, 0);
+}
+
+/// The lookup key includes the user address: another user's query for the
+/// same token returns `None`.
+#[test]
+fn test_get_staked_position_is_scoped_to_caller() {
+    let (env, staking, user1, collection, _admin) = setup_with_mock();
+    let user2 = Address::generate(&env);
+
+    mint_token(&env, &collection, &user1, 0);
+    staking.stake(&user1, &collection, &0);
+
+    assert!(staking
+        .get_staked_position(&user1, &collection, &0)
+        .is_some());
+    assert!(staking
+        .get_staked_position(&user2, &collection, &0)
+        .is_none());
+}
+
+/// The lookup key includes the token id: a non-staked id returns `None` even
+/// when the same user staked a different id from the same collection.
+#[test]
+fn test_get_staked_position_is_scoped_to_token_id() {
+    let (env, staking, user, collection, _admin) = setup_with_mock();
+
+    mint_token(&env, &collection, &user, 0);
+    staking.stake(&user, &collection, &0);
+
+    assert!(staking
+        .get_staked_position(&user, &collection, &0)
+        .is_some());
+    assert!(staking
+        .get_staked_position(&user, &collection, &1)
+        .is_none());
+}
+
+/// After unstaking, the position record is gone and the getter returns `None`.
+#[test]
+fn test_get_staked_position_returns_none_after_unstake() {
+    let (env, staking, user, collection, _admin) = setup_with_mock();
+
+    mint_token(&env, &collection, &user, 0);
+    staking.stake(&user, &collection, &0);
+    assert!(staking
+        .get_staked_position(&user, &collection, &0)
+        .is_some());
+
+    staking.unstake(&user, &collection, &0);
+    assert!(staking
+        .get_staked_position(&user, &collection, &0)
+        .is_none());
 }
