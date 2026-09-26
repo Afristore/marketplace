@@ -1088,7 +1088,7 @@ fn initialize_rejects_fee_bps_over_10000() {
     let token = Address::generate(&env);
 
     let result = client.try_initialize(&admin, &receiver, &10_001u32, &token);
-    assert_eq!(result, Err(Ok(Error::InvalidFeeBps)));
+    assert_eq!(result, Err(Ok(Error::InvalidFee)));
 }
 
 #[test]
@@ -1099,7 +1099,7 @@ fn update_platform_fee_rejects_fee_bps_over_10000() {
 
     let new_receiver = Address::generate(&env);
     let result = client.try_update_platform_fee(&new_receiver, &10_001u32);
-    assert_eq!(result, Err(Ok(Error::InvalidFeeBps)));
+    assert_eq!(result, Err(Ok(Error::InvalidFee)));
 }
 
 #[test]
