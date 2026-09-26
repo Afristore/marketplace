@@ -1094,3 +1094,115 @@ fn collection_count_unchanged_by_admin_operations() {
 
     assert_eq!(client.collection_count(), 1u64);
 }
+
+// ── set_wasm_hashes: happy path and edge cases ───────────────────────────────
+
+/// Read all four stored wasm hashes. There is no public getter for them, so
+/// instance storage is the only way to see what the setter actually wrote.
+fn stored_wasm_hashes(
+    env: &Env,
+    launchpad: &Address,
+) -> (BytesN<32>, BytesN<32>, BytesN<32>, BytesN<32>) {
+    env.as_contract(launchpad, || {
+        let storage = env.storage().instance();
+        (
+            storage
+                .get(&crate::contract::DataKey::WasmNormal721)
+                .unwrap(),
+            storage
+                .get(&crate::contract::DataKey::WasmNormal1155)
+                .unwrap(),
+            storage
+                .get(&crate::contract::DataKey::WasmLazy721)
+                .unwrap(),
+            storage
+                .get(&crate::contract::DataKey::WasmLazy1155)
+                .unwrap(),
+        )
+    })
+}
+
+fn hash(env: &Env, byte: u8) -> BytesN<32> {
+    BytesN::from_array(env, &[byte; 32])
+}
+
+/// Happy path: the four hashes land under their own keys, in the order the
+/// signature promises — a swap between two of them would be invisible to any
+/// test that only checked "something was stored".
+#[test]
+fn set_wasm_hashes_stores_each_hash_under_its_own_key() {
+    let env = Env::default();
+    let (client, _admin, _fee) = setup_launchpad(&env);
+
+    let normal_721 = hash(&env, 1);
+    let normal_1155 = hash(&env, 2);
+    let lazy_721 = hash(&env, 3);
+    let lazy_1155 = hash(&env, 4);
+
+    client.set_wasm_hashes(&normal_721, &normal_1155, &lazy_721, &lazy_1155);
+
+    assert_eq!(
+        stored_wasm_hashes(&env, &client.address),
+        (normal_721, normal_1155, lazy_721, lazy_1155)
+    );
+}
+
+/// A second call replaces all four, not just the ones that changed.
+#[test]
+fn set_wasm_hashes_replaces_every_hash_on_a_second_call() {
+    let env = Env::default();
+    let (client, _admin, _fee) = setup_launchpad(&env);
+
+    client.set_wasm_hashes(&hash(&env, 1), &hash(&env, 2), &hash(&env, 3), &hash(&env, 4));
+
+    let second = (hash(&env, 11), hash(&env, 12), hash(&env, 13), hash(&env, 14));
+    client.set_wasm_hashes(&second.0, &second.1, &second.2, &second.3);
+
+    assert_eq!(stored_wasm_hashes(&env, &client.address), second);
+}
+
+/// Re-setting the same values is idempotent: no error, no change.
+#[test]
+fn set_wasm_hashes_is_idempotent_for_the_same_values() {
+    let env = Env::default();
+    let (client, _admin, _fee) = setup_launchpad(&env);
+
+    let values = (hash(&env, 7), hash(&env, 8), hash(&env, 9), hash(&env, 10));
+    client.set_wasm_hashes(&values.0, &values.1, &values.2, &values.3);
+    client.set_wasm_hashes(&values.0, &values.1, &values.2, &values.3);
+
+    assert_eq!(stored_wasm_hashes(&env, &client.address), values);
+}
+
+/// Edge case: all four may legitimately be the same contract.
+#[test]
+fn set_wasm_hashes_accepts_one_hash_for_all_four() {
+    let env = Env::default();
+    let (client, _admin, _fee) = setup_launchpad(&env);
+
+    let single = hash(&env, 42);
+    client.set_wasm_hashes(&single, &single, &single, &single);
+
+    assert_eq!(
+        stored_wasm_hashes(&env, &client.address),
+        (single.clone(), single.clone(), single.clone(), single)
+    );
+}
+
+/// Edge case: the all-zero hash is a valid `BytesN<32>` and must be stored as
+/// given rather than treated as "unset" and skipped.
+#[test]
+fn set_wasm_hashes_stores_an_all_zero_hash() {
+    let env = Env::default();
+    let (client, _admin, _fee) = setup_launchpad(&env);
+
+    let zero = hash(&env, 0);
+    client.set_wasm_hashes(
+        &zero,
+        &hash(&env, 1),
+        &hash(&env, 2),
+        &hash(&env, 3),
+    );
+
+    assert_eq!(stored_wasm_hashes(&env, &client.address).0, zero);
+}
