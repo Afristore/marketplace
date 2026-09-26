@@ -1094,3 +1094,265 @@ fn collection_count_unchanged_by_admin_operations() {
 
     assert_eq!(client.collection_count(), 1u64);
 }
+// ── initialize: the parts that were not covered ──────────────────────────────
+
+/// `cannot_initialize_twice` asserts the error but not what survives it. A
+/// refused re-initialisation must leave the original configuration intact —
+/// otherwise a second caller could silently rewrite the collection.
+#[test]
+fn refused_reinitialisation_leaves_the_original_configuration_alone() {
+    let (env, client, _contract_id, creator) = setup();
+    let original_receiver = client.royalty_info().0;
+    let original_max_supply = client.max_supply();
+
+    let intruder_receiver = Address::generate(&env);
+    let result = client.try_initialize(
+        &Address::generate(&env),
+        &String::from_str(&env, "Hijacked"),
+        &String::from_str(&env, "HJK"),
+        &7u64,
+        &9_999u32,
+        &intruder_receiver,
+    );
+
+    assert_eq!(result, Err(Ok(Error::AlreadyInitialized)));
+    assert_eq!(client.name(), String::from_str(&env, "Test Collection 721"));
+    assert_eq!(client.symbol(), String::from_str(&env, "T721"));
+    assert_eq!(client.creator(), creator);
+    assert_eq!(client.max_supply(), original_max_supply);
+    assert_eq!(client.total_supply(), 0u64);
+    assert_eq!(client.next_token_id(), 0u64);
+    assert_eq!(
+        client.royalty_info(),
+        (original_receiver, 500u32),
+        "the royalty configuration must not have been rewritten"
+    );
+}
+
+/// The full royalty range is stored verbatim: the cap the launchpad enforces is
+/// 100%, and exactly at that cap the value must survive the round trip.
+#[test]
+fn initialize_stores_a_hundred_percent_royalty_verbatim() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(NormalNFT721, ());
+    let client = NormalNFT721Client::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    client.initialize(
+        &creator,
+        &String::from_str(&env, "At The Cap"),
+        &String::from_str(&env, "CAP"),
+        &1u64,
+        &10_000u32,
+        &receiver,
+    );
+
+    assert_eq!(client.royalty_info(), (receiver, 10_000u32));
+}
+
+/// "Unlimited" is expressed as `u64::MAX` (the comment on the parameter says so).
+/// It must be stored verbatim rather than clamped to something smaller.
+#[test]
+fn initialize_stores_unlimited_supply_verbatim() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(NormalNFT721, ());
+    let client = NormalNFT721Client::new(&env, &contract_id);
+
+    client.initialize(
+        &Address::generate(&env),
+        &String::from_str(&env, "Unlimited"),
+        &String::from_str(&env, "UNL"),
+        &u64::MAX,
+        &0u32,
+        &Address::generate(&env),
+    );
+
+    assert_eq!(client.max_supply(), u64::MAX);
+}
+
+// ── set_wasm_hashes authorisation ────────────────────────────────────────────
+
+/// Read a stored wasm hash straight out of the contract's instance storage.
+/// There is no public getter for these four, so the storage key is the only way
+/// to assert that a refused call left the value alone.
+fn stored_normal_721_hash(env: &Env, launchpad: &Address) -> Option<BytesN<32>> {
+    env.as_contract(launchpad, || {
+        env.storage()
+            .instance()
+            .get(&crate::contract::DataKey::WasmNormal721)
+    })
+}
+
+/// `set_wasm_hashes` is gated by `only_admin`, which calls `require_auth()` on
+/// the stored admin. With no authorisations the call must be refused *and* the
+/// previously stored hashes must survive untouched.
+#[test]
+fn set_wasm_hashes_is_refused_without_the_admins_authorisation() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad(&env);
+    let launchpad = client.address.clone();
+
+    let original = BytesN::from_array(&env, &[1u8; 32]);
+    client.set_wasm_hashes(
+        &original,
+        &BytesN::from_array(&env, &[2u8; 32]),
+        &BytesN::from_array(&env, &[3u8; 32]),
+        &BytesN::from_array(&env, &[4u8; 32]),
+    );
+    assert_eq!(stored_normal_721_hash(&env, &launchpad), Some(original.clone()));
+
+    let attacker = BytesN::from_array(&env, &[9u8; 32]);
+    env.set_auths(&[]);
+    let refused = client.try_set_wasm_hashes(
+        &attacker,
+        &BytesN::from_array(&env, &[9u8; 32]),
+        &BytesN::from_array(&env, &[9u8; 32]),
+        &BytesN::from_array(&env, &[9u8; 32]),
+    );
+
+    assert!(refused.is_err(), "an unauthorised caller must not set the wasm hashes");
+    assert_eq!(
+        stored_normal_721_hash(&env, &launchpad),
+        Some(original),
+        "a refused call must not overwrite the stored hashes"
+    );
+}
+
+/// The positive control: with the admin's authorisation the same call does
+/// replace the stored hash, so the test above cannot be passing because the
+/// entry point is broken for everyone.
+#[test]
+fn set_wasm_hashes_replaces_the_stored_hash_when_authorised() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad(&env);
+    let launchpad = client.address.clone();
+
+    let first = BytesN::from_array(&env, &[5u8; 32]);
+    let second = BytesN::from_array(&env, &[6u8; 32]);
+    let other = BytesN::from_array(&env, &[7u8; 32]);
+
+    client.set_wasm_hashes(&first, &other, &other, &other);
+    assert_eq!(stored_normal_721_hash(&env, &launchpad), Some(first.clone()));
+
+    client.set_wasm_hashes(&second, &other, &other, &other);
+    assert_eq!(
+        stored_normal_721_hash(&env, &launchpad),
+        Some(second),
+        "an authorised call must be able to replace the hash"
+    );
+}
+
+// ── set_wasm_hashes: happy path and edge cases ───────────────────────────────
+
+/// Read all four stored wasm hashes. There is no public getter for them, so
+/// instance storage is the only way to see what the setter actually wrote.
+fn stored_wasm_hashes(
+    env: &Env,
+    launchpad: &Address,
+) -> (BytesN<32>, BytesN<32>, BytesN<32>, BytesN<32>) {
+    env.as_contract(launchpad, || {
+        let storage = env.storage().instance();
+        (
+            storage
+                .get(&crate::contract::DataKey::WasmNormal721)
+                .unwrap(),
+            storage
+                .get(&crate::contract::DataKey::WasmNormal1155)
+                .unwrap(),
+            storage
+                .get(&crate::contract::DataKey::WasmLazy721)
+                .unwrap(),
+            storage
+                .get(&crate::contract::DataKey::WasmLazy1155)
+                .unwrap(),
+        )
+    })
+}
+
+fn hash(env: &Env, byte: u8) -> BytesN<32> {
+    BytesN::from_array(env, &[byte; 32])
+}
+
+/// Happy path: the four hashes land under their own keys, in the order the
+/// signature promises — a swap between two of them would be invisible to any
+/// test that only checked "something was stored".
+#[test]
+fn set_wasm_hashes_stores_each_hash_under_its_own_key() {
+    let env = Env::default();
+    let (client, _admin, _fee) = setup_launchpad(&env);
+
+    let normal_721 = hash(&env, 1);
+    let normal_1155 = hash(&env, 2);
+    let lazy_721 = hash(&env, 3);
+    let lazy_1155 = hash(&env, 4);
+
+    client.set_wasm_hashes(&normal_721, &normal_1155, &lazy_721, &lazy_1155);
+
+    assert_eq!(
+        stored_wasm_hashes(&env, &client.address),
+        (normal_721, normal_1155, lazy_721, lazy_1155)
+    );
+}
+
+/// A second call replaces all four, not just the ones that changed.
+#[test]
+fn set_wasm_hashes_replaces_every_hash_on_a_second_call() {
+    let env = Env::default();
+    let (client, _admin, _fee) = setup_launchpad(&env);
+
+    client.set_wasm_hashes(&hash(&env, 1), &hash(&env, 2), &hash(&env, 3), &hash(&env, 4));
+
+    let second = (hash(&env, 11), hash(&env, 12), hash(&env, 13), hash(&env, 14));
+    client.set_wasm_hashes(&second.0, &second.1, &second.2, &second.3);
+
+    assert_eq!(stored_wasm_hashes(&env, &client.address), second);
+}
+
+/// Re-setting the same values is idempotent: no error, no change.
+#[test]
+fn set_wasm_hashes_is_idempotent_for_the_same_values() {
+    let env = Env::default();
+    let (client, _admin, _fee) = setup_launchpad(&env);
+
+    let values = (hash(&env, 7), hash(&env, 8), hash(&env, 9), hash(&env, 10));
+    client.set_wasm_hashes(&values.0, &values.1, &values.2, &values.3);
+    client.set_wasm_hashes(&values.0, &values.1, &values.2, &values.3);
+
+    assert_eq!(stored_wasm_hashes(&env, &client.address), values);
+}
+
+/// Edge case: all four may legitimately be the same contract.
+#[test]
+fn set_wasm_hashes_accepts_one_hash_for_all_four() {
+    let env = Env::default();
+    let (client, _admin, _fee) = setup_launchpad(&env);
+
+    let single = hash(&env, 42);
+    client.set_wasm_hashes(&single, &single, &single, &single);
+
+    assert_eq!(
+        stored_wasm_hashes(&env, &client.address),
+        (single.clone(), single.clone(), single.clone(), single)
+    );
+}
+
+/// Edge case: the all-zero hash is a valid `BytesN<32>` and must be stored as
+/// given rather than treated as "unset" and skipped.
+#[test]
+fn set_wasm_hashes_stores_an_all_zero_hash() {
+    let env = Env::default();
+    let (client, _admin, _fee) = setup_launchpad(&env);
+
+    let zero = hash(&env, 0);
+    client.set_wasm_hashes(
+        &zero,
+        &hash(&env, 1),
+        &hash(&env, 2),
+        &hash(&env, 3),
+    );
+
+    assert_eq!(stored_wasm_hashes(&env, &client.address).0, zero);
+}
