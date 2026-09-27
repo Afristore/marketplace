@@ -23,6 +23,10 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Local AI tooling
+.claude
+.claude/
+
 # WASM / build outputs
 *.wasm
 *.optimized.wasm
