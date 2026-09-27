@@ -4234,6 +4234,8 @@ fn test_get_total_listings_unchanged_by_failed_create() {
     );
     assert!(res.is_err(), "create_listing must reject a zero price");
     assert_eq!(client.get_total_listings(), 0u64);
+}
+
 // ── Query coverage: issues #881–#884 ────────────────────────────────────
 
 #[test]
