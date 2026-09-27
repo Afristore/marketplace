@@ -4520,6 +4520,96 @@ fn test_buying_existing_listing_after_whitelist_emptied_succeeds() {
     assert!(client.buy_artwork(&buyer, &listing_id));
 }
 
+// ── get_total_listings tests ─────────────────────────────────
+
+#[test]
+fn test_get_total_listings_defaults_to_zero() {
+    let (_env, client, _artist, _buyer, _token_id, _contract_id, _collection_id) = setup();
+    // No listing has ever been created — the counter must fall back to 0.
+    assert_eq!(client.get_total_listings(), 0u64);
+}
+
+#[test]
+fn test_get_total_listings_increments_per_listing() {
+    let (env, client, artist, _buyer, token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let first = create_test_listing(&env, &client, &artist, &token_id);
+    assert_eq!(first, 1u64);
+    assert_eq!(client.get_total_listings(), 1u64);
+
+    let second = create_test_listing(&env, &client, &artist, &token_id);
+    assert_eq!(second, 2u64);
+    assert_eq!(client.get_total_listings(), 2u64);
+}
+
+#[test]
+fn test_get_total_listings_counts_across_artists() {
+    let (env, client, artist, _buyer, token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let other_artist = Address::generate(&env);
+    create_test_listing(&env, &client, &artist, &token_id);
+    create_test_listing(&env, &client, &other_artist, &token_id);
+
+    // The counter is global, not per-artist.
+    assert_eq!(client.get_total_listings(), 2u64);
+    assert_eq!(client.get_artist_listings(&artist).len(), 1u32);
+    assert_eq!(client.get_artist_listings(&other_artist).len(), 1u32);
+}
+
+#[test]
+fn test_get_total_listings_is_read_only() {
+    let (env, client, artist, _buyer, token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    create_test_listing(&env, &client, &artist, &token_id);
+    assert_eq!(client.get_total_listings(), 1u64);
+
+    // Repeated calls must not mutate the counter.
+    assert_eq!(client.get_total_listings(), 1u64);
+    assert_eq!(client.get_total_listings(), 1u64);
+}
+
+#[test]
+fn test_get_total_listings_unchanged_by_cancel() {
+    let (env, client, artist, _buyer, token_id, _contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let listing_id = create_test_listing(&env, &client, &artist, &token_id);
+    assert_eq!(client.get_total_listings(), 1u64);
+
+    // Cancelling does not delete the listing: total ever created stays 1.
+    assert!(client.cancel_listing(&artist, &listing_id));
+    assert_eq!(client.get_total_listings(), 1u64);
+}
+
+#[test]
+fn test_get_total_listings_unchanged_by_failed_create() {
+    let (env, client, artist, _buyer, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let cid = bytes!(&env, 0x516d74657374);
+    // Zero price is rejected with InvalidPrice (#2) before any counter bump.
+    let res = client.try_create_listing(
+        &artist,
+        &0_i128,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &valid_recipients(&env, &artist),
+    );
+    assert!(res.is_err(), "create_listing must reject a zero price");
+    assert_eq!(client.get_total_listings(), 0u64);
+}
+
 // ── Query coverage: issues #881–#884 ────────────────────────────────────
 
 #[test]
