@@ -12,7 +12,7 @@ test.describe("Freighter Not Installed", () => {
       });
     } catch (error) {
       console.error("Test error:", error);
-      expect.fail(`Test failed with error: ${error}`);
+      throw new Error(`Test failed with error: ${error}`);
     }
   });
 
@@ -28,7 +28,7 @@ test.describe("Freighter Not Installed", () => {
       });
     } catch (error) {
       console.error("Test error:", error);
-      expect.fail(`Test failed with error: ${error}`);
+      throw new Error(`Test failed with error: ${error}`);
     }
   });
 });
