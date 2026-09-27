@@ -4321,3 +4321,255 @@ fn test_get_offers_by_listing_returns_empty_for_listing_without_offers() {
 
     assert!(client.get_offers_by_listing(&999u64).is_empty());
 }
+// ── add_token_to_whitelist coverage ─────────────────────────────────────
+
+#[test]
+fn test_add_token_to_whitelist_happy_path() {
+    let (env, client, admin, _buyer, _token_id, _contract_id, _) = setup();
+    client.set_admin(&admin);
+
+    let token = Address::generate(&env);
+    // The whitelist starts empty.
+    assert!(client.get_token_whitelist().is_empty());
+
+    client.add_token_to_whitelist(&token);
+
+    let whitelist = client.get_token_whitelist();
+    assert_eq!(whitelist.len(), 1u32);
+    assert_eq!(whitelist.get(0).unwrap(), token);
+}
+
+#[test]
+fn test_add_token_to_whitelist_appends_in_order() {
+    let (env, client, admin, _buyer, _token_id, _contract_id, _) = setup();
+    client.set_admin(&admin);
+
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+    let third = Address::generate(&env);
+
+    client.add_token_to_whitelist(&first);
+    client.add_token_to_whitelist(&second);
+    client.add_token_to_whitelist(&third);
+
+    // Entries are appended in insertion order and none are dropped.
+    let whitelist = client.get_token_whitelist();
+    assert_eq!(whitelist.len(), 3u32);
+    assert_eq!(whitelist.get(0).unwrap(), first);
+    assert_eq!(whitelist.get(1).unwrap(), second);
+    assert_eq!(whitelist.get(2).unwrap(), third);
+}
+
+#[test]
+fn test_add_token_to_whitelist_is_idempotent() {
+    let (env, client, admin, _buyer, _token_id, _contract_id, _) = setup();
+    client.set_admin(&admin);
+
+    let token = Address::generate(&env);
+    let other = Address::generate(&env);
+
+    client.add_token_to_whitelist(&token);
+    client.add_token_to_whitelist(&other);
+    // Adding the same token again must not create a duplicate entry.
+    client.add_token_to_whitelist(&token);
+    client.add_token_to_whitelist(&token);
+
+    let whitelist = client.get_token_whitelist();
+    assert_eq!(whitelist.len(), 2u32);
+    assert_eq!(whitelist.get(0).unwrap(), token);
+    assert_eq!(whitelist.get(1).unwrap(), other);
+}
+
+#[test]
+fn test_add_token_to_whitelist_after_removal_re_adds_at_end() {
+    let (env, client, admin, _buyer, _token_id, _contract_id, _) = setup();
+    client.set_admin(&admin);
+
+    let first = Address::generate(&env);
+    let second = Address::generate(&env);
+
+    client.add_token_to_whitelist(&first);
+    client.add_token_to_whitelist(&second);
+    client.remove_token_from_whitelist(&first);
+
+    // Re-adding a previously removed token succeeds and lands at the end.
+    client.add_token_to_whitelist(&first);
+
+    let whitelist = client.get_token_whitelist();
+    assert_eq!(whitelist.len(), 2u32);
+    assert_eq!(whitelist.get(0).unwrap(), second);
+    assert_eq!(whitelist.get(1).unwrap(), first);
+}
+
+#[test]
+fn test_add_token_to_whitelist_allows_new_listings() {
+    let (env, client, admin, _buyer, _token_id, _contract_id, collection_id) = setup();
+    let artist = Address::generate(&env);
+    client.set_admin(&admin);
+
+    // Seed the whitelist with an unrelated token so it is non-empty and the
+    // empty-whitelist allow-all rule cannot mask the assertion below.
+    client.add_token_to_whitelist(&Address::generate(&env));
+    let payment_token = Address::generate(&env);
+
+    // Not whitelisted yet → create_listing is rejected with Unauthorized (#5).
+    let rejected = client.try_create_listing(
+        &artist,
+        &1_000_000_i128,
+        &symbol_short!("XLM"),
+        &payment_token,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &valid_recipients(&env, &artist),
+    );
+    assert!(rejected.is_err(), "unwhitelisted token must be rejected");
+
+    // After adding the token, the very same call succeeds.
+    client.add_token_to_whitelist(&payment_token);
+    let listing_id = client.create_listing(
+        &artist,
+        &1_000_000_i128,
+        &symbol_short!("XLM"),
+        &payment_token,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &valid_recipients(&env, &artist),
+    );
+    assert_eq!(listing_id, 1u64);
+}
+
+#[test]
+fn test_add_token_to_whitelist_allows_new_auctions() {
+    let (env, client, admin, _buyer, _token_id, _contract_id, collection_id) = setup();
+    let artist = Address::generate(&env);
+    client.set_admin(&admin);
+
+    client.add_token_to_whitelist(&Address::generate(&env));
+    let payment_token = Address::generate(&env);
+
+    let rejected = client.try_create_auction(
+        &artist,
+        &payment_token,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &1_000_000_i128,
+        &3600u64,
+        &valid_recipients(&env, &artist),
+    );
+    assert!(rejected.is_err(), "unwhitelisted token must be rejected");
+
+    client.add_token_to_whitelist(&payment_token);
+    let auction_id = client.create_auction(
+        &artist,
+        &payment_token,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &1_000_000_i128,
+        &3600u64,
+        &valid_recipients(&env, &artist),
+    );
+    assert_eq!(auction_id, 1u64);
+}
+
+#[test]
+fn test_add_token_to_whitelist_does_not_remove_existing_entries() {
+    let (env, client, admin, _buyer, _token_id, _contract_id, _) = setup();
+    client.set_admin(&admin);
+
+    let existing = Address::generate(&env);
+    client.add_token_to_whitelist(&existing);
+
+    // Adding unrelated tokens must leave the existing entry untouched.
+    for _ in 0..5 {
+        client.add_token_to_whitelist(&Address::generate(&env));
+    }
+
+    let whitelist = client.get_token_whitelist();
+    assert_eq!(whitelist.len(), 6u32);
+    assert_eq!(whitelist.get(0).unwrap(), existing);
+}
+
+#[test]
+fn test_add_token_to_whitelist_takes_effect_at_create_time() {
+    let (env, client, admin, _buyer, _token_id, _contract_id, collection_id) = setup();
+    let artist = Address::generate(&env);
+    client.set_admin(&admin);
+
+    let token = Address::generate(&env);
+    client.add_token_to_whitelist(&token);
+
+    // Once any token is whitelisted the list is no longer empty, so the
+    // allow-all fallback is disabled: the added token is accepted while an
+    // unrelated one is rejected.
+    let accepted = client.try_create_listing(
+        &artist,
+        &1_000_000_i128,
+        &symbol_short!("XLM"),
+        &token,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &valid_recipients(&env, &artist),
+    );
+    assert!(accepted.is_ok(), "whitelisted token must be accepted");
+
+    let rejected = client.try_create_listing(
+        &artist,
+        &1_000_000_i128,
+        &symbol_short!("XLM"),
+        &Address::generate(&env),
+        &collection_id,
+        &1u64,
+        &1u64,
+        &valid_recipients(&env, &artist),
+    );
+    assert!(
+        rejected.is_err(),
+        "unrelated token must be rejected while the whitelist is non-empty"
+    );
+}
+
+#[test]
+fn test_add_token_to_whitelist_emits_no_event() {
+    let (env, client, admin, _buyer, _token_id, _contract_id, _) = setup();
+    client.set_admin(&admin);
+
+    client.add_token_to_whitelist(&Address::generate(&env));
+
+    // add_token_to_whitelist is a silent state mutation: it must not emit any
+    // contract event (unlike pause/unpause or artist moderation).
+    assert_eq!(env.events().all().events().len(), 0);
+}
+
+#[test]
+#[should_panic(expected = "admin not set")]
+fn test_add_token_to_whitelist_before_admin_is_set_panics() {
+    let (env, client, _admin, _buyer, _token_id, _contract_id, _) = setup();
+    // No admin has been configured yet → require_admin must reject the call.
+    let token = Address::generate(&env);
+    client.add_token_to_whitelist(&token);
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_add_token_to_whitelist_after_admin_transfer_requires_new_admin() {
+    let (env, client, admin, _buyer, _token_id, _contract_id, _) = setup();
+    let new_admin = Address::generate(&env);
+    client.set_admin(&admin);
+    client.transfer_admin(&admin, &new_admin);
+    client.accept_admin(&new_admin);
+
+    // The old admin no longer holds authority: only the new one can whitelist.
+    mock_single_auth(
+        &env,
+        &_contract_id,
+        &admin,
+        "add_token_to_whitelist",
+        (Address::generate(&env),).into_val(&env),
+    );
+    client.add_token_to_whitelist(&Address::generate(&env));
+}
