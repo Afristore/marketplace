@@ -1368,3 +1368,205 @@ fn set_wasm_hashes_stores_an_all_zero_hash() {
 
     assert_eq!(stored_wasm_hashes(&env, &client.address).0, zero);
 }
+
+// ── Launchpad: transfer_admin ─────────────────────────────────────────────────
+
+/// Issue 218 — Happy path: calling `transfer_admin` with a new address must
+/// update the stored admin so that the `admin()` view returns the new value.
+#[test]
+fn transfer_admin_updates_admin_address() {
+    let env = Env::default();
+    let (client, _old_admin, _fee_receiver) = setup_launchpad(&env);
+
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+
+    assert_eq!(client.admin(), new_admin);
+}
+
+/// Issue 218 — Auth recording: the authorisation recorded on `transfer_admin`
+/// must be signed by the *original* admin, not by the incoming address.
+#[test]
+fn transfer_admin_is_authorized_by_the_current_admin() {
+    let env = Env::default();
+    let (client, old_admin, _fee_receiver) = setup_launchpad(&env);
+
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+
+    // env.auths() records the last call's authorisation.
+    let auths = env.auths();
+    assert_eq!(auths.len(), 1, "exactly one auth should be recorded");
+    assert_eq!(
+        auths[0].0, old_admin,
+        "auth must be signed by the original admin"
+    );
+    assert_eq!(
+        auths[0].1.function,
+        AuthorizedFunction::Contract((
+            client.address.clone(),
+            Symbol::new(&env, "transfer_admin"),
+            (new_admin,).into_val(&env),
+        ))
+    );
+}
+
+/// Issue 218 — Revocation: after a successful transfer the *new* admin must be
+/// able to perform admin-gated operations, which implicitly proves the new admin
+/// is now recognised by `only_admin`.
+#[test]
+fn transfer_admin_new_admin_can_call_admin_gated_functions() {
+    let env = Env::default();
+    let (client, _old_admin, _fee_receiver) = setup_launchpad(&env);
+
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+
+    // New admin should now be able to update the platform fee without error.
+    let new_receiver = Address::generate(&env);
+    client.update_platform_fee(&new_receiver, &200u32);
+
+    let auths = env.auths();
+    assert_eq!(
+        auths[0].0, new_admin,
+        "the new admin's address should be the one authorising the subsequent call"
+    );
+    assert_eq!(client.platform_fee(), (new_receiver, 200u32));
+}
+
+/// Issue 218 — Revocation: once the admin has been transferred, any subsequent
+/// call that tries to exercise admin authority without a valid auth must be
+/// rejected.
+#[test]
+fn transfer_admin_old_admin_cannot_call_admin_gated_functions_after_transfer() {
+    let env = Env::default();
+    let (client, _old_admin, _fee_receiver) = setup_launchpad(&env);
+
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+
+    // Strip all authorisations so that neither old nor new admin can sign.
+    env.set_auths(&[]);
+
+    let result = client.try_update_platform_fee(&Address::generate(&env), &100u32);
+    assert!(
+        result.is_err(),
+        "admin-gated calls must fail when no auth is provided after transfer"
+    );
+}
+
+/// Issue 218 — Guard: calling `transfer_admin` before `initialize` must return
+/// `NotInitialized` because there is no admin stored yet.
+#[test]
+fn transfer_admin_before_initialize_returns_not_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_launchpad(&env);
+
+    let result = client.try_transfer_admin(&Address::generate(&env));
+
+    assert_eq!(result, Err(Ok(LaunchpadError::NotInitialized)));
+}
+
+/// Issue 218 — Guard: calling `transfer_admin` with no authorisation attached
+/// must be rejected by `require_auth` inside `only_admin`.
+#[test]
+fn transfer_admin_fails_without_admin_auth() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad(&env);
+
+    // Remove all pending authorisations.
+    env.set_auths(&[]);
+
+    let result = client.try_transfer_admin(&Address::generate(&env));
+
+    assert!(
+        result.is_err(),
+        "transfer_admin must be rejected when no auth is provided"
+    );
+    // The admin must remain unchanged.
+    assert_eq!(
+        client.admin(),
+        _admin,
+        "a refused transfer must not overwrite the stored admin"
+    );
+}
+
+/// Issue 218 — Chained transfers: A transfers to B, then B transfers to C.
+/// After both steps the stored admin must be C.
+#[test]
+fn transfer_admin_chained_transfers_work_correctly() {
+    let env = Env::default();
+    let (client, _admin_a, _fee_receiver) = setup_launchpad(&env);
+
+    let admin_b = Address::generate(&env);
+    let admin_c = Address::generate(&env);
+
+    client.transfer_admin(&admin_b);
+    assert_eq!(client.admin(), admin_b, "admin should be B after first transfer");
+
+    client.transfer_admin(&admin_c);
+    assert_eq!(client.admin(), admin_c, "admin should be C after second transfer");
+}
+
+/// Issue 218 — Idempotent self-transfer: an admin that transfers the role to
+/// themselves must still be the admin and the call must succeed.
+#[test]
+fn transfer_admin_to_self_is_idempotent() {
+    let env = Env::default();
+    let (client, admin, _fee_receiver) = setup_launchpad(&env);
+
+    // Transfer admin to the same address.
+    client.transfer_admin(&admin);
+
+    assert_eq!(
+        client.admin(),
+        admin,
+        "self-transfer must leave the admin unchanged"
+    );
+}
+
+/// Issue 218 — Isolation: `transfer_admin` must only update the admin slot;
+/// the platform-fee configuration must be completely unaffected.
+#[test]
+fn transfer_admin_does_not_affect_platform_fee_config() {
+    let env = Env::default();
+    let (client, _admin, fee_receiver) = setup_launchpad(&env);
+
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+
+    // Platform fee must still reflect the values set during initialization.
+    assert_eq!(
+        client.platform_fee(),
+        (fee_receiver, INITIAL_FEE_BPS),
+        "transfer_admin must not touch the platform-fee configuration"
+    );
+}
+
+/// Issue 218 — Isolation: `transfer_admin` must not touch the collection
+/// registry or the collection counter.
+#[test]
+fn transfer_admin_does_not_affect_collection_registry() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad_with_wasms(&env);
+    let creator = Address::generate(&env);
+    deploy_n721(&client, &creator, 1);
+
+    let count_before = client.collection_count();
+    let all_before = client.all_collections();
+
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+
+    assert_eq!(
+        client.collection_count(),
+        count_before,
+        "collection count must be unchanged after transfer_admin"
+    );
+    assert_eq!(
+        client.all_collections(),
+        all_before,
+        "all_collections registry must be unchanged after transfer_admin"
+    );
+}
