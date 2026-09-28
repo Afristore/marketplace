@@ -9,6 +9,7 @@ import {
   rejectNextE2eTransaction,
 } from "./helpers/marketplace-mocks";
 import { connectFreighterWallet } from "./helpers/wallet";
+import { safeGoto, safeReload } from "./helpers/error-handling";
 
 const DEFAULT_TOKEN =
   process.env.NEXT_PUBLIC_NATIVE_TOKEN_CONTRACT_ID ??
@@ -42,7 +43,7 @@ test.describe("Buy Now button triggers Freighter transaction for full amount (#5
     });
 
     await connectFreighterWallet(page, BUYER_PUBLIC_KEY);
-    await page.goto("/explore");
+    await safeGoto(page, "/explore");
     await expect(page.getByText(MOCK_ARTWORK_METADATA.title)).toBeVisible();
 
     await page.getByRole("button", { name: /buy now/i }).first().click();
@@ -58,7 +59,7 @@ test.describe("Buy Now button triggers Freighter transaction for full amount (#5
     await expect(page.getByText("Checkout")).toBeHidden({ timeout: 15_000 });
 
     store.markSold(9801, BUYER_PUBLIC_KEY);
-    await page.reload();
+    await safeReload(page);
     await expect(page.getByRole("button", { name: /buy now/i })).toHaveCount(
       0,
     );
@@ -83,7 +84,7 @@ test.describe("Buy Now button triggers Freighter transaction for full amount (#5
     });
 
     await connectFreighterWallet(page, BUYER_PUBLIC_KEY);
-    await page.goto("/explore");
+    await safeGoto(page, "/explore");
     await page.getByRole("button", { name: /buy now/i }).first().click();
     await expect(page.getByText("Checkout")).toBeVisible();
 
@@ -128,12 +129,12 @@ test.describe("E2E [Purchasing] - Sold item displays 'Sold' status and disables 
     });
 
     await connectFreighterWallet(page, BUYER_PUBLIC_KEY);
-    await page.goto("/explore");
+    await safeGoto(page, "/explore");
     await expect(page.getByText(MOCK_ARTWORK_METADATA.title)).toBeVisible();
 
     // Mark listing sold before the buyer can interact with it.
     store.markSold(9810, BUYER_PUBLIC_KEY);
-    await page.reload();
+    await safeReload(page);
 
     // The sold listing must show a "Sold" status indicator.
     await expect(page.getByText(/sold/i).first()).toBeVisible();
@@ -170,7 +171,7 @@ test.describe("E2E [Purchasing] - Attempting to buy own listing is disabled (#51
 
     // Connect as the seller (TEST_PUBLIC_KEY owns the listing).
     await connectFreighterWallet(page, TEST_PUBLIC_KEY);
-    await page.goto("/explore");
+    await safeGoto(page, "/explore");
     await expect(page.getByText(MOCK_ARTWORK_METADATA.title)).toBeVisible();
 
     // The seller must not be able to buy their own listing.
@@ -206,7 +207,7 @@ test.describe("E2E [Purchasing] - Successful purchase shows success modal (#509)
     });
 
     await connectFreighterWallet(page, BUYER_PUBLIC_KEY);
-    await page.goto("/explore");
+    await safeGoto(page, "/explore");
     await expect(page.getByText(MOCK_ARTWORK_METADATA.title)).toBeVisible();
 
     await page.getByRole("button", { name: /buy now/i }).first().click();
@@ -228,7 +229,7 @@ test.describe("E2E [Purchasing] - Successful purchase shows success modal (#509)
     await expect(successModal).toBeHidden();
 
     store.markSold(9840, BUYER_PUBLIC_KEY);
-    await page.reload();
+    await safeReload(page);
     await expect(page.getByRole("button", { name: /buy now/i })).toHaveCount(0);
   });
 
@@ -250,7 +251,7 @@ test.describe("E2E [Purchasing] - Successful purchase shows success modal (#509)
 
     await connectFreighterWallet(page, BUYER_PUBLIC_KEY);
     await rejectNextE2eTransaction(page);
-    await page.goto("/explore");
+    await safeGoto(page, "/explore");
     await expect(page.getByText(MOCK_ARTWORK_METADATA.title)).toBeVisible();
 
     await page.getByRole("button", { name: /buy now/i }).first().click();
@@ -290,7 +291,7 @@ test.describe("E2E [Purchasing] - Fiat Checkout modal renders Stripe/Ramp interf
     });
 
     await connectFreighterWallet(page, BUYER_PUBLIC_KEY);
-    await page.goto("/explore");
+    await safeGoto(page, "/explore");
     await expect(page.getByText(MOCK_ARTWORK_METADATA.title)).toBeVisible();
 
     await page.getByRole("button", { name: /buy now/i }).first().click();
