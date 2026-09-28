@@ -61,7 +61,10 @@ fn test_cancel_listing_success() {
 
     // Cancelled listing must be removed from persistent storage entirely.
     let still_exists = env.as_contract(&contract_id, || has_listing(&env, 1));
-    assert!(!still_exists, "cancelled listing must be removed from storage");
+    assert!(
+        !still_exists,
+        "cancelled listing must be removed from storage"
+    );
 }
 
 #[test]
