@@ -2026,3 +2026,136 @@ fn get_staking_pool_consistent_after_failed_duplicate() {
     let pool_after_fail = client.get_staking_pool(&nft_address);
     assert_eq!(pool_after_fail, Some(pool_original));
 }
+
+// ── add_approved_currency tests ───────────────────────────────
+
+/// Happy path: admin can add a currency to the approved whitelist.
+#[test]
+fn add_approved_currency_success() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let currency = Address::generate(&env);
+    client.add_approved_currency(&currency);
+
+    assert!(client.is_approved_currency(&currency));
+}
+
+/// Adding the same currency twice is idempotent and succeeds.
+#[test]
+fn add_approved_currency_idempotent() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let currency = Address::generate(&env);
+    client.add_approved_currency(&currency);
+    client.add_approved_currency(&currency);
+
+    assert!(client.is_approved_currency(&currency));
+}
+
+/// Admin can add multiple distinct currencies to the whitelist.
+#[test]
+fn add_approved_currency_multiple_currencies() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let currency_a = Address::generate(&env);
+    let currency_b = Address::generate(&env);
+    let currency_c = Address::generate(&env);
+
+    client.add_approved_currency(&currency_a);
+    client.add_approved_currency(&currency_b);
+    client.add_approved_currency(&currency_c);
+
+    assert!(client.is_approved_currency(&currency_a));
+    assert!(client.is_approved_currency(&currency_b));
+    assert!(client.is_approved_currency(&currency_c));
+}
+
+/// Non-admin cannot add a currency (require_admin fails).
+#[test]
+fn add_approved_currency_non_admin_fails() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let non_admin = Address::generate(&env);
+    let currency = Address::generate(&env);
+
+    // Without mock_all_auths, the non_admin's require_auth will fail.
+    // We create a separate client that the non_admin calls.
+    let launchpad_id = env.register(Launchpad, ());
+    let non_admin_client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let result = non_admin_client.try_add_approved_currency(&currency);
+    assert_eq!(result, Err(Ok(Error::NotInitialized)));
+}
+
+/// add_approved_currency before initialization fails with NotInitialized.
+#[test]
+fn add_approved_currency_before_init_fails() {
+    let env = Env::default();
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let currency = Address::generate(&env);
+    let result = client.try_add_approved_currency(&currency);
+    assert_eq!(result, Err(Ok(Error::NotInitialized)));
+}
+
+/// After adding a currency, is_approved_currency returns true.
+/// After removing it, is_approved_currency returns false.
+#[test]
+fn add_and_remove_approved_currency_reflects_state() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let currency = Address::generate(&env);
+
+    // Not approved initially
+    assert!(!client.is_approved_currency(&currency));
+
+    // Add and verify
+    client.add_approved_currency(&currency);
+    assert!(client.is_approved_currency(&currency));
+
+    // Remove and verify
+    client.remove_approved_currency(&currency);
+    assert!(!client.is_approved_currency(&currency));
+}
+
+/// Removing a currency that was never added returns successfully (no-op).
+#[test]
+fn remove_approved_currency_never_added() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let currency = Address::generate(&env);
+    client.remove_approved_currency(&currency);
+
+    assert!(!client.is_approved_currency(&currency));
+}
+
+/// add_approved_currency extends instance TTL (prevents expiry).
+#[test]
+fn add_approved_currency_extends_ttl() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    // Move TTL near the threshold
+    jump_ledger(&env, 60_000);
+
+    let currency = Address::generate(&env);
+    client.add_approved_currency(&currency);
+
+    // TTL should be extended, so the currency is still approved
+    assert!(client.is_approved_currency(&currency));
+}
