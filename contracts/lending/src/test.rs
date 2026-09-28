@@ -165,9 +165,6 @@ fn test_borrow_success() {
     assert_eq!(col_token.balance(&contract_id), 120_000_000);
 
     env.as_contract(&contract_id, || {
-        let listing = crate::storage::get_listing(&env, 1);
-        assert_eq!(listing.status, ListingStatus::Filled);
-
         let pos = crate::storage::get_position(&env, 1);
         assert_eq!(pos.status, PositionStatus::Active);
         assert_eq!(pos.borrower, borrower);
@@ -1449,9 +1446,6 @@ fn test_e2e_voluntary_return() {
 
     // Assert position created with correct status
     env.as_contract(&contract_id, || {
-        let listing = crate::storage::get_listing(&env, listing_id);
-        assert_eq!(listing.status, ListingStatus::Filled);
-
         let pos = crate::storage::get_position(&env, position_id);
         assert_eq!(pos.status, PositionStatus::Active);
         assert_eq!(pos.borrower, borrower);

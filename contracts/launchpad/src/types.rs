@@ -13,6 +13,7 @@ pub enum Error {
     InvalidCurrency = 7,
     EmptyName = 8,
     SymbolTooLong = 9,
+    InvalidFee = 10,
 }
 
 /// Which of the four collection types was deployed.
