@@ -1368,3 +1368,147 @@ fn set_wasm_hashes_stores_an_all_zero_hash() {
 
     assert_eq!(stored_wasm_hashes(&env, &client.address).0, zero);
 }
+
+// ── transfer_admin authorisation ─────────────────────────────────────────────
+
+/// `transfer_admin` is gated by `only_admin`, which calls `require_auth()` on
+/// the stored admin. The recorded auth must be the current admin's.
+#[test]
+fn transfer_admin_is_authorized_by_current_admin() {
+    let env = Env::default();
+    let (client, admin, _fee_receiver) = setup_launchpad(&env);
+    let new_admin = Address::generate(&env);
+
+    client.transfer_admin(&new_admin);
+
+    assert_eq!(
+        env.auths(),
+        std::vec![(
+            admin,
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    client.address.clone(),
+                    Symbol::new(&env, "transfer_admin"),
+                    (new_admin.clone(),).into_val(&env),
+                )),
+                sub_invocations: std::vec![],
+            }
+        )]
+    );
+    assert_eq!(client.admin(), new_admin);
+}
+
+#[test]
+fn transfer_admin_fails_without_admin_auth() {
+    let env = Env::default();
+    let (client, admin, _fee_receiver) = setup_launchpad(&env);
+    env.set_auths(&[]);
+
+    let result = client.try_transfer_admin(&Address::generate(&env));
+
+    assert!(result.is_err());
+    assert_eq!(client.admin(), admin);
+}
+
+#[test]
+fn transfer_admin_before_initialize_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_launchpad(&env);
+
+    let result = client.try_transfer_admin(&Address::generate(&env));
+
+    assert_eq!(result, Err(Ok(LaunchpadError::NotInitialized)));
+}
+
+// ── Launchpad: all_collections ───────────────────────────────────────────────
+
+#[test]
+fn all_collections_is_empty_before_initialize() {
+    let env = Env::default();
+    let client = register_launchpad(&env);
+
+    assert!(client.all_collections().is_empty());
+}
+
+#[test]
+fn all_collections_is_empty_after_initialize() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad(&env);
+
+    assert!(client.all_collections().is_empty());
+}
+
+#[test]
+fn all_collections_records_every_kind_in_deploy_order() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad_with_wasms(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    let n721 = deploy_n721(&client, &alice, 1);
+    let n1155 = deploy_n1155(&client, &bob, 2);
+    let l721 = deploy_l721(&client, &alice, 3);
+    let l1155 = deploy_l1155(&client, &bob, 4);
+
+    let all = client.all_collections();
+    assert_eq!(all.len(), 4);
+    assert_eq!(
+        all.get(0).unwrap(),
+        record(&n721, CollectionKind::Normal721, &alice)
+    );
+    assert_eq!(
+        all.get(1).unwrap(),
+        record(&n1155, CollectionKind::Normal1155, &bob)
+    );
+    assert_eq!(
+        all.get(2).unwrap(),
+        record(&l721, CollectionKind::LazyMint721, &alice)
+    );
+    assert_eq!(
+        all.get(3).unwrap(),
+        record(&l1155, CollectionKind::LazyMint1155, &bob)
+    );
+    assert_eq!(u64::from(all.len()), client.collection_count());
+}
+
+#[test]
+fn all_collections_ignores_failed_deploys() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad_with_wasms(&env);
+    let creator = Address::generate(&env);
+    let addr = deploy_n721(&client, &creator, 1);
+
+    // Reusing a salt collides with the existing deployment.
+    let result = client.try_deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Dup"),
+        &String::from_str(&env, "DUP"),
+        &1_000u64,
+        &500u32,
+        &creator,
+        &salt(&env, 1),
+    );
+
+    assert!(result.is_err());
+    let all = client.all_collections();
+    assert_eq!(all.len(), 1);
+    assert_eq!(
+        all.get(0).unwrap(),
+        record(&addr, CollectionKind::Normal721, &creator)
+    );
+}
+
+#[test]
+fn all_collections_unchanged_by_admin_operations() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad_with_wasms(&env);
+    let creator = Address::generate(&env);
+    deploy_n721(&client, &creator, 1);
+    let before = client.all_collections();
+
+    client.update_platform_fee(&Address::generate(&env), &100u32);
+    client.transfer_admin(&Address::generate(&env));
+
+    assert_eq!(client.all_collections(), before);
+}
