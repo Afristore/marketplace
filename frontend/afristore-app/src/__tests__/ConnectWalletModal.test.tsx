@@ -2,7 +2,7 @@
  * Component tests for ConnectWalletModal.
  */
 import React from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
@@ -107,6 +107,49 @@ describe("ConnectWalletModal", () => {
     mockError = "Connection rejected";
     render(<ConnectWalletModal isOpen={true} onClose={jest.fn()} />);
     expect(screen.getByText(/connection rejected/i)).toBeInTheDocument();
+  });
+
+  // Issue #945: a rejected connect() used to escape as an unhandled rejection —
+  // the button appeared dead and the user was never told why.
+  it("surfaces the reason when connect() rejects", async () => {
+    mockConnect.mockRejectedValueOnce(new Error("User rejected the request"));
+    const user = userEvent.setup();
+    render(<ConnectWalletModal isOpen={true} onClose={jest.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: /freighter wallet/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /user rejected the request/i,
+    );
+  });
+
+  it("falls back to a generic message for a non-Error rejection", async () => {
+    mockConnect.mockRejectedValueOnce("boom");
+    const user = userEvent.setup();
+    render(<ConnectWalletModal isOpen={true} onClose={jest.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: /freighter wallet/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /could not connect to your wallet/i,
+    );
+  });
+
+  it("clears a previous failure when the user retries", async () => {
+    mockConnect.mockRejectedValueOnce(new Error("User rejected the request"));
+    const user = userEvent.setup();
+    render(<ConnectWalletModal isOpen={true} onClose={jest.fn()} />);
+    const button = screen.getByRole("button", { name: /freighter wallet/i });
+
+    await user.click(button);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/user rejected/i);
+
+    mockConnect.mockResolvedValueOnce(undefined);
+    await user.click(button);
+
+    await waitFor(() =>
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+    );
   });
 
   it("shows Magic Wallet as coming soon", () => {

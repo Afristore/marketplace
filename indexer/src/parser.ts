@@ -3,6 +3,7 @@ import { xdr, Address, scValToNative } from '@stellar/stellar-sdk';
 export interface DecodedEvent {
   eventType: string;
   listingId: bigint | null;
+  positionId?: bigint | null;
   actor: string;
   ledgerSequence: number;
   data: any;
@@ -29,6 +30,32 @@ const TOPIC_MAP: Record<string, string> = {
   'staked': 'NFT_STAKED',
   'unstkd': 'NFT_UNSTAKED',
   'reward': 'REWARDS_CLAIMED',
+  'pos_liq': 'POSITION_LIQUIDATED',
+  'pos_liquidated': 'POSITION_LIQUIDATED',
+  'Liquidated': 'POSITION_LIQUIDATED',
+  'POSITION_LIQUIDATED': 'POSITION_LIQUIDATED',
+  'cur_wl': 'CURRENCY_WHITELISTED',
+  'currency_whitelisted': 'CURRENCY_WHITELISTED',
+  'CurrencyWhitelisted': 'CURRENCY_WHITELISTED',
+  'CURRENCY_WHITELISTED': 'CURRENCY_WHITELISTED',
+  'cur_rmv': 'CURRENCY_REMOVED',
+  'currency_removed': 'CURRENCY_REMOVED',
+  'CurrencyRemoved': 'CURRENCY_REMOVED',
+  'CURRENCY_REMOVED': 'CURRENCY_REMOVED',
+  'pos_open': 'POSITION_OPENED',
+  'col_add': 'COLLATERAL_ADDED',
+  'pos_ret': 'POSITION_RETURNED',
+};
+
+const LENDING_SUBTOPIC_MAP: Record<string, string> = {
+  'lst_crtd': 'LENDING_LISTING_CREATED',
+  'lst_cncl': 'LENDING_LISTING_CANCELLED',
+  'pos_open': 'POSITION_OPENED',
+  'col_add': 'COLLATERAL_ADDED',
+  'pos_ret': 'POSITION_RETURNED',
+  'pos_liq': 'POSITION_LIQUIDATED',
+  'cur_wl': 'CURRENCY_WHITELISTED',
+  'cur_rmv': 'CURRENCY_REMOVED',
 };
 
 export function parseMarketplaceEvent(
@@ -36,6 +63,8 @@ export function parseMarketplaceEvent(
   valueXdr: string,
   ledger: number
 ): DecodedEvent | null {
+  if (!topics || topics.length === 0) return null;
+
   // Topics might be XDR base64 strings or decoded symbols
   let topic = '';
   try {
@@ -45,7 +74,28 @@ export function parseMarketplaceEvent(
     topic = topics[0]; // Fallback if already decoded
   }
 
-  const type = TOPIC_MAP[topic];
+  let type = TOPIC_MAP[topic];
+
+  // Handle multi-topic lending events published under (symbol_short!("lending"), subtopic)
+  if (topic === 'lending' && topics.length > 1) {
+    let subTopic = '';
+    try {
+      const rawSub = xdr.ScVal.fromXDR(topics[1], 'base64');
+      subTopic = scValToNative(rawSub);
+    } catch {
+      subTopic = topics[1];
+    }
+    type = LENDING_SUBTOPIC_MAP[subTopic] || TOPIC_MAP[subTopic] || subTopic;
+  }
+
+  if (!type && TOPIC_MAP[topic]) {
+    type = TOPIC_MAP[topic];
+  } else if (!type) {
+    if (topic === 'Liquidated' || topic === 'POSITION_LIQUIDATED') type = 'POSITION_LIQUIDATED';
+    else if (topic === 'CurrencyWhitelisted' || topic === 'CURRENCY_WHITELISTED') type = 'CURRENCY_WHITELISTED';
+    else if (topic === 'CurrencyRemoved' || topic === 'CURRENCY_REMOVED') type = 'CURRENCY_REMOVED';
+  }
+
   if (!type) return null;
 
   let rawVal: any;
@@ -66,15 +116,22 @@ export function parseMarketplaceEvent(
   } else if (nativeData.auction_id !== undefined) {
     // For auction events, we might use auction_id as listingId or map it
     listingId = BigInt(nativeData.auction_id);
+  } else if (nativeData.position_id !== undefined) {
+    listingId = BigInt(nativeData.position_id);
   }
 
   // Identify actor based on event type
-  if (nativeData.artist) actor = nativeData.artist.toString();
+  if (nativeData.liquidator) actor = nativeData.liquidator.toString();
+  else if (nativeData.borrower) actor = nativeData.borrower.toString();
+  else if (nativeData.lender) actor = nativeData.lender.toString();
+  else if (nativeData.artist) actor = nativeData.artist.toString();
   else if (nativeData.creator) actor = nativeData.creator.toString();
+  else if (nativeData.borrower) actor = nativeData.borrower.toString();
   else if (nativeData.offerer) actor = nativeData.offerer.toString();
   else if (nativeData.bidder) actor = nativeData.bidder.toString();
   else if (nativeData.buyer) actor = nativeData.buyer.toString();
   else if (nativeData.user) actor = nativeData.user.toString();
+  else if (nativeData.admin) actor = nativeData.admin.toString();
 
   // For deploy events the value is a tuple (creator, collection_address)
   // scValToNative returns an array for tuples
@@ -92,6 +149,88 @@ export function parseMarketplaceEvent(
   return {
     eventType: type,
     listingId,
+    actor,
+    ledgerSequence: ledger,
+    data: convertBigInts(nativeData),
+  };
+}
+
+// ── Lending Contract Events ────────────────────────────────────────────────────
+
+const LENDING_TOPIC_MAP: Record<string, string> = {
+  'lst_crtd': 'LENDING_LISTING_CREATED',
+  'lst_cncl': 'LENDING_LISTING_CANCELLED',
+  'pos_open': 'LENDING_POSITION_OPENED',
+  'col_add':  'LENDING_COLLATERAL_ADDED',
+  'pos_ret':  'LENDING_POSITION_RETURNED',
+  'pos_liq':  'LENDING_POSITION_LIQUIDATED',
+  'cancel':   'LENDING_LISTING_CANCELLED',
+  'borrow':   'LENDING_POSITION_OPENED',
+};
+
+export interface LendingDecodedEvent {
+  eventType: string;
+  listingId: bigint | null;
+  positionId: bigint | null;
+  actor: string;
+  ledgerSequence: number;
+  data: any;
+}
+
+export function parseLendingEvent(
+  topics: string[],
+  valueXdr: string,
+  ledger: number
+): LendingDecodedEvent | null {
+  let contractTopic = '';
+  let eventTopic = '';
+
+  try {
+    const rawTopic0 = xdr.ScVal.fromXDR(topics[0], 'base64');
+    contractTopic = scValToNative(rawTopic0);
+  } catch {
+    contractTopic = topics[0] ?? '';
+  }
+
+  if (contractTopic !== 'lending') return null;
+
+  try {
+    const rawTopic1 = xdr.ScVal.fromXDR(topics[1], 'base64');
+    eventTopic = scValToNative(rawTopic1);
+  } catch {
+    eventTopic = topics[1] ?? '';
+  }
+
+  const type = LENDING_TOPIC_MAP[eventTopic];
+  if (!type) return null;
+
+  let nativeData: any;
+  try {
+    const rawVal = xdr.ScVal.fromXDR(valueXdr, 'base64');
+    nativeData = scValToNative(rawVal);
+  } catch {
+    return null;
+  }
+
+  let listingId: bigint | null = null;
+  let positionId: bigint | null = null;
+  let actor: string = '';
+
+  if (nativeData.listing_id !== undefined) {
+    listingId = BigInt(nativeData.listing_id);
+  }
+  if (nativeData.position_id !== undefined) {
+    positionId = BigInt(nativeData.position_id);
+  }
+
+  if (nativeData.lender) actor = nativeData.lender.toString();
+  else if (nativeData.borrower) actor = nativeData.borrower.toString();
+  else if (nativeData.liquidator) actor = nativeData.liquidator.toString();
+
+  return {
+    eventType: type,
+    listingId,
+    positionId,
     actor,
     ledgerSequence: ledger,
     data: convertBigInts(nativeData),

@@ -1,7 +1,14 @@
 extern crate std;
 
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env, String};
+use soroban_sdk::{
+    testutils::Address as _, testutils::AuthorizedFunction, testutils::AuthorizedInvocation,
+    testutils::Ledger as _, Address, BytesN, Env, IntoVal, String, Symbol,
+};
 
+use crate::contract::{
+    CollectionKind, CollectionRecord, Error as LaunchpadError, Launchpad, LaunchpadClient,
+    MAX_FEE_BPS,
+};
 use crate::{DataKey, Error, NormalNFT721, NormalNFT721Client};
 
 fn jump_ledger(env: &Env, delta: u32) {
@@ -585,57 +592,947 @@ fn next_token_id_advances_with_each_mint() {
     assert_eq!(client.next_token_id(), 2u64);
 }
 
-// ── platform_fee tests (Issue #912) ──────────────────────────────────────────
+// ── Launchpad (contract.rs) helpers ───────────────────────────────────────────
 
-#[path = "contract.rs"]
-mod launchpad_contract;
+const INITIAL_FEE_BPS: u32 = 250;
+
+fn wasm_bytes(name: &str) -> std::vec::Vec<u8> {
+    // Test binaries live in <target>/debug/deps, so walk up to <target>.
+    let exe = std::env::current_exe().unwrap();
+    let target_dir = exe
+        .parent()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .unwrap()
+        .to_path_buf();
+    let path = target_dir
+        .join("wasm32v1-none")
+        .join("release")
+        .join(std::format!("{name}.wasm"));
+
+    std::fs::read(&path).unwrap_or_else(|_| {
+        panic!(
+            "missing wasm at {}. build it first with: cargo build --target wasm32v1-none --release --workspace",
+            path.display()
+        )
+    })
+}
+
+fn register_launchpad(env: &Env) -> LaunchpadClient<'_> {
+    let id = env.register(Launchpad, ());
+    LaunchpadClient::new(env, &id)
+}
+
+/// Registers and initializes a launchpad with `INITIAL_FEE_BPS`.
+/// Returns `(client, admin, fee_receiver)`.
+fn setup_launchpad(env: &Env) -> (LaunchpadClient<'_>, Address, Address) {
+    env.mock_all_auths();
+    let client = register_launchpad(env);
+    let admin = Address::generate(env);
+    let fee_receiver = Address::generate(env);
+    client.initialize(&admin, &fee_receiver, &INITIAL_FEE_BPS);
+    (client, admin, fee_receiver)
+}
+
+/// Like `setup_launchpad`, and also uploads the four collection WASMs.
+fn setup_launchpad_with_wasms(env: &Env) -> (LaunchpadClient<'_>, Address, Address) {
+    let (client, admin, fee_receiver) = setup_launchpad(env);
+    let upload = |name: &str| {
+        env.deployer()
+            .upload_contract_wasm(wasm_bytes(name).as_slice())
+    };
+    client.set_wasm_hashes(
+        &upload("collection_nft_erc721"),
+        &upload("collection_nft_erc1155"),
+        &upload("lazy_mint_erc721"),
+        &upload("lazy_mint_erc1155"),
+    );
+    (client, admin, fee_receiver)
+}
+
+fn salt(env: &Env, seed: u8) -> BytesN<32> {
+    BytesN::from_array(env, &[seed; 32])
+}
+
+fn deploy_n721(client: &LaunchpadClient, creator: &Address, seed: u8) -> Address {
+    let env = &client.env;
+    client.deploy_normal_721(
+        creator,
+        &String::from_str(env, "Normal 721"),
+        &String::from_str(env, "N721"),
+        &1_000u64,
+        &500u32,
+        creator,
+        &salt(env, seed),
+    )
+}
+
+fn deploy_n1155(client: &LaunchpadClient, creator: &Address, seed: u8) -> Address {
+    let env = &client.env;
+    client.deploy_normal_1155(
+        creator,
+        &String::from_str(env, "Normal 1155"),
+        &500u32,
+        creator,
+        &salt(env, seed),
+    )
+}
+
+fn deploy_l721(client: &LaunchpadClient, creator: &Address, seed: u8) -> Address {
+    let env = &client.env;
+    client.deploy_lazy_721(
+        creator,
+        &BytesN::from_array(env, &[7u8; 32]),
+        &String::from_str(env, "Lazy 721"),
+        &String::from_str(env, "L721"),
+        &1_000u64,
+        &500u32,
+        creator,
+        &salt(env, seed),
+    )
+}
+
+fn deploy_l1155(client: &LaunchpadClient, creator: &Address, seed: u8) -> Address {
+    let env = &client.env;
+    client.deploy_lazy_1155(
+        creator,
+        &BytesN::from_array(env, &[7u8; 32]),
+        &String::from_str(env, "Lazy 1155"),
+        &500u32,
+        creator,
+        &salt(env, seed),
+    )
+}
+
+fn record(address: &Address, kind: CollectionKind, creator: &Address) -> CollectionRecord {
+    CollectionRecord {
+        address: address.clone(),
+        kind,
+        creator: creator.clone(),
+    }
+}
+
+// ── Launchpad: update_platform_fee ────────────────────────────────────────────
 
 #[test]
-fn platform_fee_returns_initialized_values() {
+fn update_platform_fee_updates_receiver_and_bps() {
     let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(launchpad_contract::Launchpad, ());
-    let client = launchpad_contract::LaunchpadClient::new(&env, &id);
-    let admin = Address::generate(&env);
-    let receiver = Address::generate(&env);
-    client.initialize(&admin, &receiver, &500u32);
+    let (client, _admin, fee_receiver) = setup_launchpad(&env);
+    assert_eq!(client.platform_fee(), (fee_receiver, INITIAL_FEE_BPS));
 
-    let (recv, bps) = client.platform_fee();
-    assert_eq!(recv, receiver);
-    assert_eq!(bps, 500u32);
+    let new_receiver = Address::generate(&env);
+    client.update_platform_fee(&new_receiver, &500u32);
+
+    assert_eq!(client.platform_fee(), (new_receiver, 500u32));
 }
 
 #[test]
-fn update_platform_fee_happy_path() {
+fn update_platform_fee_is_authorized_by_admin_only() {
     let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(launchpad_contract::Launchpad, ());
-    let client = launchpad_contract::LaunchpadClient::new(&env, &id);
-    let admin = Address::generate(&env);
-    let receiver = Address::generate(&env);
-    client.initialize(&admin, &receiver, &500u32);
+    let (client, admin, _fee_receiver) = setup_launchpad(&env);
 
     let new_receiver = Address::generate(&env);
-    client.update_platform_fee(&new_receiver, &750u32);
+    client.update_platform_fee(&new_receiver, &300u32);
 
-    let (recv, bps) = client.platform_fee();
-    assert_eq!(recv, new_receiver);
-    assert_eq!(bps, 750u32);
+    assert_eq!(
+        env.auths(),
+        std::vec![(
+            admin,
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    client.address.clone(),
+                    Symbol::new(&env, "update_platform_fee"),
+                    (new_receiver, 300u32).into_val(&env),
+                )),
+                sub_invocations: std::vec![],
+            }
+        )]
+    );
 }
 
 #[test]
-fn update_platform_fee_fails_if_not_admin() {
+fn update_platform_fee_fails_without_admin_auth() {
     let env = Env::default();
-    env.mock_all_auths();
-    let id = env.register(launchpad_contract::Launchpad, ());
-    let client = launchpad_contract::LaunchpadClient::new(&env, &id);
-    let admin = Address::generate(&env);
-    let receiver = Address::generate(&env);
-    client.initialize(&admin, &receiver, &500u32);
+    let (client, _admin, fee_receiver) = setup_launchpad(&env);
+    env.set_auths(&[]);
 
-    env.mock_auths(&[]);
-    
-    let new_receiver = Address::generate(&env);
-    let result = client.try_update_platform_fee(&new_receiver, &750u32);
+    let result = client.try_update_platform_fee(&Address::generate(&env), &500u32);
+
     assert!(result.is_err());
+    assert_eq!(client.platform_fee(), (fee_receiver, INITIAL_FEE_BPS));
+}
+
+#[test]
+fn update_platform_fee_rejected_when_signed_by_non_admin() {
+    let env = Env::default();
+    let (client, _admin, fee_receiver) = setup_launchpad(&env);
+    let non_admin = Address::generate(&env);
+
+    // Mock authorization for non_admin instead of stored admin
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &non_admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "update_platform_fee",
+            args: (&Address::generate(&env), 500u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    let new_receiver = Address::generate(&env);
+    let result = client.try_update_platform_fee(&new_receiver, &500u32);
+
+    assert!(result.is_err());
+    assert_eq!(client.platform_fee(), (fee_receiver, INITIAL_FEE_BPS));
+}
+
+#[test]
+fn update_platform_fee_before_initialize_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_launchpad(&env);
+
+    let result = client.try_update_platform_fee(&Address::generate(&env), &100u32);
+
+    assert_eq!(result, Err(Ok(LaunchpadError::NotInitialized)));
+}
+
+#[test]
+fn update_platform_fee_requires_new_admin_after_transfer() {
+    let env = Env::default();
+    let (client, _old_admin, _fee_receiver) = setup_launchpad(&env);
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+
+    let new_receiver = Address::generate(&env);
+    client.update_platform_fee(&new_receiver, &100u32);
+
+    let auths = env.auths();
+    assert_eq!(auths.len(), 1);
+    assert_eq!(auths[0].0, new_admin);
+    assert_eq!(client.platform_fee(), (new_receiver, 100u32));
+}
+
+#[test]
+fn update_platform_fee_last_write_wins() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad(&env);
+    let receiver_a = Address::generate(&env);
+    let receiver_b = Address::generate(&env);
+
+    client.update_platform_fee(&receiver_a, &100u32);
+    client.update_platform_fee(&receiver_b, &900u32);
+
+    assert_eq!(client.platform_fee(), (receiver_b, 900u32));
+}
+
+#[test]
+fn update_platform_fee_can_change_bps_only() {
+    let env = Env::default();
+    let (client, _admin, fee_receiver) = setup_launchpad(&env);
+
+    client.update_platform_fee(&fee_receiver, &1_000u32);
+
+    assert_eq!(client.platform_fee(), (fee_receiver, 1_000u32));
+}
+
+#[test]
+fn update_platform_fee_does_not_change_admin_or_collections() {
+    let env = Env::default();
+    let (client, admin, _fee_receiver) = setup_launchpad(&env);
+
+    client.update_platform_fee(&Address::generate(&env), &100u32);
+
+    assert_eq!(client.admin(), admin);
+    assert_eq!(client.collection_count(), 0u64);
+    assert!(client.all_collections().is_empty());
+}
+
+// ── Launchpad: platform fee bounds ────────────────────────────────────────────
+
+#[test]
+fn update_platform_fee_accepts_zero_bps() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad(&env);
+    let new_receiver = Address::generate(&env);
+
+    client.update_platform_fee(&new_receiver, &0u32);
+
+    assert_eq!(client.platform_fee(), (new_receiver, 0u32));
+}
+
+#[test]
+fn update_platform_fee_accepts_max_bps() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad(&env);
+    let new_receiver = Address::generate(&env);
+
+    client.update_platform_fee(&new_receiver, &MAX_FEE_BPS);
+
+    assert_eq!(client.platform_fee(), (new_receiver, MAX_FEE_BPS));
+}
+
+#[test]
+fn update_platform_fee_rejects_bps_just_above_max() {
+    let env = Env::default();
+    let (client, _admin, fee_receiver) = setup_launchpad(&env);
+
+    let result = client.try_update_platform_fee(&Address::generate(&env), &(MAX_FEE_BPS + 1));
+
+    assert_eq!(result, Err(Ok(LaunchpadError::InvalidFeeBps)));
+    assert_eq!(client.platform_fee(), (fee_receiver, INITIAL_FEE_BPS));
+}
+
+#[test]
+fn update_platform_fee_rejects_u32_max_bps() {
+    let env = Env::default();
+    let (client, _admin, fee_receiver) = setup_launchpad(&env);
+
+    let result = client.try_update_platform_fee(&Address::generate(&env), &u32::MAX);
+
+    assert_eq!(result, Err(Ok(LaunchpadError::InvalidFeeBps)));
+    assert_eq!(client.platform_fee(), (fee_receiver, INITIAL_FEE_BPS));
+}
+
+#[test]
+fn initialize_rejects_fee_bps_above_max() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_launchpad(&env);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+
+    let result = client.try_initialize(&admin, &receiver, &(MAX_FEE_BPS + 1));
+    assert_eq!(result, Err(Ok(LaunchpadError::InvalidFeeBps)));
+
+    // The rejected call must not leave the contract half-initialized.
+    client.initialize(&admin, &receiver, &MAX_FEE_BPS);
+    assert_eq!(client.platform_fee(), (receiver, MAX_FEE_BPS));
+}
+
+// ── Launchpad: collections_by_creator ─────────────────────────────────────────
+
+#[test]
+fn collections_by_creator_is_empty_before_initialize() {
+    let env = Env::default();
+    let client = register_launchpad(&env);
+
+    assert!(client
+        .collections_by_creator(&Address::generate(&env))
+        .is_empty());
+}
+
+#[test]
+fn collections_by_creator_is_empty_for_creator_without_deploys() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad_with_wasms(&env);
+    let creator = Address::generate(&env);
+    deploy_n721(&client, &creator, 1);
+
+    assert!(client
+        .collections_by_creator(&Address::generate(&env))
+        .is_empty());
+}
+
+#[test]
+fn collections_by_creator_returns_deployed_record() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad_with_wasms(&env);
+    let creator = Address::generate(&env);
+
+    let addr = deploy_n721(&client, &creator, 1);
+
+    let records = client.collections_by_creator(&creator);
+    assert_eq!(records.len(), 1);
+    assert_eq!(
+        records.get(0).unwrap(),
+        record(&addr, CollectionKind::Normal721, &creator)
+    );
+}
+
+#[test]
+fn collections_by_creator_preserves_order_across_all_kinds() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad_with_wasms(&env);
+    let creator = Address::generate(&env);
+
+    let a = deploy_n721(&client, &creator, 1);
+    let b = deploy_n1155(&client, &creator, 2);
+    let c = deploy_l721(&client, &creator, 3);
+    let d = deploy_l1155(&client, &creator, 4);
+
+    let records = client.collections_by_creator(&creator);
+    assert_eq!(records.len(), 4);
+    assert_eq!(
+        records.get(0).unwrap(),
+        record(&a, CollectionKind::Normal721, &creator)
+    );
+    assert_eq!(
+        records.get(1).unwrap(),
+        record(&b, CollectionKind::Normal1155, &creator)
+    );
+    assert_eq!(
+        records.get(2).unwrap(),
+        record(&c, CollectionKind::LazyMint721, &creator)
+    );
+    assert_eq!(
+        records.get(3).unwrap(),
+        record(&d, CollectionKind::LazyMint1155, &creator)
+    );
+}
+
+#[test]
+fn collections_by_creator_isolates_creators() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad_with_wasms(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    let alice_1 = deploy_n721(&client, &alice, 1);
+    let bob_1 = deploy_n1155(&client, &bob, 2);
+    let alice_2 = deploy_l721(&client, &alice, 3);
+
+    let alice_records = client.collections_by_creator(&alice);
+    assert_eq!(alice_records.len(), 2);
+    assert_eq!(
+        alice_records.get(0).unwrap(),
+        record(&alice_1, CollectionKind::Normal721, &alice)
+    );
+    assert_eq!(
+        alice_records.get(1).unwrap(),
+        record(&alice_2, CollectionKind::LazyMint721, &alice)
+    );
+
+    let bob_records = client.collections_by_creator(&bob);
+    assert_eq!(bob_records.len(), 1);
+    assert_eq!(
+        bob_records.get(0).unwrap(),
+        record(&bob_1, CollectionKind::Normal1155, &bob)
+    );
+
+    assert_eq!(
+        alice_records.len() + bob_records.len(),
+        client.all_collections().len()
+    );
+}
+
+#[test]
+fn collections_by_creator_ignores_failed_deploys() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad(&env);
+    let creator = Address::generate(&env);
+
+    let result = client.try_deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "No Wasm"),
+        &String::from_str(&env, "NW"),
+        &1_000u64,
+        &500u32,
+        &creator,
+        &salt(&env, 1),
+    );
+
+    assert_eq!(result, Err(Ok(LaunchpadError::WasmHashNotSet)));
+    assert!(client.collections_by_creator(&creator).is_empty());
+}
+
+// ── Launchpad: collection_count ───────────────────────────────────────────────
+
+#[test]
+fn collection_count_is_zero_before_initialize() {
+    let env = Env::default();
+    let client = register_launchpad(&env);
+
+    assert_eq!(client.collection_count(), 0u64);
+}
+
+#[test]
+fn collection_count_is_zero_after_initialize() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad(&env);
+
+    assert_eq!(client.collection_count(), 0u64);
+}
+
+#[test]
+fn collection_count_increments_for_every_collection_kind() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad_with_wasms(&env);
+    let creator = Address::generate(&env);
+
+    deploy_n721(&client, &creator, 1);
+    assert_eq!(client.collection_count(), 1u64);
+    deploy_n1155(&client, &creator, 2);
+    assert_eq!(client.collection_count(), 2u64);
+    deploy_l721(&client, &creator, 3);
+    assert_eq!(client.collection_count(), 3u64);
+    deploy_l1155(&client, &creator, 4);
+    assert_eq!(client.collection_count(), 4u64);
+}
+
+#[test]
+fn collection_count_is_global_across_creators() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad_with_wasms(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    deploy_n721(&client, &alice, 1);
+    deploy_n721(&client, &bob, 2);
+    deploy_n1155(&client, &bob, 3);
+
+    assert_eq!(client.collection_count(), 3u64);
+    assert_eq!(
+        client.collection_count(),
+        u64::from(client.all_collections().len())
+    );
+}
+
+#[test]
+fn collection_count_unchanged_by_failed_deploys() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad(&env);
+    let creator = Address::generate(&env);
+
+    let result = client.try_deploy_normal_1155(
+        &creator,
+        &String::from_str(&env, "No Wasm"),
+        &500u32,
+        &creator,
+        &salt(&env, 1),
+    );
+
+    assert_eq!(result, Err(Ok(LaunchpadError::WasmHashNotSet)));
+    assert_eq!(client.collection_count(), 0u64);
+}
+
+#[test]
+fn collection_count_unchanged_by_admin_operations() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad_with_wasms(&env);
+    let creator = Address::generate(&env);
+    deploy_n721(&client, &creator, 1);
+
+    client.update_platform_fee(&Address::generate(&env), &100u32);
+    client.transfer_admin(&Address::generate(&env));
+
+    assert_eq!(client.collection_count(), 1u64);
+}
+// ── initialize: the parts that were not covered ──────────────────────────────
+
+/// `cannot_initialize_twice` asserts the error but not what survives it. A
+/// refused re-initialisation must leave the original configuration intact —
+/// otherwise a second caller could silently rewrite the collection.
+#[test]
+fn refused_reinitialisation_leaves_the_original_configuration_alone() {
+    let (env, client, _contract_id, creator) = setup();
+    let original_receiver = client.royalty_info().0;
+    let original_max_supply = client.max_supply();
+
+    let intruder_receiver = Address::generate(&env);
+    let result = client.try_initialize(
+        &Address::generate(&env),
+        &String::from_str(&env, "Hijacked"),
+        &String::from_str(&env, "HJK"),
+        &7u64,
+        &9_999u32,
+        &intruder_receiver,
+    );
+
+    assert_eq!(result, Err(Ok(Error::AlreadyInitialized)));
+    assert_eq!(client.name(), String::from_str(&env, "Test Collection 721"));
+    assert_eq!(client.symbol(), String::from_str(&env, "T721"));
+    assert_eq!(client.creator(), creator);
+    assert_eq!(client.max_supply(), original_max_supply);
+    assert_eq!(client.total_supply(), 0u64);
+    assert_eq!(client.next_token_id(), 0u64);
+    assert_eq!(
+        client.royalty_info(),
+        (original_receiver, 500u32),
+        "the royalty configuration must not have been rewritten"
+    );
+}
+
+/// The full royalty range is stored verbatim: the cap the launchpad enforces is
+/// 100%, and exactly at that cap the value must survive the round trip.
+#[test]
+fn initialize_stores_a_hundred_percent_royalty_verbatim() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(NormalNFT721, ());
+    let client = NormalNFT721Client::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    client.initialize(
+        &creator,
+        &String::from_str(&env, "At The Cap"),
+        &String::from_str(&env, "CAP"),
+        &1u64,
+        &10_000u32,
+        &receiver,
+    );
+
+    assert_eq!(client.royalty_info(), (receiver, 10_000u32));
+}
+
+/// "Unlimited" is expressed as `u64::MAX` (the comment on the parameter says so).
+/// It must be stored verbatim rather than clamped to something smaller.
+#[test]
+fn initialize_stores_unlimited_supply_verbatim() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(NormalNFT721, ());
+    let client = NormalNFT721Client::new(&env, &contract_id);
+
+    client.initialize(
+        &Address::generate(&env),
+        &String::from_str(&env, "Unlimited"),
+        &String::from_str(&env, "UNL"),
+        &u64::MAX,
+        &0u32,
+        &Address::generate(&env),
+    );
+
+    assert_eq!(client.max_supply(), u64::MAX);
+}
+
+// ── set_wasm_hashes authorisation ────────────────────────────────────────────
+
+/// Read a stored wasm hash straight out of the contract's instance storage.
+/// There is no public getter for these four, so the storage key is the only way
+/// to assert that a refused call left the value alone.
+fn stored_normal_721_hash(env: &Env, launchpad: &Address) -> Option<BytesN<32>> {
+    env.as_contract(launchpad, || {
+        env.storage()
+            .instance()
+            .get(&crate::contract::DataKey::WasmNormal721)
+    })
+}
+
+/// `set_wasm_hashes` is gated by `only_admin`, which calls `require_auth()` on
+/// the stored admin. With no authorisations the call must be refused *and* the
+/// previously stored hashes must survive untouched.
+#[test]
+fn set_wasm_hashes_is_refused_without_the_admins_authorisation() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad(&env);
+    let launchpad = client.address.clone();
+
+    let original = BytesN::from_array(&env, &[1u8; 32]);
+    client.set_wasm_hashes(
+        &original,
+        &BytesN::from_array(&env, &[2u8; 32]),
+        &BytesN::from_array(&env, &[3u8; 32]),
+        &BytesN::from_array(&env, &[4u8; 32]),
+    );
+    assert_eq!(
+        stored_normal_721_hash(&env, &launchpad),
+        Some(original.clone())
+    );
+
+    let attacker = BytesN::from_array(&env, &[9u8; 32]);
+    env.set_auths(&[]);
+    let refused = client.try_set_wasm_hashes(
+        &attacker,
+        &BytesN::from_array(&env, &[9u8; 32]),
+        &BytesN::from_array(&env, &[9u8; 32]),
+        &BytesN::from_array(&env, &[9u8; 32]),
+    );
+
+    assert!(
+        refused.is_err(),
+        "an unauthorised caller must not set the wasm hashes"
+    );
+    assert_eq!(
+        stored_normal_721_hash(&env, &launchpad),
+        Some(original),
+        "a refused call must not overwrite the stored hashes"
+    );
+}
+
+/// The positive control: with the admin's authorisation the same call does
+/// replace the stored hash, so the test above cannot be passing because the
+/// entry point is broken for everyone.
+#[test]
+fn set_wasm_hashes_replaces_the_stored_hash_when_authorised() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad(&env);
+    let launchpad = client.address.clone();
+
+    let first = BytesN::from_array(&env, &[5u8; 32]);
+    let second = BytesN::from_array(&env, &[6u8; 32]);
+    let other = BytesN::from_array(&env, &[7u8; 32]);
+
+    client.set_wasm_hashes(&first, &other, &other, &other);
+    assert_eq!(
+        stored_normal_721_hash(&env, &launchpad),
+        Some(first.clone())
+    );
+
+    client.set_wasm_hashes(&second, &other, &other, &other);
+    assert_eq!(
+        stored_normal_721_hash(&env, &launchpad),
+        Some(second),
+        "an authorised call must be able to replace the hash"
+    );
+}
+
+// ── set_wasm_hashes: happy path and edge cases ───────────────────────────────
+
+/// Read all four stored wasm hashes. There is no public getter for them, so
+/// instance storage is the only way to see what the setter actually wrote.
+fn stored_wasm_hashes(
+    env: &Env,
+    launchpad: &Address,
+) -> (BytesN<32>, BytesN<32>, BytesN<32>, BytesN<32>) {
+    env.as_contract(launchpad, || {
+        let storage = env.storage().instance();
+        (
+            storage
+                .get(&crate::contract::DataKey::WasmNormal721)
+                .unwrap(),
+            storage
+                .get(&crate::contract::DataKey::WasmNormal1155)
+                .unwrap(),
+            storage.get(&crate::contract::DataKey::WasmLazy721).unwrap(),
+            storage
+                .get(&crate::contract::DataKey::WasmLazy1155)
+                .unwrap(),
+        )
+    })
+}
+
+fn hash(env: &Env, byte: u8) -> BytesN<32> {
+    BytesN::from_array(env, &[byte; 32])
+}
+
+/// Happy path: the four hashes land under their own keys, in the order the
+/// signature promises — a swap between two of them would be invisible to any
+/// test that only checked "something was stored".
+#[test]
+fn set_wasm_hashes_stores_each_hash_under_its_own_key() {
+    let env = Env::default();
+    let (client, _admin, _fee) = setup_launchpad(&env);
+
+    let normal_721 = hash(&env, 1);
+    let normal_1155 = hash(&env, 2);
+    let lazy_721 = hash(&env, 3);
+    let lazy_1155 = hash(&env, 4);
+
+    client.set_wasm_hashes(&normal_721, &normal_1155, &lazy_721, &lazy_1155);
+
+    assert_eq!(
+        stored_wasm_hashes(&env, &client.address),
+        (normal_721, normal_1155, lazy_721, lazy_1155)
+    );
+}
+
+/// A second call replaces all four, not just the ones that changed.
+#[test]
+fn set_wasm_hashes_replaces_every_hash_on_a_second_call() {
+    let env = Env::default();
+    let (client, _admin, _fee) = setup_launchpad(&env);
+
+    client.set_wasm_hashes(
+        &hash(&env, 1),
+        &hash(&env, 2),
+        &hash(&env, 3),
+        &hash(&env, 4),
+    );
+
+    let second = (
+        hash(&env, 11),
+        hash(&env, 12),
+        hash(&env, 13),
+        hash(&env, 14),
+    );
+    client.set_wasm_hashes(&second.0, &second.1, &second.2, &second.3);
+
+    assert_eq!(stored_wasm_hashes(&env, &client.address), second);
+}
+
+/// Re-setting the same values is idempotent: no error, no change.
+#[test]
+fn set_wasm_hashes_is_idempotent_for_the_same_values() {
+    let env = Env::default();
+    let (client, _admin, _fee) = setup_launchpad(&env);
+
+    let values = (hash(&env, 7), hash(&env, 8), hash(&env, 9), hash(&env, 10));
+    client.set_wasm_hashes(&values.0, &values.1, &values.2, &values.3);
+    client.set_wasm_hashes(&values.0, &values.1, &values.2, &values.3);
+
+    assert_eq!(stored_wasm_hashes(&env, &client.address), values);
+}
+
+/// Edge case: all four may legitimately be the same contract.
+#[test]
+fn set_wasm_hashes_accepts_one_hash_for_all_four() {
+    let env = Env::default();
+    let (client, _admin, _fee) = setup_launchpad(&env);
+
+    let single = hash(&env, 42);
+    client.set_wasm_hashes(&single, &single, &single, &single);
+
+    assert_eq!(
+        stored_wasm_hashes(&env, &client.address),
+        (single.clone(), single.clone(), single.clone(), single)
+    );
+}
+
+/// Edge case: the all-zero hash is a valid `BytesN<32>` and must be stored as
+/// given rather than treated as "unset" and skipped.
+#[test]
+fn set_wasm_hashes_stores_an_all_zero_hash() {
+    let env = Env::default();
+    let (client, _admin, _fee) = setup_launchpad(&env);
+
+    let zero = hash(&env, 0);
+    client.set_wasm_hashes(&zero, &hash(&env, 1), &hash(&env, 2), &hash(&env, 3));
+
+    assert_eq!(stored_wasm_hashes(&env, &client.address).0, zero);
+}
+
+// ── transfer_admin authorisation ─────────────────────────────────────────────
+
+/// `transfer_admin` is gated by `only_admin`, which calls `require_auth()` on
+/// the stored admin. The recorded auth must be the current admin's.
+#[test]
+fn transfer_admin_is_authorized_by_current_admin() {
+    let env = Env::default();
+    let (client, admin, _fee_receiver) = setup_launchpad(&env);
+    let new_admin = Address::generate(&env);
+
+    client.transfer_admin(&new_admin);
+
+    assert_eq!(
+        env.auths(),
+        std::vec![(
+            admin,
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    client.address.clone(),
+                    Symbol::new(&env, "transfer_admin"),
+                    (new_admin.clone(),).into_val(&env),
+                )),
+                sub_invocations: std::vec![],
+            }
+        )]
+    );
+    assert_eq!(client.admin(), new_admin);
+}
+
+#[test]
+fn transfer_admin_fails_without_admin_auth() {
+    let env = Env::default();
+    let (client, admin, _fee_receiver) = setup_launchpad(&env);
+    env.set_auths(&[]);
+
+    let result = client.try_transfer_admin(&Address::generate(&env));
+
+    assert!(result.is_err());
+    assert_eq!(client.admin(), admin);
+}
+
+#[test]
+fn transfer_admin_before_initialize_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_launchpad(&env);
+
+    let result = client.try_transfer_admin(&Address::generate(&env));
+
+    assert_eq!(result, Err(Ok(LaunchpadError::NotInitialized)));
+}
+
+// ── Launchpad: all_collections ───────────────────────────────────────────────
+
+#[test]
+fn all_collections_is_empty_before_initialize() {
+    let env = Env::default();
+    let client = register_launchpad(&env);
+
+    assert!(client.all_collections().is_empty());
+}
+
+#[test]
+fn all_collections_is_empty_after_initialize() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad(&env);
+
+    assert!(client.all_collections().is_empty());
+}
+
+#[test]
+fn all_collections_records_every_kind_in_deploy_order() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad_with_wasms(&env);
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    let n721 = deploy_n721(&client, &alice, 1);
+    let n1155 = deploy_n1155(&client, &bob, 2);
+    let l721 = deploy_l721(&client, &alice, 3);
+    let l1155 = deploy_l1155(&client, &bob, 4);
+
+    let all = client.all_collections();
+    assert_eq!(all.len(), 4);
+    assert_eq!(
+        all.get(0).unwrap(),
+        record(&n721, CollectionKind::Normal721, &alice)
+    );
+    assert_eq!(
+        all.get(1).unwrap(),
+        record(&n1155, CollectionKind::Normal1155, &bob)
+    );
+    assert_eq!(
+        all.get(2).unwrap(),
+        record(&l721, CollectionKind::LazyMint721, &alice)
+    );
+    assert_eq!(
+        all.get(3).unwrap(),
+        record(&l1155, CollectionKind::LazyMint1155, &bob)
+    );
+    assert_eq!(u64::from(all.len()), client.collection_count());
+}
+
+#[test]
+fn all_collections_ignores_failed_deploys() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad_with_wasms(&env);
+    let creator = Address::generate(&env);
+    let addr = deploy_n721(&client, &creator, 1);
+
+    // Reusing a salt collides with the existing deployment.
+    let result = client.try_deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Dup"),
+        &String::from_str(&env, "DUP"),
+        &1_000u64,
+        &500u32,
+        &creator,
+        &salt(&env, 1),
+    );
+
+    assert!(result.is_err());
+    let all = client.all_collections();
+    assert_eq!(all.len(), 1);
+    assert_eq!(
+        all.get(0).unwrap(),
+        record(&addr, CollectionKind::Normal721, &creator)
+    );
+}
+
+#[test]
+fn all_collections_unchanged_by_admin_operations() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver) = setup_launchpad_with_wasms(&env);
+    let creator = Address::generate(&env);
+    deploy_n721(&client, &creator, 1);
+    let before = client.all_collections();
+
+    client.update_platform_fee(&Address::generate(&env), &100u32);
+    client.transfer_admin(&Address::generate(&env));
+
+    assert_eq!(client.all_collections(), before);
 }

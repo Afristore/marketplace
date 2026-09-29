@@ -19,6 +19,7 @@ jobs:
       - name: Install Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: stable
           targets: wasm32v1-none
           components: rustfmt, clippy
       - name: Rust Cache
@@ -82,4 +83,4 @@ jobs:
         working-directory: indexer
       - name: Run Tests
         run: npm run test
-        working-directory: indexer
+        working-directory: indexer

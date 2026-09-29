@@ -6,6 +6,8 @@ use soroban_sdk::{
 };
 
 use crate::{DataKey, NormalNFT1155, NormalNFT1155Client};
+#[path = "contract.rs"]
+mod contract_type;
 
 /// Utility: advance ledger sequence to simulate TTL expiry windows
 fn jump_ledger(env: &Env, delta: u32) {
@@ -306,4 +308,15 @@ fn update_royalty_fails_if_not_creator() {
     let new_receiver = Address::generate(&env);
     let result = client.try_update_royalty(&new_receiver, &250u32);
     assert!(result.is_err());
+}
+#[test]
+fn contract_type_returns_collection_identifier() {
+    let env = Env::default();
+    let id = env.register(contract_type::CollectionNftErc1155Contract, ());
+    let client = contract_type::CollectionNftErc1155ContractClient::new(&env, &id);
+
+    assert_eq!(
+        client.contract_type(),
+        String::from_str(&env, "collection_nft_erc1155")
+    );
 }

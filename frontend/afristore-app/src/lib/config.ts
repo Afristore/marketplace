@@ -6,6 +6,7 @@ export const config = {
   contractId: process.env.NEXT_PUBLIC_CONTRACT_ID ?? "",
   launchpadContractId: process.env.NEXT_PUBLIC_LAUNCHPAD_CONTRACT_ID ?? "",
   stakingContractId: process.env.NEXT_PUBLIC_STAKING_CONTRACT_ID ?? "",
+  lendingContractId: process.env.NEXT_PUBLIC_LENDING_CONTRACT_ID ?? "",
   splitterWasmHash:
     process.env.NEXT_PUBLIC_SPLITTER_WASM_HASH ?? "",
   /** Base URL for the Afristore indexer HTTP API (no trailing slash). */

@@ -1,0 +1,117 @@
+/**
+ * LenderDashboardTable i18n Support (Issue #1004)
+ * 
+ * Replace hardcoded English strings with react-i18next translation keys.
+ */
+
+import { useTranslation } from 'react-i18next';
+
+// ADD: Translation hook at component top
+const { t } = useTranslation();
+
+// BEFORE (hardcoded strings):
+<thead>
+  <tr>
+    <th>Borrower</th>
+    <th>Amount</th>
+    <th>Interest Rate</th>
+    <th>Duration</th>
+    <th>Status</th>
+    <th>Actions</th>
+  </tr>
+</thead>
+
+// AFTER (i18n keys):
+<thead>
+  <tr>
+    <th>{t('lending.table.borrower')}</th>
+    <th>{t('lending.table.amount')}</th>
+    <th>{t('lending.table.interestRate')}</th>
+    <th>{t('lending.table.duration')}</th>
+    <th>{t('lending.table.status')}</th>
+    <th>{t('lending.table.actions')}</th>
+  </tr>
+</thead>
+
+// BEFORE (hardcoded button text):
+<button onClick={handleApprove}>Approve</button>
+<button onClick={handleReject}>Reject</button>
+<button onClick={handleWithdraw}>Withdraw</button>
+
+// AFTER (i18n keys):
+<button onClick={handleApprove}>{t('lending.actions.approve')}</button>
+<button onClick={handleReject}>{t('lending.actions.reject')}</button>
+<button onClick={handleWithdraw}>{t('lending.actions.withdraw')}</button>
+
+// BEFORE (hardcoded status labels):
+const getStatusLabel = (status: string) => {
+  switch (status) {
+    case 'pending': return 'Pending';
+    case 'active': return 'Active';
+    case 'completed': return 'Completed';
+    case 'defaulted': return 'Defaulted';
+    default: return 'Unknown';
+  }
+};
+
+// AFTER (i18n keys):
+const getStatusLabel = (status: string) => {
+  return t(`lending.status.${status}`, { defaultValue: t('lending.status.unknown') });
+};
+
+// BEFORE (hardcoded empty state):
+{loans.length === 0 && (
+  <div className="empty-state">
+    <p>No loans found</p>
+    <button>Create Listing</button>
+  </div>
+)}
+
+// AFTER (i18n keys):
+{loans.length === 0 && (
+  <div className="empty-state">
+    <p>{t('lending.empty.noLoans')}</p>
+    <button>{t('lending.actions.createListing')}</button>
+  </div>
+)}
+
+// BEFORE (hardcoded error messages):
+toast.error('Failed to approve loan');
+toast.success('Loan approved successfully');
+
+// AFTER (i18n keys):
+toast.error(t('lending.errors.approveFailed'));
+toast.success(t('lending.success.approved'));
+
+// BEFORE (hardcoded tooltips):
+<Tooltip content="Click to view details">
+  <InfoIcon />
+</Tooltip>
+
+// AFTER (i18n keys):
+<Tooltip content={t('lending.tooltips.viewDetails')}>
+  <InfoIcon />
+</Tooltip>
+
+// Currency formatting with i18n:
+import { formatCurrency } from '@/lib/i18n';
+
+// BEFORE:
+<td>${amount.toFixed(2)}</td>
+
+// AFTER:
+<td>{t('common.currency', { value: amount })}</td>
+// Or with number formatter:
+<td>{new Intl.NumberFormat(i18n.language, { 
+  style: 'currency', 
+  currency: 'USD' 
+}).format(amount)}</td>
+
+// Date formatting with i18n:
+// BEFORE:
+<td>{new Date(createdAt).toLocaleDateString()}</td>
+
+// AFTER:
+<td>{new Intl.DateTimeFormat(i18n.language).format(new Date(createdAt))}</td>
+
+// Apply i18n to ALL hardcoded strings in the component

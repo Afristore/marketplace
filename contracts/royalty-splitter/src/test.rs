@@ -329,6 +329,59 @@ fn test_distribute_dust_goes_to_caller() {
     assert_eq!(tc.balance(&contract_id), 0);
 }
 
+// ── get_beneficiaries ────────────────────────────────────────────────
+
+#[test]
+fn test_get_beneficiaries_returns_correct_addresses() {
+    let (env, client, token, _) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.initialize(
+        &token,
+        &vec![&env, alice.clone(), bob.clone()],
+        &vec![&env, 6_000_u32, 4_000_u32],
+    );
+
+    let beneficiaries = client.get_beneficiaries();
+    assert_eq!(beneficiaries.len(), 2);
+    assert_eq!(beneficiaries.get(0).unwrap(), alice);
+    assert_eq!(beneficiaries.get(1).unwrap(), bob);
+}
+
+#[test]
+fn test_get_beneficiaries_single_beneficiary() {
+    let (env, client, token, _) = setup();
+    let alice = Address::generate(&env);
+
+    client.initialize(&token, &vec![&env, alice.clone()], &vec![&env, 10_000_u32]);
+
+    let beneficiaries = client.get_beneficiaries();
+    assert_eq!(beneficiaries.len(), 1);
+    assert_eq!(beneficiaries.get(0).unwrap(), alice);
+}
+
+#[test]
+fn test_get_beneficiaries_max_beneficiaries() {
+    let (env, client, token, _) = setup();
+    let mut beneficiaries = vec![&env];
+
+    for _ in 0..20 {
+        let recipient = Address::generate(&env);
+        beneficiaries.push_back(recipient.clone());
+    }
+
+    let mut shares = vec![&env];
+    for _ in 0..20 {
+        shares.push_back(500_u32);
+    }
+
+    client.initialize(&token, &beneficiaries, &shares);
+
+    let returned_beneficiaries = client.get_beneficiaries();
+    assert_eq!(returned_beneficiaries.len(), 20);
+}
+
 // ── get_share ────────────────────────────────────────────────
 
 #[test]
@@ -706,4 +759,122 @@ fn test_distribute_royalties_invalid_recipient_final_position_fails() {
         &vec![&env, valid_a, valid_b, invalid_c],
         &vec![&env, 5_000_u32, 3_000_u32, 2_000_u32],
     );
+}
+
+// ── get_token (#890) ──────────────────────────────────────────────────────────
+
+#[test]
+fn test_get_token_returns_initialized_token() {
+    let (env, client, token, _) = setup();
+    let alice = Address::generate(&env);
+    client.initialize(&token, &vec![&env, alice], &vec![&env, 10_000_u32]);
+    assert_eq!(client.get_token(), token);
+}
+
+#[test]
+fn test_get_token_reflects_the_exact_address_passed_to_initialize() {
+    // Two different token addresses — only the one used in initialize is returned.
+    let (env, client, token_a, _) = setup();
+    let token_admin = Address::generate(&env);
+    let token_b = env
+        .register_stellar_asset_contract_v2(token_admin)
+        .address();
+    let alice = Address::generate(&env);
+
+    client.initialize(&token_a, &vec![&env, alice], &vec![&env, 10_000_u32]);
+
+    assert_eq!(client.get_token(), token_a);
+    assert_ne!(client.get_token(), token_b);
+}
+
+#[test]
+fn test_get_token_two_party_split_preserves_token() {
+    let (env, client, token, _) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.initialize(
+        &token,
+        &vec![&env, alice, bob],
+        &vec![&env, 7_000_u32, 3_000_u32],
+    );
+
+    assert_eq!(client.get_token(), token);
+}
+
+// ── get_shares (#892) ─────────────────────────────────────────────────────────
+
+#[test]
+fn test_get_shares_returns_shares_in_order() {
+    let (env, client, token, _) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.initialize(
+        &token,
+        &vec![&env, alice, bob],
+        &vec![&env, 6_000_u32, 4_000_u32],
+    );
+
+    let shares = client.get_shares();
+    assert_eq!(shares.len(), 2);
+    assert_eq!(shares.get(0).unwrap(), 6_000_u32);
+    assert_eq!(shares.get(1).unwrap(), 4_000_u32);
+}
+
+#[test]
+fn test_get_shares_single_beneficiary_gets_full_10000() {
+    let (env, client, token, _) = setup();
+    let alice = Address::generate(&env);
+
+    client.initialize(&token, &vec![&env, alice], &vec![&env, 10_000_u32]);
+
+    let shares = client.get_shares();
+    assert_eq!(shares.len(), 1);
+    assert_eq!(shares.get(0).unwrap(), 10_000_u32);
+}
+
+#[test]
+fn test_get_shares_three_way_equal_split() {
+    // 3334 + 3333 + 3333 = 10000
+    let (env, client, token, _) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let carol = Address::generate(&env);
+
+    client.initialize(
+        &token,
+        &vec![&env, alice, bob, carol],
+        &vec![&env, 3_334_u32, 3_333_u32, 3_333_u32],
+    );
+
+    let shares = client.get_shares();
+    assert_eq!(shares.len(), 3);
+    assert_eq!(shares.get(0).unwrap(), 3_334_u32);
+    assert_eq!(shares.get(1).unwrap(), 3_333_u32);
+    assert_eq!(shares.get(2).unwrap(), 3_333_u32);
+    let total: u32 = shares.iter().sum();
+    assert_eq!(total, 10_000_u32);
+}
+
+#[test]
+fn test_get_shares_order_matches_beneficiaries_order() {
+    // Ensure index alignment: shares[i] belongs to beneficiaries[i].
+    let (env, client, token, _) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    client.initialize(
+        &token,
+        &vec![&env, alice.clone(), bob.clone()],
+        &vec![&env, 8_000_u32, 2_000_u32],
+    );
+
+    let beneficiaries = client.get_beneficiaries();
+    let shares = client.get_shares();
+
+    assert_eq!(beneficiaries.get(0).unwrap(), alice);
+    assert_eq!(shares.get(0).unwrap(), 8_000_u32);
+    assert_eq!(beneficiaries.get(1).unwrap(), bob);
+    assert_eq!(shares.get(1).unwrap(), 2_000_u32);
 }

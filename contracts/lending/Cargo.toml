@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [lib]
+name = "lending"
 crate-type = ["cdylib"]
 doctest = false
 

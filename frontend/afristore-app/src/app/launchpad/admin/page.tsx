@@ -12,6 +12,9 @@ import {
   useLaunchpadAdminActions,
 } from "@/hooks/useLaunchpadAdmin";
 import { useLaunchpadCollections } from "@/hooks/useLaunchpad";
+import { useToast } from "@/components/ToastProvider";
+import { useTransientErrorToast } from "@/hooks/useTransientErrorToast";
+import { getReadableErrorMessage } from "@/lib/errors";
 import {
   Shield,
   Settings,
@@ -46,38 +49,82 @@ export default function LaunchpadAdminPage() {
     error: actionError,
   } = useLaunchpadAdminActions(publicKey);
   const { collections } = useLaunchpadCollections();
+  const { pushToast } = useToast();
+  // Action failures come back through the hook's `error`, so surface them as a
+  // toast in addition to the inline banner below.
+  useTransientErrorToast(actionError);
 
   // Local state for admin actions
   const [newAdminAddress, setNewAdminAddress] = useState("");
   const [newFeeReceiver, setNewFeeReceiver] = useState("");
   const [newFeeBps, setNewFeeBps] = useState("");
+  const [localError, setLocalError] = useState<string | null>(null);
 
   // Local state for editing
   const [isEditingAdmin, setIsEditingAdmin] = useState(false);
   const [isEditingFee, setIsEditingFee] = useState(false);
 
   const handleTransferAdmin = async () => {
-    if (!newAdminAddress.trim()) return;
-    const success = await transferAdmin(newAdminAddress.trim());
-    if (success) {
-      setIsEditingAdmin(false);
-      setNewAdminAddress("");
-      // Refresh admin check
-      window.location.reload();
+    const address = newAdminAddress.trim();
+    if (!address) {
+      setLocalError("Enter the new admin address before transferring.");
+      return;
+    }
+
+    setLocalError(null);
+
+    try {
+      const success = await transferAdmin(address);
+      if (success) {
+        setIsEditingAdmin(false);
+        setNewAdminAddress("");
+        // Refresh admin check
+        window.location.reload();
+      }
+    } catch (err: unknown) {
+      // The hook reports its own failures, but an unexpected rejection here
+      // would otherwise be unhandled.
+      const message = getReadableErrorMessage(
+        err,
+        "Failed to transfer admin rights. Please try again.",
+      );
+      setLocalError(message);
+      pushToast(message, "error");
     }
   };
 
   const handleUpdateFee = async () => {
-    if (!newFeeReceiver.trim() || !newFeeBps.trim()) return;
-    const feeBps = parseInt(newFeeBps.trim());
-    if (isNaN(feeBps) || feeBps < 0 || feeBps > 10000) return; // Max 100%
+    const receiver = newFeeReceiver.trim();
+    const rawBps = newFeeBps.trim();
 
-    const success = await updateFee(newFeeReceiver.trim(), feeBps);
-    if (success) {
-      setIsEditingFee(false);
-      setNewFeeReceiver("");
-      setNewFeeBps("");
-      refreshStats();
+    if (!receiver || !rawBps) {
+      setLocalError("A fee receiver address and a fee in BPS are both required.");
+      return;
+    }
+
+    const feeBps = parseInt(rawBps, 10);
+    if (isNaN(feeBps) || feeBps < 0 || feeBps > 10000) {
+      setLocalError("Fee BPS must be a number between 0 and 10000 (max 100%).");
+      return;
+    }
+
+    setLocalError(null);
+
+    try {
+      const success = await updateFee(receiver, feeBps);
+      if (success) {
+        setIsEditingFee(false);
+        setNewFeeReceiver("");
+        setNewFeeBps("");
+        await refreshStats();
+      }
+    } catch (err: unknown) {
+      const message = getReadableErrorMessage(
+        err,
+        "Failed to update the platform fee. Please try again.",
+      );
+      setLocalError(message);
+      pushToast(message, "error");
     }
   };
 
@@ -263,6 +310,7 @@ export default function LaunchpadAdminPage() {
                     onClick={() => {
                       setIsEditingAdmin(false);
                       setNewAdminAddress("");
+                      setLocalError(null);
                     }}
                     className="flex items-center gap-2 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
                   >
@@ -362,6 +410,7 @@ export default function LaunchpadAdminPage() {
                       setIsEditingFee(false);
                       setNewFeeReceiver("");
                       setNewFeeBps("");
+                      setLocalError(null);
                     }}
                     className="flex items-center gap-2 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
                   >
@@ -375,11 +424,16 @@ export default function LaunchpadAdminPage() {
         </div>
 
         {/* Error Display */}
-        {actionError && (
-          <div className="mt-6 bg-red-50 border border-red-200 rounded-xl p-4">
+        {(localError || actionError) && (
+          <div
+            role="alert"
+            className="mt-6 bg-red-50 border border-red-200 rounded-xl p-4"
+          >
             <div className="flex items-center gap-3">
               <AlertCircle size={20} className="text-red-500" />
-              <p className="text-red-700 font-medium">{actionError}</p>
+              <p className="text-red-700 font-medium">
+                {localError || actionError}
+              </p>
             </div>
           </div>
         )}
