@@ -2,7 +2,7 @@ extern crate std;
 
 use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, Env, String};
 
-use crate::{DataKey, Error, NormalNFT721, NormalNFT721Client};
+use crate::{DataKey, Error, NormalNFT721, NormalNFT721Client, contract::Launchpad, contract::LaunchpadClient};
 
 fn jump_ledger(env: &Env, delta: u32) {
     env.ledger().with_mut(|li| {
@@ -583,4 +583,40 @@ fn next_token_id_advances_with_each_mint() {
     assert_eq!(client.next_token_id(), 1u64);
     client.mint(&alice, &String::from_str(&env, "uri-1"));
     assert_eq!(client.next_token_id(), 2u64);
+}
+
+// ── Launchpad tests ──────────────────────────────────────────────────────────
+
+#[test]
+fn test_platform_fee_happy_path() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let fee_bps = 500u32; // 5%
+
+    // Initialize launchpad
+    client.initialize(&admin, &fee_receiver, &fee_bps);
+
+    // Call platform_fee
+    let (returned_receiver, returned_bps) = client.platform_fee();
+
+    assert_eq!(returned_receiver, fee_receiver);
+    assert_eq!(returned_bps, fee_bps);
+}
+
+#[test]
+#[should_panic(expected = "HostError: Error(WasmVm, InvalidAction)")]
+fn test_platform_fee_uninitialized() {
+    let env = Env::default();
+    
+    let contract_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &contract_id);
+
+    // Calling platform_fee without initialization should panic because DataKey::PlatformFeeReceiver is missing.
+    client.platform_fee();
 }
