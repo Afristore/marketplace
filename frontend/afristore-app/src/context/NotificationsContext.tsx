@@ -75,6 +75,7 @@ export interface NotificationsState {
   notifications: WalletEvent[];
   unreadCount: number;
   isConnected: boolean;
+  isLoading: boolean;
   error: string | null;
   addNotification: (event: WalletEvent) => void;
   markAsRead: (eventId: string) => void;
@@ -120,6 +121,7 @@ export function NotificationsProvider({
 }: NotificationsProviderProps) {
   const [notifications, setNotifications] = useState<WalletEvent[]>([]);
   const [isConnected, setIsConnected] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [settings, setSettings] = useState<SettingsState>(loadSettings);
 
@@ -129,9 +131,11 @@ export function NotificationsProvider({
   useEffect(() => {
     if (!publicKey) {
       setNotifications([]);
+      setIsLoading(false);
       return;
     }
 
+    setIsLoading(true);
     let cancelled = false;
     const fetchInitial = async () => {
       try {
@@ -152,6 +156,8 @@ export function NotificationsProvider({
         setNotifications(processed);
       } catch (err) {
         console.error("Failed to load initial notifications:", err);
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
     };
 
@@ -398,6 +404,7 @@ export function NotificationsProvider({
     notifications,
     unreadCount,
     isConnected,
+    isLoading,
     error,
     addNotification,
     markAsRead,

@@ -46,7 +46,7 @@ export function Navbar() {
     disconnect,
     isWrongNetwork,
     status,
-    notifications: { notifications, unreadCount, markAllAsRead },
+    notifications: { notifications, unreadCount, markAllAsRead, isLoading },
   } = useWalletContext();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -219,7 +219,12 @@ export function Navbar() {
                       </div>
 
                       <div className="max-h-72 overflow-y-auto divide-y divide-white/5">
-                        {notifications.length === 0 ? (
+                        {isLoading ? (
+                          <div className="flex flex-col items-center justify-center py-8 text-center px-4">
+                            <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin mb-2"></div>
+                            <p className="text-xs text-white/40">Loading...</p>
+                          </div>
+                        ) : notifications.length === 0 ? (
                           <div
                             data-testid="notification-empty"
                             className="flex flex-col items-center justify-center py-8 text-center px-4"
