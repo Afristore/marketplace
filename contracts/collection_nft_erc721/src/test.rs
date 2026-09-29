@@ -584,3 +584,58 @@ fn next_token_id_advances_with_each_mint() {
     client.mint(&alice, &String::from_str(&env, "uri-1"));
     assert_eq!(client.next_token_id(), 2u64);
 }
+
+// ── platform_fee tests (Issue #912) ──────────────────────────────────────────
+
+#[path = "contract.rs"]
+mod launchpad_contract;
+
+#[test]
+fn platform_fee_returns_initialized_values() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(launchpad_contract::Launchpad, ());
+    let client = launchpad_contract::LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    client.initialize(&admin, &receiver, &500u32);
+
+    let (recv, bps) = client.platform_fee();
+    assert_eq!(recv, receiver);
+    assert_eq!(bps, 500u32);
+}
+
+#[test]
+fn update_platform_fee_happy_path() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(launchpad_contract::Launchpad, ());
+    let client = launchpad_contract::LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    client.initialize(&admin, &receiver, &500u32);
+
+    let new_receiver = Address::generate(&env);
+    client.update_platform_fee(&new_receiver, &750u32);
+
+    let (recv, bps) = client.platform_fee();
+    assert_eq!(recv, new_receiver);
+    assert_eq!(bps, 750u32);
+}
+
+#[test]
+fn update_platform_fee_fails_if_not_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let id = env.register(launchpad_contract::Launchpad, ());
+    let client = launchpad_contract::LaunchpadClient::new(&env, &id);
+    let admin = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    client.initialize(&admin, &receiver, &500u32);
+
+    env.mock_auths(&[]);
+    
+    let new_receiver = Address::generate(&env);
+    let result = client.try_update_platform_fee(&new_receiver, &750u32);
+    assert!(result.is_err());
+}
