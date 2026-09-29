@@ -4,6 +4,7 @@
 
 import type { Metadata } from "next";
 import "./globals.css";
+import "@/i18n";
 import { WalletProvider } from "@/context/WalletContext";
 import { Navbar } from "@/components/Navbar";
 import { RootErrorBoundary } from "@/components/RootErrorBoundary";
