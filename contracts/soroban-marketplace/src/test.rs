@@ -3690,7 +3690,10 @@ fn test_get_auction_nonexistent_panics() {
     let (env, client, _artist, _buyer, _token_id, contract_id, _collection_id) = setup();
     env.as_contract(&contract_id, || {
         let res = client.try_get_auction(&999_999u64);
-        assert!(res.is_err(), "get_auction must fail for non-existent auction");
+        assert!(
+            res.is_err(),
+            "get_auction must fail for non-existent auction"
+        );
     });
 }
 
@@ -3894,7 +3897,10 @@ fn test_get_offerer_offers_empty_for_new_address() {
     let random_user = Address::generate(&env);
     let offers = client.get_offerer_offers(&random_user);
     assert_eq!(offers.len(), 0);
-    assert!(offers.is_empty(), "Unused address must have empty offers list");
+    assert!(
+        offers.is_empty(),
+        "Unused address must have empty offers list"
+    );
 }
 
 #[test]
