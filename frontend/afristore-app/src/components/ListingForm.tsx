@@ -10,6 +10,7 @@ import { useCreateListing, useUpdateListing } from "@/hooks/useMarketplace";
 import { useWalletContext } from "@/context/WalletContext";
 import { Upload, CheckCircle, Loader2, Save } from "lucide-react";
 import { GuardButton } from "./WalletGuard";
+import { useToast } from "@/components/ToastProvider";
 import { ArtworkMetadata, fetchMetadata, cidToGatewayUrl } from "@/lib/ipfs";
 import { Listing, stroopsToXlm } from "@/lib/contract";
 import { DEFAULT_TOKEN } from "@/config/tokens";
@@ -47,6 +48,7 @@ export function ListingForm({
 }: ListingFormProps) {
   const isEdit = !!listing;
   const { publicKey } = useWalletContext();
+  const { pushToast } = useToast();
   const { tokens: availableTokens } = useSupportedTokens();
 
   const {
@@ -99,6 +101,11 @@ export function ListingForm({
             tokenAddress: listing.token,
           });
         })
+        .catch((err) => {
+          const message =
+            err instanceof Error ? err.message : "Failed to load listing metadata";
+          pushToast(message, "error");
+        })
         .finally(() => setIsFetchingMetadata(false));
     }
   }, [listing]);
@@ -119,32 +126,38 @@ export function ListingForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (isEdit && listing && currentMetadata) {
-      const success = await update({
-        listingId: listing.listing_id,
-        originalTokenAddress: listing.token,
-        ...form,
-        title: "",
-        description: "",
-        artistName: "",
-        year: "",
-        category: "",
-        currentMetadata,
-      });
-      if (success) {
-        setSuccessId(listing.listing_id);
-        onSuccess?.(listing.listing_id);
-      }
-    } else if (!isEdit) {
-      const id = await create({ ...form });
-      if (id !== null) {
-        setSuccessId(id);
-        posthog.capture("Listing Created", {
-          listing_id: id,
-          price_xlm: form.price,
+    try {
+      if (isEdit && listing && currentMetadata) {
+        const success = await update({
+          listingId: listing.listing_id,
+          originalTokenAddress: listing.token,
+          ...form,
+          title: "",
+          description: "",
+          artistName: "",
+          year: "",
+          category: "",
+          currentMetadata,
         });
-        onSuccess?.(id);
+        if (success) {
+          setSuccessId(listing.listing_id);
+          onSuccess?.(listing.listing_id);
+        }
+      } else if (!isEdit) {
+        const id = await create({ ...form });
+        if (id !== null) {
+          setSuccessId(id);
+          posthog.capture("Listing Created", {
+            listing_id: id,
+            price_xlm: form.price,
+          });
+          onSuccess?.(id);
+        }
       }
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "An unexpected error occurred while submitting the listing";
+      pushToast(message, "error");
     }
   };
 

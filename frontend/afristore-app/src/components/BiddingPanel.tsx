@@ -19,6 +19,7 @@ import {
   CheckCircle,
   Loader2,
 } from "lucide-react";
+import { useToast } from "@/components/ToastProvider";
 
 interface BiddingPanelProps {
   auction: Auction;
@@ -62,6 +63,7 @@ export function BiddingPanel({
   onFinalized,
 }: BiddingPanelProps) {
   const { publicKey } = useWalletContext();
+  const { pushToast } = useToast();
   const { bid, isBidding, error: bidError } = usePlaceBid(publicKey);
   const {
     finalize,
@@ -106,26 +108,38 @@ export function BiddingPanel({
     const amount = parseFloat(bidAmount);
     if (isNaN(amount) || bidValidation) return;
 
-    const previousBidder = auction.highest_bidder;
-    const success = await bid(auction.auction_id, amount);
-    if (success) {
-      setBidSuccess(true);
-      setBidAmount("");
-      if (previousBidder && previousBidder !== publicKey) {
-        setOutbidNotice(
-          `Outbid notification: Outbid previous bidder ${truncateAddress(previousBidder)}`,
-        );
-      } else {
-        setOutbidNotice(null);
+    try {
+      const previousBidder = auction.highest_bidder;
+      const success = await bid(auction.auction_id, amount);
+      if (success) {
+        setBidSuccess(true);
+        setBidAmount("");
+        if (previousBidder && previousBidder !== publicKey) {
+          setOutbidNotice(
+            `Outbid notification: Outbid previous bidder ${truncateAddress(previousBidder)}`,
+          );
+        } else {
+          setOutbidNotice(null);
+        }
+        onBidPlaced?.();
       }
-      onBidPlaced?.();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "An unexpected error occurred while placing your bid";
+      pushToast(message, "error");
     }
   };
 
   const handleFinalize = async () => {
-    const success = await finalize(auction.auction_id);
-    if (success) {
-      onFinalized?.();
+    try {
+      const success = await finalize(auction.auction_id);
+      if (success) {
+        onFinalized?.();
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "An unexpected error occurred while finalizing the auction";
+      pushToast(message, "error");
     }
   };
 

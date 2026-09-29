@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { X, CreditCard, Wallet, Loader2, CheckCircle } from "lucide-react";
+import { X, CreditCard, Wallet, Loader2, CheckCircle, AlertCircle } from "lucide-react";
 import { Listing, stroopsToXlm } from "@/lib/contract";
 import posthog from "posthog-js";
+import { useToast } from "@/components/ToastProvider";
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -22,9 +23,11 @@ export function CheckoutModal({
   onPurchased,
   isBuyingCrypto,
 }: CheckoutModalProps) {
+  const { pushToast } = useToast();
   const [method, setMethod] = useState<"crypto" | "fiat">("crypto");
   const [quantity, setQuantity] = useState(1);
   const [purchased, setPurchased] = useState(false);
+  const [purchaseError, setPurchaseError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -39,16 +42,24 @@ export function CheckoutModal({
   };
 
   const handleCryptoPurchase = async () => {
-    const success = await onCryptoPurchase();
-    if (success) {
-      posthog.capture("Purchase Successful", {
-        listing_id: listing.listing_id,
-        price_xlm: totalPriceXlm,
-        quantity,
-        method: "crypto",
-      });
-      onPurchased?.();
-      setPurchased(true);
+    setPurchaseError(null);
+    try {
+      const success = await onCryptoPurchase();
+      if (success) {
+        posthog.capture("Purchase Successful", {
+          listing_id: listing.listing_id,
+          price_xlm: totalPriceXlm,
+          quantity,
+          method: "crypto",
+        });
+        onPurchased?.();
+        setPurchased(true);
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "An unexpected error occurred during purchase";
+      setPurchaseError(message);
+      pushToast(message, "error");
     }
   };
 
@@ -168,6 +179,13 @@ export function CheckoutModal({
                 </span>
               </div>
             </div>
+
+            {purchaseError && (
+              <div className="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-500">
+                <AlertCircle size={14} />
+                {purchaseError}
+              </div>
+            )}
 
             <button
               onClick={handleCryptoPurchase}
