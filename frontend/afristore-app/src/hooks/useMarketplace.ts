@@ -9,9 +9,7 @@ import {
   getAllListings,
   getListing,
   getArtistListings,
-  createListing,
   buyArtwork,
-  cancelListing,
   updateListing,
   Listing,
   stroopsToXlm,
@@ -141,69 +139,14 @@ export function useArtistListings(artistPublicKey: string | null) {
 }
 
 // ── useCreateListing ──────────────────────────────────────────
+// Extracted into hooks/mutations/useCreateListing.ts (issue #737) to
+// follow the hooks/mutations/* convention. Re-exported here so existing
+// `@/hooks/useMarketplace` importers keep working unchanged.
 
-export interface CreateListingInput {
-  collectionAddress: string;
-  nftTokenId: number;
-  price: number;
-  amount?: number;
-  tokenAddress?: string;
-}
-
-export function useCreateListing(artistPublicKey: string | null) {
-  const [isCreating, setIsCreating] = useState(false);
-  const [progress, setProgress] = useState<string>("");
-  const [error, setError] = useState<string | null>(null);
-  useTransientErrorToast(error);
-
-  const create = useCallback(
-    async (input: CreateListingInput): Promise<number | null> => {
-      if (!artistPublicKey) {
-        setError("Wallet not connected");
-        return null;
-      }
-
-      setIsCreating(true);
-      setError(null);
-
-      try {
-        setProgress("Validating payment token…");
-        const token = await assertSupportedTokenAddress(
-          input.tokenAddress,
-          "listing",
-        );
-
-        // Step 1: Call the Soroban contract.
-        setProgress("Creating on-chain listing…");
-        const listingId = await createListing(
-          artistPublicKey,
-          input.price,
-          token.address,
-          input.collectionAddress,
-          input.nftTokenId,
-        );
-
-        // Track successful listing creation
-        trackEvent.listingCreated(
-          listingId,
-          input.price.toString(),
-          token.symbol || "XLM",
-        );
-
-        setProgress("Listing created successfully!");
-        return listingId;
-      } catch (err: unknown) {
-        setError(getReadableErrorMessage(err, "Failed to create listing"));
-        return null;
-      } finally {
-        setIsCreating(false);
-      }
-    },
-    [artistPublicKey],
-  );
-
-  return { create, isCreating, progress, error };
-}
+export {
+  useCreateListing,
+  type CreateListingInput,
+} from "./mutations/useCreateListing";
 
 // ── useBuyArtwork ─────────────────────────────────────────────
 
@@ -247,35 +190,11 @@ export function useBuyArtwork(buyerPublicKey: string | null) {
 }
 
 // ── useCancelListing ──────────────────────────────────────────
+// Extracted into hooks/mutations/useCancelListing.ts (issue #738) to
+// follow the hooks/mutations/* convention. Re-exported here so existing
+// `@/hooks/useMarketplace` importers keep working unchanged.
 
-export function useCancelListing(artistPublicKey: string | null) {
-  const [isCancelling, setIsCancelling] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  useTransientErrorToast(error);
-
-  const cancel = useCallback(
-    async (listingId: number): Promise<boolean> => {
-      if (!artistPublicKey) {
-        setError("Wallet not connected");
-        return false;
-      }
-      setIsCancelling(true);
-      setError(null);
-      try {
-        await cancelListing(artistPublicKey, listingId);
-        return true;
-      } catch (err: unknown) {
-        setError(getReadableErrorMessage(err, "Cancel failed"));
-        return false;
-      } finally {
-        setIsCancelling(false);
-      }
-    },
-    [artistPublicKey],
-  );
-
-  return { cancel, isCancelling, error };
-}
+export { useCancelListing } from "./mutations/useCancelListing";
 
 // ── useUpdateListing ──────────────────────────────────────────
 

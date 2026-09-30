@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1788157488738" clover="3.2.0">
+  <project timestamp="1788157488738" name="All files">
+    <metrics statements="31" coveredstatements="31" conditionals="18" coveredconditionals="18" methods="3" coveredmethods="3" elements="52" coveredelements="52" complexity="0" loc="31" ncloc="31" packages="1" files="1" classes="1"/>
+    <file name="lendingMath.ts" path="/Users/a/Desktop/marketplace/frontend/afristore-app/src/lib/lendingMath.ts">
+      <metrics statements="31" coveredstatements="31" conditionals="18" coveredconditionals="18" methods="3" coveredmethods="3"/>
+      <line num="14" count="1" type="stmt"/>
+      <line num="17" count="1" type="stmt"/>
+      <line num="23" count="1" type="stmt"/>
+      <line num="30" count="1" type="stmt"/>
+      <line num="40" count="44" type="cond" truecount="2" falsecount="0"/>
+      <line num="41" count="22" type="cond" truecount="2" falsecount="0"/>
+      <line num="42" count="17" type="cond" truecount="2" falsecount="0"/>
+      <line num="43" count="1" type="stmt"/>
+      <line num="45" count="16" type="stmt"/>
+      <line num="47" count="5" type="cond" truecount="2" falsecount="0"/>
+      <line num="48" count="4" type="stmt"/>
+      <line num="49" count="4" type="cond" truecount="2" falsecount="0"/>
+      <line num="50" count="2" type="stmt"/>
+      <line num="52" count="2" type="stmt"/>
+      <line num="54" count="1" type="stmt"/>
+      <line num="73" count="14" type="cond" truecount="2" falsecount="0"/>
+      <line num="74" count="1" type="stmt"/>
+      <line num="76" count="13" type="cond" truecount="2" falsecount="0"/>
+      <line num="77" count="2" type="stmt"/>
+      <line num="80" count="11" type="stmt"/>
+      <line num="81" count="11" type="stmt"/>
+      <line num="83" count="11" type="stmt"/>
+      <line num="84" count="11" type="stmt"/>
+      <line num="85" count="14" type="stmt"/>
+      <line num="86" count="14" type="stmt"/>
+      <line num="87" count="14" type="stmt"/>
+      <line num="89" count="11" type="stmt"/>
+      <line num="106" count="7" type="stmt"/>
+      <line num="107" count="7" type="stmt"/>
+      <line num="109" count="7" type="cond" truecount="2" falsecount="0"/>
+      <line num="110" count="5" type="stmt"/>
+    </file>
+  </project>
+</coverage>

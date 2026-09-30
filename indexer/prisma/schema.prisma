@@ -164,12 +164,14 @@ model LendingPosition {
   lenderPayout              Decimal? @db.Decimal(32, 7)
   platformFee               Decimal? @db.Decimal(32, 7)
   borrowerRefund            Decimal? @db.Decimal(32, 7)
+  healthFactor              Decimal? @db.Decimal(32, 7)
   createdAtLedger           Int
   updatedAtLedger           Int
   @@index([borrower])
   @@index([lender])
   @@index([listingId])
   @@index([status])
+  @@index([healthFactor])
   @@index([updatedAtLedger])
 }
 
@@ -202,4 +204,3 @@ model LendingConfig {
   updatedAtLedger       Int
   updatedAt             DateTime @updatedAt
 }
-

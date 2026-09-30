@@ -126,6 +126,7 @@ export function parseMarketplaceEvent(
   else if (nativeData.lender) actor = nativeData.lender.toString();
   else if (nativeData.artist) actor = nativeData.artist.toString();
   else if (nativeData.creator) actor = nativeData.creator.toString();
+  else if (nativeData.borrower) actor = nativeData.borrower.toString();
   else if (nativeData.offerer) actor = nativeData.offerer.toString();
   else if (nativeData.bidder) actor = nativeData.bidder.toString();
   else if (nativeData.buyer) actor = nativeData.buyer.toString();
