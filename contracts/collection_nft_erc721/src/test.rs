@@ -1094,3 +1094,82 @@ fn collection_count_unchanged_by_admin_operations() {
 
     assert_eq!(client.collection_count(), 1u64);
 }
+
+// ── Issue #911: admin function tests ──────────────────────────────────────────
+
+/// Test admin returns the initialized admin address
+#[test]
+fn admin_returns_initialized_address() {
+    let env = Env::default();
+    let (client, admin, _fee_receiver) = setup_launchpad(&env);
+
+    assert_eq!(client.admin(), admin);
+}
+
+/// Test admin returns updated address after transfer
+#[test]
+fn admin_returns_new_admin_after_transfer() {
+    let env = Env::default();
+    let (client, _old_admin, _fee_receiver) = setup_launchpad(&env);
+
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+
+    assert_eq!(client.admin(), new_admin);
+}
+
+/// Test admin function before initialization panics
+#[test]
+#[should_panic(expected = "unwrap")]
+fn admin_before_initialize_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_launchpad(&env);
+
+    // This should panic because admin is not set yet
+    let _ = client.admin();
+}
+
+/// Test admin remains unchanged after platform fee update
+#[test]
+fn admin_unchanged_after_fee_update() {
+    let env = Env::default();
+    let (client, admin, _fee_receiver) = setup_launchpad(&env);
+
+    let new_receiver = Address::generate(&env);
+    client.update_platform_fee(&new_receiver, &500u32);
+
+    assert_eq!(client.admin(), admin);
+}
+
+/// Test admin remains unchanged after collection deployments
+#[test]
+fn admin_unchanged_after_collection_deploy() {
+    let env = Env::default();
+    let (client, admin, _fee_receiver) = setup_launchpad_with_wasms(&env);
+    let creator = Address::generate(&env);
+
+    deploy_n721(&client, &creator, 1);
+    deploy_n1155(&client, &creator, 2);
+
+    assert_eq!(client.admin(), admin);
+}
+
+/// Test admin can be transferred multiple times
+#[test]
+fn admin_can_be_transferred_multiple_times() {
+    let env = Env::default();
+    let (client, _old_admin, _fee_receiver) = setup_launchpad(&env);
+
+    let admin_1 = Address::generate(&env);
+    client.transfer_admin(&admin_1);
+    assert_eq!(client.admin(), admin_1);
+
+    let admin_2 = Address::generate(&env);
+    client.transfer_admin(&admin_2);
+    assert_eq!(client.admin(), admin_2);
+
+    let admin_3 = Address::generate(&env);
+    client.transfer_admin(&admin_3);
+    assert_eq!(client.admin(), admin_3);
+}
