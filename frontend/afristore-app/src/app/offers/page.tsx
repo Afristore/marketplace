@@ -23,6 +23,7 @@ import {
 import { WalletGuard } from "@/components/WalletGuard";
 import { SUPPORTED_TOKENS } from "@/config/tokens";
 import { clsx } from "clsx";
+import { useToast } from "@/components/ToastProvider";
 
 type Tab = "all" | "Pending" | "Accepted" | "Rejected" | "Withdrawn";
 
@@ -35,6 +36,7 @@ export default function OffersPage() {
     error: withdrawError,
   } = useWithdrawOffer(publicKey);
   const [tab, setTab] = useState<Tab>("all");
+  const { pushToast } = useToast();
 
   const pendingCnt = offers.filter((o: Offer) => o.status === "Pending").length;
   const acceptedCnt = offers.filter(
@@ -327,8 +329,16 @@ export default function OffersPage() {
                       {o.status === "Pending" && (
                         <button
                           onClick={async () => {
-                            const ok = await withdraw(o.offer_id);
-                            if (ok) refresh();
+                            try {
+                              const ok = await withdraw(o.offer_id);
+                              if (ok) refresh();
+                            } catch (err: any) {
+                              pushToast({
+                                type: "error",
+                                title: "Withdrawal Failed",
+                                message: err.message || "An unexpected error occurred while withdrawing the offer.",
+                              });
+                            }
                           }}
                           disabled={isWithdrawing}
                           className="w-full flex items-center justify-center gap-2 rounded-2xl bg-white/5 hover:bg-terracotta-500/20 py-4 text-xs font-bold text-terracotta-400 border border-white/10 hover:border-terracotta-500/30 transition-all shadow-xl group/btn"
