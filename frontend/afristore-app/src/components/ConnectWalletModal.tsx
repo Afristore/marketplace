@@ -70,7 +70,11 @@ export function ConnectWalletModal({
 
   const handleConnect = async () => {
     setHasStartedConnect(true);
-    await connect();
+    try {
+      await connect();
+    } catch (err) {
+      console.error("Failed to connect wallet:", err);
+    }
   };
 
   return (
