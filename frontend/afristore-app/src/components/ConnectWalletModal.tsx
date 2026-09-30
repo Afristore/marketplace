@@ -76,23 +76,19 @@ export function ConnectWalletModal({
 
   const handleConnect = async () => {
     setHasStartedConnect(true);
+    setConnectError(null);
     try {
       await connect();
     } catch (err) {
       console.error("Failed to connect wallet:", err);
-      setConnectError(null);
-      try {
-        await connect();
-      } catch (err) {
-        // Freighter closing the popup, the extension erroring, or a wrong network
-        // all land here. Show the reason in the modal so the user can retry
-        // instead of being left with an apparently dead button.
-        setConnectError(
-          err instanceof Error && err.message
-            ? err.message
-            : "Could not connect to your wallet. Please try again.",
-        );
-      }
+      // Freighter closing the popup, the extension erroring, or a wrong network
+      // all land here. Show the reason in the modal so the user can retry
+      // instead of being left with an apparently dead button.
+      setConnectError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not connect to your wallet. Please try again.",
+      );
     }
   };
 
