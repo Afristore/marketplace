@@ -763,6 +763,30 @@ fn update_platform_fee_fails_without_admin_auth() {
 }
 
 #[test]
+fn update_platform_fee_rejected_when_signed_by_non_admin() {
+    let env = Env::default();
+    let (client, _admin, fee_receiver) = setup_launchpad(&env);
+    let non_admin = Address::generate(&env);
+
+    // Mock authorization for non_admin instead of stored admin
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &non_admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "update_platform_fee",
+            args: (&Address::generate(&env), 500u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    let new_receiver = Address::generate(&env);
+    let result = client.try_update_platform_fee(&new_receiver, &500u32);
+
+    assert!(result.is_err());
+    assert_eq!(client.platform_fee(), (fee_receiver, INITIAL_FEE_BPS));
+}
+
+#[test]
 fn update_platform_fee_before_initialize_fails() {
     let env = Env::default();
     env.mock_all_auths();
