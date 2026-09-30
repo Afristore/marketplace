@@ -333,11 +333,10 @@ export default function OffersPage() {
                               const ok = await withdraw(o.offer_id);
                               if (ok) refresh();
                             } catch (err: any) {
-                              pushToast({
-                                type: "error",
-                                title: "Withdrawal Failed",
-                                message: err.message || "An unexpected error occurred while withdrawing the offer.",
-                              });
+                              pushToast(
+                                err.message || "An unexpected error occurred while withdrawing the offer.",
+                                "error"
+                              );
                             }
                           }}
                           disabled={isWithdrawing}
