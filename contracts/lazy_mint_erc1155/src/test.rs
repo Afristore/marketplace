@@ -2,11 +2,25 @@
 #![allow(unused_variables, unused_imports)]
 
 use crate::{Error, LazyMint1155, LazyMint1155Client, MintVoucher1155};
+#[path = "contract.rs"]
+mod contract_type;
 use ed25519_dalek::{Signer, SigningKey};
 use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger as _},
     Address, BytesN, Env, String, Vec,
 };
+
+#[test]
+fn contract_type_returns_lazy_mint_identifier() {
+    let env = Env::default();
+    let id = env.register(contract_type::LazyMintErc1155Contract, ());
+    let client = contract_type::LazyMintErc1155ContractClient::new(&env, &id);
+
+    assert_eq!(
+        client.contract_type(),
+        String::from_str(&env, "lazy_mint_erc1155")
+    );
+}
 
 fn jump_ledger(env: &Env, delta: u32) {
     env.ledger().with_mut(|li| {

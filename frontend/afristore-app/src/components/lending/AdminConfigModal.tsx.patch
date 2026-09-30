@@ -1,0 +1,153 @@
+/**
+ * AdminConfigModal with Error Handling (Issue #1003)
+ * 
+ * All async operations wrapped in try/catch with Toast notifications and error states.
+ */
+
+import React, { useState, useEffect } from 'react';
+import { toast } from 'react-toastify';
+
+// ADD: Error and loading states
+const [isLoading, setIsLoading] = useState(false);
+const [isSaving, setIsSaving] = useState(false);
+const [error, setError] = useState<string | null>(null);
+
+// BEFORE (no error handling):
+useEffect(() => {
+  const config = await fetchAdminConfig();
+  setConfig(config);
+}, []);
+
+// AFTER (with error handling):
+useEffect(() => {
+  const loadConfig = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      const config = await fetchAdminConfig();
+      setConfig(config);
+    } catch (error: any) {
+      console.error('Failed to load admin config:', error);
+      
+      const errorMessage = error?.message || 'Failed to load configuration';
+      setError(errorMessage);
+      toast.error(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  loadConfig();
+}, []);
+
+// BEFORE (no error handling):
+const handleSaveConfig = async () => {
+  await updateAdminConfig(config);
+  onSuccess();
+};
+
+// AFTER (with error handling):
+const handleSaveConfig = async () => {
+  try {
+    setIsSaving(true);
+    setError(null);
+
+    // Validate config before saving
+    if (!config.minLoanAmount || config.minLoanAmount <= 0) {
+      throw new Error('Minimum loan amount must be greater than zero');
+    }
+    if (!config.maxInterestRate || config.maxInterestRate <= 0 || config.maxInterestRate > 100) {
+      throw new Error('Maximum interest rate must be between 0 and 100');
+    }
+    if (config.minLoanAmount > config.maxLoanAmount) {
+      throw new Error('Minimum loan amount cannot exceed maximum loan amount');
+    }
+
+    const result = await updateAdminConfig(config);
+
+    toast.success('Configuration updated successfully!');
+    onSuccess(result);
+    onClose();
+  } catch (error: any) {
+    console.error('Failed to save config:', error);
+    
+    const errorMessage = error?.message || 'Failed to update configuration. Please try again.';
+    setError(errorMessage);
+    toast.error(errorMessage);
+  } finally {
+    setIsSaving(false);
+  }
+};
+
+// Admin permission check with error handling:
+const handleCheckAdminPermission = async () => {
+  try {
+    const isAdmin = await checkAdminRole();
+    
+    if (!isAdmin) {
+      throw new Error('You do not have admin permissions');
+    }
+
+    return true;
+  } catch (error: any) {
+    console.error('Admin permission check failed:', error);
+    toast.error('Insufficient permissions. Admin access required.');
+    setError('Admin access required');
+    return false;
+  }
+};
+
+// Load admin data with retry logic:
+const loadAdminData = async (retries = 3) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      setIsLoading(true);
+      const data = await fetchAdminData();
+      return data;
+    } catch (error: any) {
+      console.error(`Attempt ${i + 1} failed:`, error);
+      
+      if (i === retries - 1) {
+        // Last attempt failed
+        const errorMessage = 'Failed to load data after multiple attempts';
+        setError(errorMessage);
+        toast.error(errorMessage);
+        throw error;
+      }
+      
+      // Wait before retry (exponential backoff)
+      await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)));
+    } finally {
+      if (i === retries - 1) {
+        setIsLoading(false);
+      }
+    }
+  }
+};
+
+// UI: Loading state
+{isLoading && (
+  <div className="loading-spinner">
+    <span>Loading configuration...</span>
+  </div>
+)}
+
+// UI: Error display
+{error && (
+  <div className="error-alert" role="alert">
+    <strong>Error:</strong> {error}
+    <button onClick={() => setError(null)}>Dismiss</button>
+  </div>
+)}
+
+// UI: Save button with loading state
+<button
+  onClick={handleSaveConfig}
+  disabled={isSaving || isLoading}
+  className={isSaving ? 'saving' : ''}
+>
+  {isSaving ? 'Saving...' : 'Save Configuration'}
+</button>
+
+// Apply error handling to ALL async operations in the component

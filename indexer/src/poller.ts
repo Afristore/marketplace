@@ -1479,6 +1479,38 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
       });
       break;
     }
+
+    case 'POSITION_CLOSED': {
+      const { count } = await db.lendingPosition.updateMany({
+        where: { positionId: BigInt(data.position_id) },
+        data: {
+          status: 'Repaid',
+          updatedAtLedger: ledgerSequence,
+        },
+      });
+      if (count === 0) console.warn(`POSITION_CLOSED: position ${data.position_id} not found at ledger ${ledgerSequence}`);
+      break;
+    }
+
+    case 'CONFIG_UPDATED': {
+      await db.lendingConfig.upsert({
+        where: { id: 1 },
+        create: {
+          id: 1,
+          platformFeeRate: data.platform_fee_rate ? BigInt(data.platform_fee_rate).toString() : '100',
+          minHealthFactor: data.min_health_factor ? BigInt(data.min_health_factor).toString() : '150',
+          liquidationThreshold: data.liquidation_threshold ? BigInt(data.liquidation_threshold).toString() : '120',
+          updatedAtLedger: ledgerSequence,
+        },
+        update: {
+          platformFeeRate: data.platform_fee_rate ? BigInt(data.platform_fee_rate).toString() : undefined,
+          minHealthFactor: data.min_health_factor ? BigInt(data.min_health_factor).toString() : undefined,
+          liquidationThreshold: data.liquidation_threshold ? BigInt(data.liquidation_threshold).toString() : undefined,
+          updatedAtLedger: ledgerSequence,
+        },
+      });
+      break;
+    }
   }
 
   // Broadcast to any connected SSE clients after the DB write is complete.

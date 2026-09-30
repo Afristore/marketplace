@@ -5,6 +5,9 @@ use soroban_sdk::{
 
 use crate::{DataKey, Error, LazyMint721, LazyMint721Client};
 
+#[path = "contract.rs"]
+mod contract_type;
+
 fn setup_test() -> (Env, LazyMint721Client<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
@@ -341,4 +344,18 @@ fn update_royalty_fails_if_not_creator() {
     let new_receiver = Address::generate(&env);
     let result = client.try_update_royalty(&new_receiver, &250u32);
     assert!(result.is_err());
+}
+
+// ─── Issue #835: contract_type ──────────────────────────────────────────────
+
+#[test]
+fn contract_type_returns_lazy_mint_identifier() {
+    let env = Env::default();
+    let id = env.register(contract_type::LazyMintErc721Contract, ());
+    let client = contract_type::LazyMintErc721ContractClient::new(&env, &id);
+
+    assert_eq!(
+        client.contract_type(),
+        String::from_str(&env, "lazy_mint_erc721")
+    );
 }

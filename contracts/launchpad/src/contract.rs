@@ -144,8 +144,15 @@ impl Launchpad {
             return Err(Error::AlreadyInitialized);
         }
         admin.require_auth();
+        // Validate fee_bps is within reasonable bounds (max 100% = 10000 bps)
+        if platform_fee_bps > 10_000 {
+            return Err(Error::InvalidFee);
+        }
         storage::set_initialized(&env);
         storage::set_admin(&env, &admin);
+        if platform_fee_bps > 10_000 {
+            return Err(Error::InvalidFee);
+        }
         storage::set_platform_fee(&env, &platform_fee_receiver, platform_fee_bps);
         storage::set_platform_fee_token(&env, &platform_fee_token);
         Ok(())
@@ -558,15 +565,22 @@ impl Launchpad {
     pub fn update_platform_fee(env: Env, receiver: Address, fee_bps: u32) -> Result<(), Error> {
         storage::extend_instance_ttl(&env);
         storage::require_admin(&env)?;
+        // Validate fee_bps is within reasonable bounds (max 100% = 10000 bps)
+        if fee_bps > 10_000 {
+            return Err(Error::InvalidFee);
+        }
         storage::set_platform_fee(&env, &receiver, fee_bps);
         Ok(())
     }
 
     /// Admin sets the token used for platform fee collection.
     /// Deploy functions will use this token instead of the caller-supplied currency.
+    /// Validates that the token address is valid by checking it's approved as a currency.
     pub fn set_platform_fee_token(env: Env, token: Address) -> Result<(), Error> {
         storage::extend_instance_ttl(&env);
         storage::require_admin(&env)?;
+        // Validate the token is approved before setting it as the platform fee token
+        storage::require_approved_currency(&env, &token)?;
         storage::set_platform_fee_token(&env, &token);
         Ok(())
     }

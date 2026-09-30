@@ -40,6 +40,11 @@ function SplitterTooltip() {
   );
 }
 
+// Letters, digits, spaces, hyphens and underscores only.
+const COLLECTION_NAME_PATTERN = /^[a-zA-Z0-9\s\-_]+$/;
+const COLLECTION_NAME_ERROR =
+  "Collection name may only contain letters, numbers, spaces, hyphens and underscores.";
+
 function isStellarAddress(v: string) {
   return (v.startsWith("G") || v.startsWith("C")) && v.length >= 50;
 }
@@ -51,6 +56,7 @@ export function CollectionForm() {
   const hasSupportedTokens = supportedTokens.length > 0;
 
   const [successAddress, setSuccessAddress] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
 
   // Splitter addresses the user has deployed (persisted in localStorage under their pubkey)
   const [savedSplitters, setSavedSplitters] = useState<string[]>([]);
@@ -95,6 +101,12 @@ export function CollectionForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!publicKey) return;
+
+    if (!COLLECTION_NAME_PATTERN.test(form.name)) {
+      setNameError(COLLECTION_NAME_ERROR);
+      return;
+    }
+    setNameError(null);
 
     const input: DeployCollectionInput = {
       ...form,
@@ -235,10 +247,18 @@ export function CollectionForm() {
               <input
                 required
                 value={form.name}
-                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                pattern="^[a-zA-Z0-9\s\-_]+$"
+                title={COLLECTION_NAME_ERROR}
+                onChange={(e) => {
+                  setForm({ ...form, name: e.target.value });
+                  setNameError(null);
+                }}
                 className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
                 placeholder="e.g. African Legends"
               />
+              {nameError && (
+                <p className="text-xs text-red-500 font-inter">{nameError}</p>
+              )}
             </div>
 
             {is721 && (

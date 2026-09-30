@@ -39,6 +39,12 @@ export function ConnectWalletModal({
 
   const [showMagicModal, setShowMagicModal] = useState(false);
 
+  // Local error state for a connect attempt that rejects. The provider exposes
+  // `error` too, but a rejection thrown out of `connect()` is not guaranteed to
+  // reach it, and an unhandled rejection here means the click does nothing and
+  // the user is never told why (issue #945).
+  const [connectError, setConnectError] = useState<string | null>(null);
+
   const isE2E =
     typeof process !== "undefined" &&
     process.env.NEXT_PUBLIC_E2E_MOCK_CHAIN === "true";
@@ -74,6 +80,18 @@ export function ConnectWalletModal({
       await connect();
     } catch (err) {
       console.error("Failed to connect wallet:", err);
+    setConnectError(null);
+    try {
+      await connect();
+    } catch (err) {
+      // Freighter closing the popup, the extension erroring, or a wrong network
+      // all land here. Show the reason in the modal so the user can retry
+      // instead of being left with an apparently dead button.
+      setConnectError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not connect to your wallet. Please try again.",
+      );
     }
   };
 
@@ -265,10 +283,13 @@ export function ConnectWalletModal({
               )}
             </div>
 
-            {error && status !== "CONNECTED" && !isConnecting && (
-              <div className="mt-6 rounded-xl bg-terracotta-50 p-3 flex items-start gap-2 text-xs text-terracotta-700 animate-slide-up">
+            {(connectError || (error && status !== "CONNECTED" && !isConnecting)) && (
+              <div
+                role="alert"
+                className="mt-6 rounded-xl bg-terracotta-50 p-3 flex items-start gap-2 text-xs text-terracotta-700 animate-slide-up"
+              >
                 <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
-                <p>{error}</p>
+                <p>{connectError ?? error}</p>
               </div>
             )}
           </div>
