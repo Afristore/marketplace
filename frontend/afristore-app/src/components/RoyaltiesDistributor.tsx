@@ -41,8 +41,14 @@ export function RoyaltiesDistributor({
       return;
     }
     setIsLoadingBalance(true);
-    await refreshBalance();
-    setIsLoadingBalance(false);
+    try {
+      await refreshBalance();
+    } catch (err) {
+      console.error("Failed to load balance:", err);
+      pushToast("Failed to load balance", "error");
+    } finally {
+      setIsLoadingBalance(false);
+    }
   };
 
   const handleDistribute = async () => {
@@ -56,16 +62,21 @@ export function RoyaltiesDistributor({
       return;
     }
 
-    const success = await distribute(contractAddress);
-    if (success) {
-      pushToast("Royalties distributed successfully!", "success");
-      setContractAddress("");
-      setShowForm(false);
-    } else {
-      pushToast(
-        distributeError || "Failed to distribute royalties",
-        "error",
-      );
+    try {
+      const success = await distribute(contractAddress);
+      if (success) {
+        pushToast("Royalties distributed successfully!", "success");
+        setContractAddress("");
+        setShowForm(false);
+      } else {
+        pushToast(
+          distributeError || "Failed to distribute royalties",
+          "error",
+        );
+      }
+    } catch (err) {
+      console.error("Failed to distribute royalties:", err);
+      pushToast("Failed to distribute royalties", "error");
     }
   };
 
