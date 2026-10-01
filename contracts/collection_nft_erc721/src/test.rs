@@ -1570,10 +1570,18 @@ fn transfer_admin_chained_transfers_work_correctly() {
     let admin_c = Address::generate(&env);
 
     client.transfer_admin(&admin_b);
-    assert_eq!(client.admin(), admin_b, "admin should be B after first transfer");
+    assert_eq!(
+        client.admin(),
+        admin_b,
+        "admin should be B after first transfer"
+    );
 
     client.transfer_admin(&admin_c);
-    assert_eq!(client.admin(), admin_c, "admin should be C after second transfer");
+    assert_eq!(
+        client.admin(),
+        admin_c,
+        "admin should be C after second transfer"
+    );
 }
 
 /// Issue 218 — Idempotent self-transfer: an admin that transfers the role to
