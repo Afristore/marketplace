@@ -2027,14 +2027,14 @@ fn get_staking_pool_consistent_after_failed_duplicate() {
     assert_eq!(pool_after_fail, Some(pool_original));
 }
 
-// ── add_approved_currency tests ───────────────────────────────
+// ── add_approved_currency / remove_approved_currency tests ──
 
 /// Happy path: admin can add a currency to the approved whitelist.
 #[test]
 fn add_approved_currency_success() {
     let env = Env::default();
     env.ledger().with_mut(|li| li.sequence_number = 1);
-    let (client, admin, _fee_receiver, _creator) = setup_launchpad(&env);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
 
     let currency = Address::generate(&env);
     client.add_approved_currency(&currency);
@@ -2076,7 +2076,7 @@ fn add_approved_currency_multiple_currencies() {
     assert!(client.is_approved_currency(&currency_c));
 }
 
-/// Non-admin cannot add a currency (require_admin fails).
+/// Non-admin cannot add a currency.
 #[test]
 fn add_approved_currency_non_admin_fails() {
     let env = Env::default();
@@ -2086,8 +2086,6 @@ fn add_approved_currency_non_admin_fails() {
     let non_admin = Address::generate(&env);
     let currency = Address::generate(&env);
 
-    // Without mock_all_auths, the non_admin's require_auth will fail.
-    // We create a separate client that the non_admin calls.
     let launchpad_id = env.register(Launchpad, ());
     let non_admin_client = LaunchpadClient::new(&env, &launchpad_id);
 
@@ -2108,8 +2106,7 @@ fn add_approved_currency_before_init_fails() {
     assert_eq!(result, Err(Ok(Error::NotInitialized)));
 }
 
-/// After adding a currency, is_approved_currency returns true.
-/// After removing it, is_approved_currency returns false.
+/// Full lifecycle: add → approved, remove → not approved.
 #[test]
 fn add_and_remove_approved_currency_reflects_state() {
     let env = Env::default();
@@ -2118,19 +2115,14 @@ fn add_and_remove_approved_currency_reflects_state() {
 
     let currency = Address::generate(&env);
 
-    // Not approved initially
     assert!(!client.is_approved_currency(&currency));
-
-    // Add and verify
     client.add_approved_currency(&currency);
     assert!(client.is_approved_currency(&currency));
-
-    // Remove and verify
     client.remove_approved_currency(&currency);
     assert!(!client.is_approved_currency(&currency));
 }
 
-/// Removing a currency that was never added returns successfully (no-op).
+/// Removing a currency that was never added is a no-op.
 #[test]
 fn remove_approved_currency_never_added() {
     let env = Env::default();
@@ -2150,12 +2142,10 @@ fn add_approved_currency_extends_ttl() {
     env.ledger().with_mut(|li| li.sequence_number = 1);
     let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
 
-    // Move TTL near the threshold
     jump_ledger(&env, 60_000);
 
     let currency = Address::generate(&env);
     client.add_approved_currency(&currency);
 
-    // TTL should be extended, so the currency is still approved
     assert!(client.is_approved_currency(&currency));
 }
