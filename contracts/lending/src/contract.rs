@@ -176,7 +176,7 @@ impl LendingContract {
 
     pub fn cancel_listing(env: Env, listing_id: u64) {
         extend_instance_ttl(&env);
-        let mut listing = get_listing(&env, listing_id);
+        let listing = get_listing(&env, listing_id);
 
         listing.lender.require_auth();
 
@@ -192,8 +192,7 @@ impl LendingContract {
             &(listing.token_id as i128),
         );
 
-        listing.status = ListingStatus::Cancelled;
-        set_listing(&env, listing_id, &listing);
+        remove_listing(&env, listing_id);
 
         events::emit_listing_cancelled(&env, listing_id, listing.lender.clone());
     }

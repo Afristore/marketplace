@@ -13,24 +13,22 @@ import {
 import { stroopsToXlm, Offer, Listing } from "@/lib/contract";
 import {
   Inbox,
-  Clock,
   CheckCircle,
   XCircle,
-  MoreVertical,
-  ArrowUpRight,
-  History,
   Activity,
   TrendingUp,
   Loader2,
   User,
+  History,
 } from "lucide-react";
 import { WalletGuard } from "@/components/WalletGuard";
+import { useToast } from "@/components/ToastProvider";
 import { SUPPORTED_TOKENS } from "@/config/tokens";
 import { clsx } from "clsx";
-import Link from "next/link";
 
 export default function IncomingOffersPage() {
   const { publicKey } = useWalletContext();
+  const { pushToast } = useToast();
   const { offersByListing, isLoading, error, refresh } =
     useIncomingOffers(publicKey);
   const { accept, isAccepting, error: acceptError } = useAcceptOffer(publicKey);
@@ -51,6 +49,45 @@ export default function IncomingOffersPage() {
     return (
       SUPPORTED_TOKENS.find((t) => t.address === address)?.symbol || "Tokens"
     );
+  };
+
+  const handleAccept = async (offerId: number) => {
+    try {
+      const ok = await accept(offerId);
+      if (ok) {
+        pushToast("Offer accepted successfully.", "success");
+        try {
+          await refresh();
+        } catch {
+          // refresh failure is non-critical; stale data will auto-correct on
+          // the next render cycle — no need to surface this to the user.
+        }
+      }
+    } catch (err: unknown) {
+      // The hook surfaces errors via its own error state + toast, but guard
+      // against any unexpected throw escaping the hook boundary.
+      const msg =
+        err instanceof Error ? err.message : "Failed to accept offer.";
+      pushToast(msg, "error");
+    }
+  };
+
+  const handleReject = async (offerId: number) => {
+    try {
+      const ok = await reject(offerId);
+      if (ok) {
+        pushToast("Offer rejected.", "info");
+        try {
+          await refresh();
+        } catch {
+          // Same as above — refresh is best-effort after a successful action.
+        }
+      }
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to reject offer.";
+      pushToast(msg, "error");
+    }
   };
 
   return (
@@ -127,22 +164,22 @@ export default function IncomingOffersPage() {
                 className={clsx(
                   "group relative rounded-[2.5rem] bg-white/5 border border-white/10 p-6 backdrop-blur-md transition-all duration-500 hover:border-white/20 overflow-hidden shadow-2xl",
                   color === "brand" &&
-                    "hover:border-brand-500/30 hover:bg-white/[0.07]",
+                  "hover:border-brand-500/30 hover:bg-white/[0.07]",
                   color === "mint" &&
-                    "hover:border-mint-500/30 hover:bg-white/[0.07]",
+                  "hover:border-mint-500/30 hover:bg-white/[0.07]",
                   color === "terracotta" &&
-                    "hover:border-terracotta-500/30 hover:bg-white/[0.07]",
+                  "hover:border-terracotta-500/30 hover:bg-white/[0.07]",
                 )}
               >
                 <div
                   className={clsx(
                     "absolute top-0 right-0 w-32 h-32 rounded-full blur-3xl transition-colors",
                     color === "brand" &&
-                      "bg-brand-500/5 group-hover:bg-brand-500/10",
+                    "bg-brand-500/5 group-hover:bg-brand-500/10",
                     color === "mint" &&
-                      "bg-mint-500/5 group-hover:bg-mint-500/10",
+                    "bg-mint-500/5 group-hover:bg-mint-500/10",
                     color === "terracotta" &&
-                      "bg-terracotta-500/5 group-hover:bg-terracotta-500/10",
+                    "bg-terracotta-500/5 group-hover:bg-terracotta-500/10",
                   )}
                 />
                 <div className="flex items-center justify-between relative z-10">
@@ -178,10 +215,13 @@ export default function IncomingOffersPage() {
             ))}
           </div>
 
-          {/* Error banners */}
+          {/* Error banners — retained as a persistent fallback in addition to toasts */}
           {(error || acceptError || rejectError) && (
-            <div className="mb-8 rounded-3xl border border-terracotta-500/20 bg-terracotta-500/5 px-6 py-4 text-sm font-bold text-terracotta-400 backdrop-blur-md flex items-center gap-3 animate-fade-in shadow-xl">
-              <XCircle size={20} />
+            <div
+              role="alert"
+              className="mb-8 rounded-3xl border border-terracotta-500/20 bg-terracotta-500/5 px-6 py-4 text-sm font-bold text-terracotta-400 backdrop-blur-md flex items-center gap-3 animate-fade-in shadow-xl"
+            >
+              <XCircle size={20} aria-hidden="true" />
               {error || acceptError || rejectError}
             </div>
           )}
@@ -323,10 +363,7 @@ export default function IncomingOffersPage() {
                             {o.status === "Pending" && (
                               <div className="grid grid-cols-2 gap-3">
                                 <button
-                                  onClick={async () => {
-                                    const ok = await accept(o.offer_id);
-                                    if (ok) refresh();
-                                  }}
+                                  onClick={() => handleAccept(o.offer_id)}
                                   disabled={isAccepting || isRejecting}
                                   className="flex items-center justify-center gap-2 rounded-2xl bg-mint-500/20 hover:bg-mint-500/30 py-3.5 text-xs font-bold text-mint-400 border border-mint-500/30 transition-all hover:scale-[1.02] disabled:opacity-50 group/btn"
                                 >
@@ -346,10 +383,7 @@ export default function IncomingOffersPage() {
                                   )}
                                 </button>
                                 <button
-                                  onClick={async () => {
-                                    const ok = await reject(o.offer_id);
-                                    if (ok) refresh();
-                                  }}
+                                  onClick={() => handleReject(o.offer_id)}
                                   disabled={isAccepting || isRejecting}
                                   className="flex items-center justify-center gap-2 rounded-2xl bg-white/5 hover:bg-terracotta-500/20 py-3.5 text-xs font-bold text-white/60 hover:text-terracotta-400 border border-white/10 hover:border-terracotta-500/30 transition-all disabled:opacity-50 group/rej"
                                 >
