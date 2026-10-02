@@ -1,0 +1,126 @@
+/**
+ * CreateListingModal with Error Handling (Issue #1002)
+ * 
+ * All async operations wrapped in try/catch with Toast notifications and error states.
+ */
+
+import React, { useState } from 'react';
+import { toast } from 'react-toastify'; // Or your toast library
+
+// ADD: Error state management
+const [isSubmitting, setIsSubmitting] = useState(false);
+const [error, setError] = useState<string | null>(null);
+
+// BEFORE (no error handling):
+const handleCreateListing = async () => {
+  const result = await createListing({
+    amount,
+    duration,
+    interestRate,
+  });
+  onSuccess(result);
+};
+
+// AFTER (with error handling):
+const handleCreateListing = async () => {
+  try {
+    setIsSubmitting(true);
+    setError(null);
+
+    // Validate inputs before API call
+    if (!amount || amount <= 0) {
+      throw new Error('Amount must be greater than zero');
+    }
+    if (!duration || duration <= 0) {
+      throw new Error('Duration must be greater than zero');
+    }
+    if (!interestRate || interestRate < 0) {
+      throw new Error('Interest rate must be valid');
+    }
+
+    const result = await createListing({
+      amount,
+      duration,
+      interestRate,
+    });
+
+    toast.success('Listing created successfully!');
+    onSuccess(result);
+    onClose(); // Close modal on success
+  } catch (error: any) {
+    console.error('Failed to create listing:', error);
+    
+    const errorMessage = error?.message || 'Failed to create listing. Please try again.';
+    setError(errorMessage);
+    toast.error(errorMessage);
+  } finally {
+    setIsSubmitting(false);
+  }
+};
+
+// ADD: Error display in UI
+{error && (
+  <div className="error-message" role="alert">
+    <span className="error-icon">⚠️</span>
+    {error}
+  </div>
+)}
+
+// UPDATE: Submit button with loading state
+<button
+  onClick={handleCreateListing}
+  disabled={isSubmitting}
+  className={isSubmitting ? 'loading' : ''}
+>
+  {isSubmitting ? 'Creating...' : 'Create Listing'}
+</button>
+
+// For wallet connection async operations:
+const handleConnectWallet = async () => {
+  try {
+    setIsSubmitting(true);
+    const connected = await connectWallet();
+    
+    if (!connected) {
+      throw new Error('Failed to connect wallet');
+    }
+
+    toast.success('Wallet connected successfully');
+  } catch (error: any) {
+    console.error('Wallet connection failed:', error);
+    toast.error(error?.message || 'Failed to connect wallet');
+    setError('Wallet connection failed. Please try again.');
+  } finally {
+    setIsSubmitting(false);
+  }
+};
+
+// For transaction signing:
+const handleSignTransaction = async (tx: Transaction) => {
+  try {
+    setIsSubmitting(true);
+    
+    const signedTx = await signTransaction(tx);
+    const result = await submitTransaction(signedTx);
+    
+    toast.success('Transaction submitted successfully!');
+    return result;
+  } catch (error: any) {
+    console.error('Transaction failed:', error);
+    
+    // Handle specific error types
+    if (error?.code === 'USER_REJECTED') {
+      toast.error('Transaction rejected by user');
+    } else if (error?.code === 'INSUFFICIENT_FUNDS') {
+      toast.error('Insufficient funds for transaction');
+    } else {
+      toast.error(error?.message || 'Transaction failed');
+    }
+    
+    throw error;
+  } finally {
+    setIsSubmitting(false);
+  }
+};
+
+// Apply error handling to ALL async operations in the component

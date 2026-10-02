@@ -28,6 +28,7 @@ import {
   Info,
   ExternalLink,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 const SETTINGS_KEY = "afristore_settings";
 
@@ -92,6 +93,8 @@ export default function SettingsPage() {
     network,
     switchNetwork,
   } = useWalletContext();
+
+  const { t, i18n } = useTranslation();
 
   const [settings, setSettings] = useState<SettingsState>(loadSettings);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
@@ -175,18 +178,18 @@ export default function SettingsPage() {
   const networks = [
     {
       id: "public",
-      name: "Stellar Public Network",
-      description: "Main network for real transactions",
+      name: t("stellarPublicNetwork"),
+      description: t("stellarPublicDesc"),
     },
     {
       id: "testnet",
-      name: "Stellar Testnet",
-      description: "Test network for development",
+      name: t("stellarTestnet"),
+      description: t("stellarTestnetDesc"),
     },
     {
       id: "futurenet",
-      name: "Stellar Futurenet",
-      description: "Future test network",
+      name: t("stellarFuturenet"),
+      description: t("stellarFuturenetDesc"),
     },
   ];
 
@@ -198,11 +201,11 @@ export default function SettingsPage() {
   ];
 
   const languages = [
-    { code: "en", name: "English" },
-    { code: "es", name: "Español" },
-    { code: "fr", name: "Français" },
-    { code: "pt", name: "Português" },
-    { code: "sw", name: "Kiswahili" },
+    { code: "en", name: t("english") },
+    { code: "es", name: t("spanish") },
+    { code: "fr", name: t("french") },
+    { code: "pt", name: t("portuguese") },
+    { code: "sw", name: t("swahili") },
   ];
 
   if (!isConnected) {
@@ -212,16 +215,16 @@ export default function SettingsPage() {
           <div className="text-center py-20">
             <Wallet className="mx-auto h-16 w-16 text-brand-400 mb-4" />
             <h1 className="text-2xl font-bold text-white mb-2">
-              Connect Your Wallet
+              {t("connectYourWallet")}
             </h1>
             <p className="text-gray-400 mb-6">
-              You need to connect your wallet to access settings
+              {t("connectWalletDesc")}
             </p>
             <button
               onClick={() => router.push("/")}
               className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-brand-500/25 hover:bg-brand-600"
             >
-              Connect Wallet
+              {t("connectWalletBtn")}
             </button>
           </div>
         </div>
@@ -239,10 +242,10 @@ export default function SettingsPage() {
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-2">
             <Settings className="h-6 w-6 text-brand-400" />
-            <h1 className="text-3xl font-bold text-white">Settings</h1>
+            <h1 className="text-3xl font-bold text-white">{t("settings")}</h1>
           </div>
           <p className="text-gray-400">
-            Manage your wallet, network, and application preferences
+            {t("managePreferences")}
           </p>
         </div>
 
@@ -252,13 +255,13 @@ export default function SettingsPage() {
             <div className="flex items-center gap-3">
               <Network className="h-5 w-5 text-brand-400" />
               <h2 className="text-lg font-semibold text-white">
-                Network Status
+                {t("networkStatus")}
               </h2>
             </div>
             {isWrongNetwork && (
               <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-terracotta-500/20 border border-terracotta-500/30 text-xs font-semibold text-terracotta-400">
                 <AlertTriangle className="h-3 w-3" />
-                Wrong Network
+                {t("wrongNetwork")}
               </span>
             )}
           </div>
@@ -266,7 +269,7 @@ export default function SettingsPage() {
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
-                Current Network
+                {t("currentNetwork")}
               </label>
               <div className="grid grid-cols-1 gap-2">
                 {networks.map((net) => (
@@ -294,10 +297,10 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
               <div>
                 <div className="font-medium text-white">
-                  Auto-switch Network
+                  {t("autoSwitchNetwork")}
                 </div>
                 <div className="text-xs text-gray-400">
-                  Automatically switch to the correct network
+                  {t("autoSwitchDesc")}
                 </div>
               </div>
               <button
@@ -330,16 +333,16 @@ export default function SettingsPage() {
           <div className="flex items-center gap-3 mb-4">
             <Wallet className="h-5 w-5 text-brand-400" />
             <h2 className="text-lg font-semibold text-white">
-              Wallet Settings
+              {t("walletSettings")}
             </h2>
           </div>
 
           <div className="space-y-4">
             <div className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
               <div>
-                <div className="font-medium text-white">Show Balance</div>
+                <div className="font-medium text-white">{t("showBalance")}</div>
                 <div className="text-xs text-gray-400">
-                  Display your wallet balance in the interface
+                  {t("showBalanceDesc")}
                 </div>
               </div>
               <button
@@ -366,10 +369,10 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
               <div>
                 <div className="font-medium text-white">
-                  Transaction History
+                  {t("transactionHistory")}
                 </div>
                 <div className="text-xs text-gray-400">
-                  Show your recent transactions
+                  {t("transactionHistoryDesc")}
                 </div>
               </div>
               <button
@@ -400,10 +403,10 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
               <div>
                 <div className="font-medium text-white">
-                  Confirm Transactions
+                  {t("confirmTransactions")}
                 </div>
                 <div className="text-xs text-gray-400">
-                  Require confirmation for all transactions
+                  {t("confirmTransactionsDesc")}
                 </div>
               </div>
               <button
@@ -435,15 +438,15 @@ export default function SettingsPage() {
         <div className="bg-midnight-900 rounded-xl border border-white/5 p-6 mb-6">
           <div className="flex items-center gap-3 mb-4">
             <Bell className="h-5 w-5 text-brand-400" />
-            <h2 className="text-lg font-semibold text-white">Notifications</h2>
+            <h2 className="text-lg font-semibold text-white">{t("notifications")}</h2>
           </div>
 
           <div className="space-y-4">
             <div className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
               <div>
-                <div className="font-medium text-white">Price Alerts</div>
+                <div className="font-medium text-white">{t("priceAlerts")}</div>
                 <div className="text-xs text-gray-400">
-                  Get notified when prices change
+                  {t("priceAlertsDesc")}
                 </div>
               </div>
               <button
@@ -470,9 +473,9 @@ export default function SettingsPage() {
 
             <div className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
               <div>
-                <div className="font-medium text-white">Offer Updates</div>
+                <div className="font-medium text-white">{t("offerUpdates")}</div>
                 <div className="text-xs text-gray-400">
-                  Notifications for new offers and responses
+                  {t("offerUpdatesDesc")}
                 </div>
               </div>
               <button
@@ -498,9 +501,9 @@ export default function SettingsPage() {
 
             <div className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
               <div>
-                <div className="font-medium text-white">Auction Endings</div>
+                <div className="font-medium text-white">{t("auctionEndings")}</div>
                 <div className="text-xs text-gray-400">
-                  Alert when auctions are about to end
+                  {t("auctionEndingsDesc")}
                 </div>
               </div>
               <button
@@ -531,21 +534,22 @@ export default function SettingsPage() {
           <div className="flex items-center gap-3 mb-4">
             <Eye className="h-5 w-5 text-brand-400" />
             <h2 className="text-lg font-semibold text-white">
-              Display Preferences
+              {t("displayPreferences")}
             </h2>
           </div>
 
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
-                Language
+                {t("language")}
               </label>
               <select
                 aria-label="Language"
                 value={settings.language}
-                onChange={(e) =>
-                  setSettings((prev) => ({ ...prev, language: e.target.value }))
-                }
+                onChange={(e) => {
+                  setSettings((prev) => ({ ...prev, language: e.target.value }));
+                  i18n.changeLanguage(e.target.value);
+                }}
                 className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-brand-500"
               >
                 {languages.map((lang) => (
@@ -558,7 +562,7 @@ export default function SettingsPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-2">
-                Display Currency
+                {t("displayCurrency")}
               </label>
               <select
                 aria-label="Display Currency"
@@ -583,15 +587,15 @@ export default function SettingsPage() {
         <div className="bg-midnight-900 rounded-xl border border-white/5 p-6 mb-6">
           <div className="flex items-center gap-3 mb-4">
             <Shield className="h-5 w-5 text-brand-400" />
-            <h2 className="text-lg font-semibold text-white">Privacy</h2>
+            <h2 className="text-lg font-semibold text-white">{t("privacy")}</h2>
           </div>
 
           <div className="space-y-4">
             <div className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
               <div>
-                <div className="font-medium text-white">Public Profile</div>
+                <div className="font-medium text-white">{t("publicProfile")}</div>
                 <div className="text-xs text-gray-400">
-                  Make your profile visible to other users
+                  {t("publicProfileDesc")}
                 </div>
               </div>
               <button
@@ -620,10 +624,10 @@ export default function SettingsPage() {
             <div className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/10">
               <div>
                 <div className="font-medium text-white">
-                  Share Activity Data
+                  {t("shareActivityData")}
                 </div>
                 <div className="text-xs text-gray-400">
-                  Help improve the app by sharing usage data
+                  {t("shareActivityDataDesc")}
                 </div>
               </div>
               <button
@@ -656,25 +660,25 @@ export default function SettingsPage() {
           <div className="flex items-center gap-3 mb-4">
             <Info className="h-5 w-5 text-brand-400" />
             <h2 className="text-lg font-semibold text-white">
-              Wallet Information
+              {t("walletInfo")}
             </h2>
           </div>
 
           <div className="space-y-3">
             <div className="flex justify-between items-center p-3 bg-white/5 rounded-lg">
-              <span className="text-sm text-gray-400">Wallet Address</span>
+              <span className="text-sm text-gray-400">{t("walletAddress")}</span>
               <span className="text-sm font-mono text-white">
                 {publicKey?.slice(0, 8)}…{publicKey?.slice(-8)}
               </span>
             </div>
             <div className="flex justify-between items-center p-3 bg-white/5 rounded-lg">
-              <span className="text-sm text-gray-400">Connection Status</span>
+              <span className="text-sm text-gray-400">{t("connectionStatus")}</span>
               <span className="text-sm font-medium text-mint-400">
-                Connected
+                {t("connected")}
               </span>
             </div>
             <div className="flex justify-between items-center p-3 bg-white/5 rounded-lg">
-              <span className="text-sm text-gray-400">Network</span>
+              <span className="text-sm text-gray-400">{t("network")}</span>
               <span className="text-sm font-medium text-white capitalize">
                 {network}
               </span>
@@ -701,17 +705,17 @@ export default function SettingsPage() {
             {saving ? (
               <>
                 <RefreshCw className="h-4 w-4 animate-spin" />
-                Saving...
+                {t("saving")}
               </>
             ) : saved ? (
               <>
                 <Check className="h-4 w-4" />
-                Saved!
+                {t("saved")}
               </>
             ) : (
               <>
                 <Save className="h-4 w-4" />
-                Save Settings
+                {t("saveSettings")}
               </>
             )}
           </button>
@@ -721,7 +725,7 @@ export default function SettingsPage() {
             className="flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-terracotta-500/30 bg-terracotta-500/10 text-sm font-semibold text-terracotta-400 hover:bg-terracotta-500/20 transition-all"
           >
             <X className="h-4 w-4" />
-            Disconnect Wallet
+            {t("disconnectWallet")}
           </button>
         </div>
       </div>

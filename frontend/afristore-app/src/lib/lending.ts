@@ -393,8 +393,9 @@ export async function getPosition(
       status: native.status,
     };
   } catch (err) {
-    console.warn("getPosition error:", err);
-    return null;
+    // Re-throw network / RPC failures so callers receive the real error message
+    // rather than a misleading "Position not found" on infrastructure issues.
+    throw err;
   }
 }
 

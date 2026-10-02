@@ -71,10 +71,14 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedFile) return;
-    const id = await create({ ...form, imageFile: selectedFile });
-    if (id !== null) {
-      setSuccessId(id);
-      onSuccess?.(id);
+    try {
+      const id = await create({ ...form, imageFile: selectedFile });
+      if (id !== null) {
+        setSuccessId(id);
+        onSuccess?.(id);
+      }
+    } catch (err) {
+      console.error("Failed to create auction:", err);
     }
   };
 
