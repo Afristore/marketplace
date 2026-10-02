@@ -2149,3 +2149,80 @@ fn add_approved_currency_extends_ttl() {
 
     assert!(client.is_approved_currency(&currency));
 }
+// ── remove_approved_currency tests ──────────────────────────
+
+/// Happy path: admin can remove a currency from the approved whitelist.
+#[test]
+fn remove_approved_currency_success() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let currency = Address::generate(&env);
+    client.add_approved_currency(&currency);
+    assert!(client.is_approved_currency(&currency));
+
+    client.remove_approved_currency(&currency);
+    assert!(!client.is_approved_currency(&currency));
+}
+
+/// Removing the same currency twice is a no-op and succeeds.
+#[test]
+fn remove_approved_currency_idempotent() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let currency = Address::generate(&env);
+    client.add_approved_currency(&currency);
+    client.remove_approved_currency(&currency);
+    client.remove_approved_currency(&currency);
+
+    assert!(!client.is_approved_currency(&currency));
+}
+
+/// Non-admin cannot remove a currency.
+#[test]
+fn remove_approved_currency_non_admin_fails() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let non_admin = Address::generate(&env);
+    let currency = Address::generate(&env);
+
+    let launchpad_id = env.register(Launchpad, ());
+    let non_admin_client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let result = non_admin_client.try_remove_approved_currency(&currency);
+    assert_eq!(result, Err(Ok(Error::NotInitialized)));
+}
+
+/// remove_approved_currency before initialization fails with NotInitialized.
+#[test]
+fn remove_approved_currency_before_init_fails() {
+    let env = Env::default();
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let currency = Address::generate(&env);
+    let result = client.try_remove_approved_currency(&currency);
+    assert_eq!(result, Err(Ok(Error::NotInitialized)));
+}
+
+/// remove_approved_currency extends instance TTL (prevents expiry).
+#[test]
+fn remove_approved_currency_extends_ttl() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    jump_ledger(&env, 60_000);
+
+    let currency = Address::generate(&env);
+    client.add_approved_currency(&currency);
+    client.remove_approved_currency(&currency);
+
+    assert!(!client.is_approved_currency(&currency));
+}
