@@ -80,6 +80,7 @@ export function ConnectWalletModal({
     try {
       await connect();
     } catch (err) {
+      console.error("Failed to connect wallet:", err);
       // Freighter closing the popup, the extension erroring, or a wrong network
       // all land here. Show the reason in the modal so the user can retry
       // instead of being left with an apparently dead button.

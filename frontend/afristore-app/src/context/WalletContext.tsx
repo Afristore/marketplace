@@ -76,8 +76,12 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     const passphrase = passphrases[networkName] ?? passphrases.public;
 
     if (isE2eMockChain()) {
-      sessionStorage.setItem("e2e_network_passphrase", passphrase);
-      window.location.reload();
+      try {
+        sessionStorage.setItem("e2e_network_passphrase", passphrase);
+        window.location.reload();
+      } catch (err) {
+        console.error("Failed to switch network:", err);
+      }
       return;
     }
 
@@ -139,7 +143,8 @@ function WalletContextInner({
       connect: freighter.connect,
       disconnect: () => {
         if (walletType === "magic") {
-          magic.logout();
+          // logout reports failures via magic.error; catch so nothing is left unhandled.
+          magic.logout().catch((err) => console.error("Magic logout failed:", err));
         } else {
           freighter.disconnect();
         }

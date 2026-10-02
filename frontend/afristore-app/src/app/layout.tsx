@@ -9,6 +9,7 @@ import { Navbar } from "@/components/Navbar";
 import { RootErrorBoundary } from "@/components/RootErrorBoundary";
 import { ToastProvider } from "@/components/ToastProvider";
 import { CSPostHogProvider } from "@/providers/PostHogProvider";
+import { I18nProvider } from "@/components/I18nProvider";
 
 export const metadata: Metadata = {
   title: "Afristore — African Art on Stellar",
@@ -31,10 +32,11 @@ export default function RootLayout({
       <body className="min-h-screen bg-brand-50 text-gray-900">
         <WalletProvider>
           <CSPostHogProvider>
-            <ToastProvider>
-              <RootErrorBoundary>
-                <Navbar />
-                <main className="w-full">{children}</main>
+            <I18nProvider>
+              <ToastProvider>
+                <RootErrorBoundary>
+                  <Navbar />
+                  <main className="w-full">{children}</main>
                 <footer className="bg-midnight-950 border-t border-white/5 py-10 text-center text-sm text-white/30">
                   <div className="mx-auto max-w-7xl px-4 sm:px-6">
                     <p className="font-display text-lg font-bold text-white/50 mb-3">
@@ -82,6 +84,7 @@ export default function RootLayout({
                 </footer>
               </RootErrorBoundary>
             </ToastProvider>
+            </I18nProvider>
           </CSPostHogProvider>
         </WalletProvider>
       </body>
