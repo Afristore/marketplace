@@ -1,0 +1,48 @@
+{
+  "lending": {
+    "table": {
+      "borrower": "Borrower",
+      "amount": "Amount",
+      "interestRate": "Interest Rate",
+      "duration": "Duration",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "actions": {
+      "approve": "Approve",
+      "reject": "Reject",
+      "withdraw": "Withdraw",
+      "createListing": "Create Listing",
+      "viewDetails": "View Details"
+    },
+    "status": {
+      "pending": "Pending",
+      "active": "Active",
+      "completed": "Completed",
+      "defaulted": "Defaulted",
+      "unknown": "Unknown"
+    },
+    "empty": {
+      "noLoans": "No loans found",
+      "noListings": "No listings available"
+    },
+    "errors": {
+      "approveFailed": "Failed to approve loan",
+      "rejectFailed": "Failed to reject loan",
+      "withdrawFailed": "Failed to withdraw funds",
+      "loadFailed": "Failed to load loans",
+      "createFailed": "Failed to create listing"
+    },
+    "success": {
+      "approved": "Loan approved successfully",
+      "rejected": "Loan rejected successfully",
+      "withdrawn": "Funds withdrawn successfully",
+      "created": "Listing created successfully"
+    },
+    "tooltips": {
+      "viewDetails": "Click to view details",
+      "approve": "Approve this loan request",
+      "reject": "Reject this loan request"
+    }
+  }
+}

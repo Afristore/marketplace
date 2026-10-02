@@ -2027,8 +2027,7 @@ fn get_staking_pool_consistent_after_failed_duplicate() {
     assert_eq!(pool_after_fail, Some(pool_original));
 }
 
-
-// ── add_approved_currency tests ───────────────────────────
+// ── add_approved_currency / remove_approved_currency tests ──
 
 /// Happy path: admin can add a currency to the approved whitelist.
 #[test]
@@ -2123,6 +2122,19 @@ fn add_and_remove_approved_currency_reflects_state() {
     assert!(!client.is_approved_currency(&currency));
 }
 
+/// Removing a currency that was never added is a no-op.
+#[test]
+fn remove_approved_currency_never_added() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let currency = Address::generate(&env);
+    client.remove_approved_currency(&currency);
+
+    assert!(!client.is_approved_currency(&currency));
+}
+
 /// add_approved_currency extends instance TTL (prevents expiry).
 #[test]
 fn add_approved_currency_extends_ttl() {
@@ -2137,7 +2149,6 @@ fn add_approved_currency_extends_ttl() {
 
     assert!(client.is_approved_currency(&currency));
 }
-
 // ── remove_approved_currency tests ──────────────────────────
 
 /// Happy path: admin can remove a currency from the approved whitelist.

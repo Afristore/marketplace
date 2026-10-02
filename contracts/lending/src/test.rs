@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::settlement::settle;
-use crate::storage::{set_config, set_currency_symbol, set_listing, set_position};
+use crate::storage::{has_listing, set_config, set_currency_symbol, set_listing, set_position};
 use crate::types::{Listing, ListingStatus, PlatformConfig, Position, PositionStatus};
 use soroban_sdk::testutils::{Address as _, Ledger};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as TokenAdminClient};
@@ -59,8 +59,12 @@ fn test_cancel_listing_success() {
     assert_eq!(nft_token.balance(&lender), 1);
     assert_eq!(nft_token.balance(&contract_id), 0);
 
-    let status = env.as_contract(&contract_id, || crate::storage::get_listing(&env, 1).status);
-    assert_eq!(status, ListingStatus::Cancelled);
+    // Cancelled listing must be removed from persistent storage entirely.
+    let still_exists = env.as_contract(&contract_id, || has_listing(&env, 1));
+    assert!(
+        !still_exists,
+        "cancelled listing must be removed from storage"
+    );
 }
 
 #[test]

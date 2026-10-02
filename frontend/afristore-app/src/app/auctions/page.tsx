@@ -70,7 +70,11 @@ function AuctionCard({ auction }: { auction: Auction }) {
   const [metadata, setMetadata] = useState<ArtworkMetadata | null>(null);
 
   useEffect(() => {
-    getCachedMetadata(auction.metadata_cid).then(setMetadata);
+    getCachedMetadata(auction.metadata_cid)
+      .then(setMetadata)
+      .catch((err) => {
+        console.error("Failed to load metadata:", err);
+      });
   }, [auction.metadata_cid]);
 
   const imageUrl = metadata?.image ? cidToGatewayUrl(metadata.image) : null;
@@ -165,16 +169,25 @@ export default function AuctionsPage() {
     if (auctions.length === 0) return;
     let cancelled = false;
     const resolveAll = async () => {
-      const entries: [string, ArtworkMetadata | null][] = [];
-      await Promise.all(
-        auctions.map(async (a) => {
-          if (!a.metadata_cid) return;
-          if (!a.metadata_cid) return;
-          const meta = await getCachedMetadata(a.metadata_cid);
-          entries.push([a.metadata_cid, meta]);
-        }),
-      );
-      if (!cancelled) setMetadataMap(new Map(entries));
+      try {
+        const entries: [string, ArtworkMetadata | null][] = [];
+        await Promise.all(
+          auctions.map(async (a) => {
+            if (!a.metadata_cid) return;
+            if (!a.metadata_cid) return;
+            try {
+              const meta = await getCachedMetadata(a.metadata_cid);
+              entries.push([a.metadata_cid, meta]);
+            } catch (err) {
+              console.error(`Failed to load metadata for ${a.metadata_cid}:`, err);
+              entries.push([a.metadata_cid, null]);
+            }
+          }),
+        );
+        if (!cancelled) setMetadataMap(new Map(entries));
+      } catch (err) {
+        console.error("Failed to resolve metadata:", err);
+      }
     };
     resolveAll();
     return () => {
