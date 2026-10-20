@@ -291,7 +291,7 @@ impl NftStaking {
         Self::require_pool_nft(&env, &token_address);
 
         let position_key = DataKey::StakedPosition(user.clone(), token_address.clone(), token_id);
-        let mut position = load_staked_position(&env, &position_key)
+        let position = load_staked_position(&env, &position_key)
             .unwrap_or_else(|| panic_with_error!(&env, StakingError::NotStaked));
 
         if position.owner != user {
@@ -300,8 +300,18 @@ impl NftStaking {
 
         let rate = Self::rewards_per_second(&env);
         let elapsed = env.ledger().timestamp() - position.staked_at;
-        let rewards = (elapsed as i128) * rate;
-        position.rewards_earned += rewards;
+        let pending = position.rewards_earned + (elapsed as i128) * rate;
+
+        if pending > 0 {
+            let reward_token_addr = get_reward_token(&env)
+                .unwrap_or_else(|| panic_with_error!(&env, StakingError::NotInitialized));
+            let token_client = soroban_sdk::token::TokenClient::new(&env, &reward_token_addr);
+            let balance = token_client.balance(&env.current_contract_address());
+            if balance < pending {
+                panic_with_error!(&env, StakingError::InsufficientRewardBalance);
+            }
+            token_client.transfer(&env.current_contract_address(), &user, &pending);
+        }
 
         env.invoke_contract::<()>(
             &token_address,
@@ -324,7 +334,7 @@ impl NftStaking {
             user,
             token_address,
             token_id,
-            rewards_paid: position.rewards_earned,
+            rewards_paid: pending,
             timestamp: env.ledger().timestamp(),
         }
         .publish(&env);
