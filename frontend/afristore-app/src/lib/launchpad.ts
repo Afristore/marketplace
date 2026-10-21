@@ -48,6 +48,52 @@ function toAddressScVal(address: string): xdr.ScVal {
   return new Address(address).toScVal();
 }
 
+/**
+ * Generates a cryptographically secure 32-byte salt Buffer for collection deployment.
+ */
+export function generateSalt(): Buffer {
+  if (typeof window !== "undefined" && window.crypto && window.crypto.getRandomValues) {
+    const bytes = new Uint8Array(32);
+    window.crypto.getRandomValues(bytes);
+    return Buffer.from(bytes);
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const crypto = require("crypto");
+    return crypto.randomBytes(32);
+  } catch {
+    const arr = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) arr[i] = Math.floor(Math.random() * 256);
+    return Buffer.from(arr);
+  }
+}
+
+export function validateDeployParams(params: {
+  creatorPublicKey: string;
+  royaltyReceiver: string;
+  royaltyBps: number;
+  salt: Buffer;
+  maxSupply?: number;
+  name?: string;
+  symbol?: string;
+}) {
+  if (!params.creatorPublicKey || !params.creatorPublicKey.trim()) {
+    throw new Error("Creator public key is required");
+  }
+  if (!params.royaltyReceiver || !params.royaltyReceiver.trim()) {
+    throw new Error("Royalty receiver is required");
+  }
+  if (params.royaltyBps < 0 || params.royaltyBps > 10000) {
+    throw new Error("royaltyBps must be between 0 and 10000");
+  }
+  if (!params.salt || params.salt.length !== 32) {
+    throw new Error("Salt must be exactly 32 bytes");
+  }
+  if (params.maxSupply !== undefined && params.maxSupply <= 0) {
+    throw new Error("maxSupply must be greater than 0");
+  }
+}
+
 // ── Launchpad Methods ─────────────────────────────────────────
 
 /**
@@ -62,6 +108,13 @@ export async function deployNormal721(
   royaltyReceiver: string,
   salt: Buffer, // 32 bytes
 ): Promise<string> {
+  validateDeployParams({
+    creatorPublicKey,
+    royaltyReceiver,
+    royaltyBps,
+    salt,
+    maxSupply,
+  });
   if (isE2eMockChain()) {
     return e2eMockDeployCollection(
       creatorPublicKey,
@@ -103,6 +156,12 @@ export async function deployNormal1155(
   royaltyReceiver: string,
   salt: Buffer,
 ): Promise<string> {
+  validateDeployParams({
+    creatorPublicKey,
+    royaltyReceiver,
+    royaltyBps,
+    salt,
+  });
   if (isE2eMockChain()) {
     return e2eMockDeployCollection(
       creatorPublicKey,
@@ -145,6 +204,13 @@ export async function deployLazy721(
   royaltyReceiver: string,
   salt: Buffer,
 ): Promise<string> {
+  validateDeployParams({
+    creatorPublicKey,
+    royaltyReceiver,
+    royaltyBps,
+    salt,
+    maxSupply,
+  });
   if (isE2eMockChain()) {
     return e2eMockDeployCollection(
       creatorPublicKey,
@@ -188,6 +254,12 @@ export async function deployLazy1155(
   royaltyReceiver: string,
   salt: Buffer,
 ): Promise<string> {
+  validateDeployParams({
+    creatorPublicKey,
+    royaltyReceiver,
+    royaltyBps,
+    salt,
+  });
   if (isE2eMockChain()) {
     return e2eMockDeployCollection(
       creatorPublicKey,
