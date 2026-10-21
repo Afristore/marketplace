@@ -4,10 +4,14 @@
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LendingProvider, useLendingContext } from "@/context/LendingContext";
-import { useActiveListings } from "@/hooks/useActiveListings";
+import {
+  useActiveListings,
+  type IndexedLendingListing,
+} from "@/hooks/useActiveListings";
 import { useLendingStats } from "@/hooks/useLendingStats";
+import { GuardButton } from "@/components/WalletGuard";
 
 // ── Stats banner ───────────────────────────────────────────────
 
@@ -25,7 +29,9 @@ function StatsBanner() {
     <div className="lending-stats-banner">
       <div className="stat-item">
         <span className="stat-label">TVL</span>
-        <span className="stat-value">{isLoading ? "—" : fmt(stats?.tvl ?? 0)}</span>
+        <span className="stat-value">
+          {isLoading ? "—" : fmt(stats?.tvl ?? 0)}
+        </span>
       </div>
       <div className="stat-item">
         <span className="stat-label">24h Volume</span>
@@ -107,6 +113,13 @@ const PAGE_SIZE = 20;
 function BorrowListingsGrid() {
   const { filters } = useLendingContext();
   const [page, setPage] = useState(0);
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<IndexedLendingListing | null>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    if (selected) dialogRef.current?.showModal();
+  }, [selected]);
 
   const { listings, total, isLoading, error, refresh } = useActiveListings({
     page,
@@ -116,10 +129,19 @@ function BorrowListingsGrid() {
   });
 
   const totalPages = total != null ? Math.ceil(total / PAGE_SIZE) : null;
+  const listingName = (listing: IndexedLendingListing) =>
+    listing.name || `NFT #${listing.tokenId}`;
+  const visibleListings = listings.filter((listing) =>
+    listingName(listing).toLowerCase().includes(search.trim().toLowerCase()),
+  );
 
   if (isLoading) {
     return (
-      <div className="listings-loading">
+      <div
+        className="listings-loading"
+        role="status"
+        aria-label="Loading lending offers"
+      >
         {Array.from({ length: 8 }).map((_, i) => (
           <div key={i} className="listing-skeleton" />
         ))}
@@ -129,7 +151,7 @@ function BorrowListingsGrid() {
 
   if (error) {
     return (
-      <div className="listings-error">
+      <div className="listings-error" role="alert">
         <p>{error}</p>
         <button onClick={refresh}>Retry</button>
       </div>
@@ -149,29 +171,58 @@ function BorrowListingsGrid() {
 
   return (
     <>
-      <div className="listings-grid">
-        {listings.map((listing) => (
-          <div key={`${listing.owner}-${listing.token_id}`} className="listing-card">
-            <div className="listing-card-header">
-              <span className="listing-token-id">#{listing.token_id}</span>
-              <span className={`listing-status ${String(listing.status).toLowerCase()}`}>
+      <label htmlFor="borrow-search" className="block mb-2">
+        Search listings by name
+      </label>
+      <input
+        id="borrow-search"
+        type="search"
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder="Search this page’s lending offers"
+        className="w-full mb-6 rounded-xl border border-white/20 bg-midnight-900 px-4 py-3 text-white placeholder:text-white/70"
+      />
+      {visibleListings.length === 0 && (
+        <p role="status">No lending offers match your search.</p>
+      )}
+      <div className="listings-grid grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {visibleListings.map((listing) => (
+          <article
+            key={listing.listingId}
+            className="listing-card rounded-2xl border border-white/10 bg-midnight-900 p-5"
+          >
+            <div className="listing-card-header flex items-center justify-between gap-3 mb-4">
+              <h2 className="listing-token-id font-semibold">
+                {listingName(listing)}
+              </h2>
+              <span
+                className={`listing-status ${String(listing.status).toLowerCase()}`}
+              >
                 {String(listing.status)}
               </span>
             </div>
             <div className="listing-card-body">
               <p className="listing-price">
-                {listing.price ? `${Number(listing.price) / 1e7} XLM` : "—"}
+                ${Number(listing.declaredPriceUsd) / 1e7}
               </p>
               <p className="listing-seller">
-                {String(listing.owner || "").slice(0, 6)}…{String(listing.owner || "").slice(-4)}
+                {listing.lender.slice(0, 6)}…{listing.lender.slice(-4)}
               </p>
+              <GuardButton
+                type="button"
+                onAction={() => setSelected(listing)}
+                aria-label={`View loan details for ${listingName(listing)}`}
+                className="mt-3 rounded-xl bg-brand-500 px-4 py-2 text-white hover:bg-brand-600"
+              >
+                View loan details
+              </GuardButton>
             </div>
-          </div>
+          </article>
         ))}
       </div>
 
       {totalPages != null && totalPages > 1 && (
-        <div className="pagination">
+        <div className="pagination flex items-center justify-center gap-5 mt-6">
           <button
             disabled={page === 0}
             onClick={() => setPage((p) => Math.max(0, p - 1))}
@@ -189,6 +240,53 @@ function BorrowListingsGrid() {
           </button>
         </div>
       )}
+      <dialog
+        ref={dialogRef}
+        aria-labelledby="loan-details-title"
+        onClose={() => setSelected(null)}
+        className="w-full max-w-lg rounded-2xl border border-white/20 bg-midnight-900 p-6 text-white backdrop:bg-black/70"
+      >
+        {selected && (
+          <>
+            <h2 id="loan-details-title" className="text-xl font-bold">
+              Loan details: {listingName(selected)}
+            </h2>
+            <dl className="my-6 space-y-3">
+              <div>
+                <dt>Collection</dt>
+                <dd className="break-all">{selected.nftContract}</dd>
+              </div>
+              <div>
+                <dt>Declared value</dt>
+                <dd>${Number(selected.declaredPriceUsd) / 1e7}</dd>
+              </div>
+              <div>
+                <dt>Maximum duration</dt>
+                <dd>{selected.maxDurationDays} days</dd>
+              </div>
+              <div>
+                <dt>Monthly interest</dt>
+                <dd>
+                  {selected.interestScheduleBps
+                    .map((rate) => `${rate / 100}%`)
+                    .join(", ")}
+                </dd>
+              </div>
+              <div>
+                <dt>Minimum collateral</dt>
+                <dd>{selected.minCollateralBufferBps / 100}%</dd>
+              </div>
+            </dl>
+            <button
+              type="button"
+              onClick={() => dialogRef.current?.close()}
+              className="rounded-xl bg-brand-500 px-4 py-2 text-white hover:bg-brand-600"
+            >
+              Close details
+            </button>
+          </>
+        )}
+      </dialog>
     </>
   );
 }
@@ -196,6 +294,7 @@ function BorrowListingsGrid() {
 // ── Page shell ─────────────────────────────────────────────────
 
 function BorrowPageContent() {
+  const { filters } = useLendingContext();
   return (
     <main className="lending-borrow-page">
       <header className="lending-page-header">
@@ -205,7 +304,7 @@ function BorrowPageContent() {
 
       <StatsBanner />
       <FilterBar />
-      <BorrowListingsGrid />
+      <BorrowListingsGrid key={`${filters.collection}-${filters.tokenType}`} />
     </main>
   );
 }

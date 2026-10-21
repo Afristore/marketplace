@@ -97,9 +97,6 @@ function attachSseClient(req: Request, res: Response, address?: string) {
 
 const router = Router();
 
-// Mount lending routes under /api/lending
-router.use('/api/lending', lendingRoutes);
-
 /** GET /events/stream — subscribe to all marketplace events (explore refresh). */
 router.get('/events/stream', (req: Request, res: Response) => {
     attachSseClient(req, res);
@@ -765,6 +762,8 @@ router.get('/collections/:address', async (req: Request, res: Response) => {
     }
 });
 
+// The app mounts this router at /api; preserve the position routes above.
+router.use('/lending', lendingRoutes);
 router.use(lendingRoutes);
 
 export default router;
