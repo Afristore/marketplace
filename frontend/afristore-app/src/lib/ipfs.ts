@@ -173,10 +173,42 @@ export async function fetchMetadata(cid?: string): Promise<ArtworkMetadata> {
 
 // ── Utility ───────────────────────────────────────────────────
 
-/** Converts a raw CID string or an IPFS URI to an IPFS gateway URL for image display. Handles full URLs and local paths gracefully. */
-export function cidToGatewayUrl(cid: string): string {
-  if (cid.startsWith("http")) return cid;
-  if (cid.startsWith("/")) return cid; // Local path
-  const cleanCid = cid.replace("ipfs://", "").trim();
-  return `${config.pinataGateway}/ipfs/${cleanCid}`;
+/**
+ * Resolves an IPFS URI (e.g. ipfs://Qm..., ipfs://bafy...), raw CID, or HTTP URL into a gateway URL.
+ * Handles custom gateways, empty strings, and local paths gracefully.
+ */
+export function resolveIpfsUrl(
+  uri?: string | null,
+  customGateway?: string
+): string {
+  if (!uri || typeof uri !== "string" || uri.trim() === "") {
+    return "";
+  }
+  const trimmed = uri.trim();
+  if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+    return trimmed;
+  }
+  if (trimmed.startsWith("/")) {
+    return trimmed; // Local path
+  }
+
+  let cleanCid = trimmed;
+  if (cleanCid.startsWith("ipfs://")) {
+    cleanCid = cleanCid.replace(/^ipfs:\/\//, "");
+  } else if (cleanCid.startsWith("ipfs/")) {
+    cleanCid = cleanCid.replace(/^ipfs\//, "");
+  }
+  cleanCid = cleanCid.trim();
+
+  const baseGateway = (
+    customGateway ||
+    config.pinataGateway ||
+    "https://gateway.pinata.cloud"
+  ).replace(/\/+$/, "");
+
+  return `${baseGateway}/ipfs/${cleanCid}`;
 }
+
+/** Converts a raw CID string or an IPFS URI to an IPFS gateway URL for image display. Handles full URLs and local paths gracefully. */
+export const cidToGatewayUrl = resolveIpfsUrl;
+
