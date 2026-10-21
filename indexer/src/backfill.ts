@@ -48,12 +48,20 @@ function parseArgs(): BackfillArgs {
     throw new Error('Missing archival RPC URL. Set ARCHIVAL_STELLAR_RPC_URL or pass --rpc=<url>.');
   }
 
+  const startLedger = parseLedger(readFlag('start'), 'start');
+  const endLedger = endLedgerFlag ? parseLedger(endLedgerFlag, 'end') : undefined;
+
+  if (endLedger !== undefined && startLedger > endLedger) {
+    throw new Error(`Invalid ledger range: startLedger (${startLedger}) cannot be greater than endLedger (${endLedger})`);
+  }
+
   return {
     rpcUrl,
-    startLedger: parseLedger(readFlag('start'), 'start'),
-    endLedger: endLedgerFlag ? parseLedger(endLedgerFlag, 'end') : undefined,
+    startLedger,
+    endLedger,
   };
 }
+
 
 async function fetchLedgerHash(server: rpc.Server, ledger: number): Promise<string | null> {
   try {
