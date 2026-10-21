@@ -26,8 +26,24 @@ function currentThreshold(): number {
   return LEVEL_PRIORITY[configured] ?? LEVEL_PRIORITY.info;
 }
 
+const SENSITIVE_KEYS = new Set([
+  'password',
+  'secret',
+  'token',
+  'apikey',
+  'api_key',
+  'authorization',
+  'privatekey',
+  'private_key',
+  'credential',
+  'credentials',
+]);
+
 // JSON.stringify drops Error message/stack and cannot encode BigInt.
-function replacer(_key: string, value: unknown): unknown {
+function replacer(key: string, value: unknown): unknown {
+  if (key && SENSITIVE_KEYS.has(key.toLowerCase())) {
+    return '[REDACTED]';
+  }
   if (value instanceof Error) {
     return { name: value.name, message: value.message, stack: value.stack };
   }
