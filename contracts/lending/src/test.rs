@@ -2305,3 +2305,282 @@ fn test_add_collateral_without_auth_panics() {
     env.set_auths(&[]);
     client.add_collateral(&1, &10_000_000);
 }
+
+// ─── Issue #1089: Position status transition invariants ──────────────────────
+
+/// Attempting to liquidate an already liquidated position must fail.
+#[test]
+#[should_panic(expected = "Position is not Active")]
+fn test_liquidate_liquidated_position_panics() {
+    let env = Env::default();
+    let (
+        client,
+        contract_id,
+        _admin,
+        lender,
+        borrower,
+        liquidator,
+        _fee_receiver,
+        nft_token,
+        col_token,
+    ) = setup_liquidate_test(&env);
+
+    env.ledger().with_mut(|l| l.timestamp = 2000);
+
+    env.as_contract(&contract_id, || {
+        set_position(
+            &env,
+            1,
+            &Position {
+                id: 1,
+                listing_id: 1,
+                lender: lender.clone(),
+                borrower: borrower.clone(),
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                collateral_currency: col_token.address.clone(),
+                collateral_amount: 105_000_000,
+                interest_schedule_bps: vec![&env, 0],
+                liquidation_threshold_bps: 11000,
+                start_time: 1000,
+                max_duration_secs: 30 * 86400,
+                status: PositionStatus::Liquidated,
+            },
+        );
+    });
+
+    client.liquidate(&1, &liquidator);
+}
+
+/// Attempting to liquidate an already returned position must fail.
+#[test]
+#[should_panic(expected = "Position is not Active")]
+fn test_liquidate_returned_position_panics() {
+    let env = Env::default();
+    let (
+        client,
+        contract_id,
+        _admin,
+        lender,
+        borrower,
+        liquidator,
+        _fee_receiver,
+        nft_token,
+        col_token,
+    ) = setup_liquidate_test(&env);
+
+    env.ledger().with_mut(|l| l.timestamp = 2000);
+
+    env.as_contract(&contract_id, || {
+        set_position(
+            &env,
+            1,
+            &Position {
+                id: 1,
+                listing_id: 1,
+                lender: lender.clone(),
+                borrower: borrower.clone(),
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                collateral_currency: col_token.address.clone(),
+                collateral_amount: 105_000_000,
+                interest_schedule_bps: vec![&env, 0],
+                liquidation_threshold_bps: 11000,
+                start_time: 1000,
+                max_duration_secs: 30 * 86400,
+                status: PositionStatus::Returned,
+            },
+        );
+    });
+
+    client.liquidate(&1, &liquidator);
+}
+
+/// Attempting to liquidate an already expired position must fail.
+#[test]
+#[should_panic(expected = "Position is not Active")]
+fn test_liquidate_already_expired_position_panics() {
+    let env = Env::default();
+    let (
+        client,
+        contract_id,
+        _admin,
+        lender,
+        borrower,
+        liquidator,
+        _fee_receiver,
+        nft_token,
+        col_token,
+    ) = setup_liquidate_test(&env);
+
+    let now = 1000 + 30 * 86400 + 100;
+    env.ledger().with_mut(|l| l.timestamp = now);
+
+    env.as_contract(&contract_id, || {
+        set_position(
+            &env,
+            1,
+            &Position {
+                id: 1,
+                listing_id: 1,
+                lender: lender.clone(),
+                borrower: borrower.clone(),
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                collateral_currency: col_token.address.clone(),
+                collateral_amount: 150_000_000,
+                interest_schedule_bps: vec![&env, 1000],
+                liquidation_threshold_bps: 11000,
+                start_time: 1000,
+                max_duration_secs: 30 * 86400,
+                status: PositionStatus::Expired,
+            },
+        );
+    });
+
+    client.liquidate(&1, &liquidator);
+}
+
+/// Attempting to return an NFT for an already liquidated position must fail.
+#[test]
+#[should_panic(expected = "Position is not Active")]
+fn test_return_nft_liquidated_position_panics() {
+    let env = Env::default();
+    let (client, _contract_id, _lender, _borrower, _fee_receiver, _nft, _col) =
+        setup_return_nft(&env, 1000, 1000, PositionStatus::Liquidated);
+
+    client.return_nft(&1);
+}
+
+// ─── Issue #1088: Loan repayment with excess tokens and zero-refund handling ──
+
+/// Test repayment with exact payment: verify collateral waterfall and no excess locked.
+#[test]
+fn test_return_nft_exact_repayment() {
+    let env = Env::default();
+    let (client, contract_id, lender, borrower, fee_receiver, nft_token, col_token) =
+        setup_return_nft(&env, 1000, 1000, PositionStatus::Active);
+
+    let lender_col_before = col_token.balance(&lender);
+    let fee_col_before = col_token.balance(&fee_receiver);
+    let borrower_col_before = col_token.balance(&borrower);
+
+    client.return_nft(&1);
+
+    // Verify collateral distribution after exact payment:
+    // Owed: 100M USD (declared price), Platform fee: 1% = 1M USD, Total debit: 101M USD
+    let lender_col_after = col_token.balance(&lender);
+    let fee_col_after = col_token.balance(&fee_receiver);
+    let borrower_col_after = col_token.balance(&borrower);
+
+    assert_eq!(lender_col_after - lender_col_before, 100_000_000);
+    assert_eq!(fee_col_after - fee_col_before, 1_000_000);
+    assert_eq!(borrower_col_after, 49_000_000);
+
+    // Verify no tokens are locked in contract
+    assert_eq!(col_token.balance(&contract_id), 0);
+
+    // Verify position status is updated to Returned
+    env.as_contract(&contract_id, || {
+        let pos = crate::storage::get_position(&env, 1);
+        assert_eq!(pos.status, PositionStatus::Returned);
+    });
+}
+
+/// Test repayment with excess collateral available (more than required owed).
+/// Borrower gets the remainder, no tokens locked in contract.
+#[test]
+fn test_return_nft_with_excess_collateral() {
+    let env = Env::default();
+    let (
+        client,
+        contract_id,
+        _admin,
+        lender,
+        borrower,
+        _liquidator,
+        fee_receiver,
+        nft_token,
+        col_token,
+    ) = setup_liquidate_test(&env);
+
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+
+    // Set up position with 200M collateral (excess for 100M owed + 1M fee)
+    env.as_contract(&contract_id, || {
+        set_position(
+            &env,
+            1,
+            &Position {
+                id: 1,
+                listing_id: 1,
+                lender: lender.clone(),
+                borrower: borrower.clone(),
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                collateral_currency: col_token.address.clone(),
+                collateral_amount: 200_000_000,
+                interest_schedule_bps: vec![&env, 0],
+                liquidation_threshold_bps: 11000,
+                start_time: 1000,
+                max_duration_secs: 30 * 86400,
+                status: PositionStatus::Active,
+            },
+        );
+    });
+
+    client.return_nft(&1);
+
+    // Verify waterfall: lender gets 100M, fee gets 1M, borrower gets 99M (200M - 101M)
+    assert_eq!(col_token.balance(&lender), 100_000_000);
+    assert_eq!(col_token.balance(&fee_receiver), 1_000_000);
+    assert_eq!(col_token.balance(&borrower), 99_000_000);
+
+    // Verify no tokens locked in contract
+    assert_eq!(col_token.balance(&contract_id), 0);
+
+    // Verify position status is updated to Returned
+    env.as_contract(&contract_id, || {
+        let pos = crate::storage::get_position(&env, 1);
+        assert_eq!(pos.status, PositionStatus::Returned);
+    });
+}
+
+/// Test repayment updates position status to Returned and validates token balance shifts.
+#[test]
+fn test_return_nft_balance_verification() {
+    let env = Env::default();
+    let (client, contract_id, lender, borrower, fee_receiver, nft_token, col_token) =
+        setup_return_nft(&env, 1000, 1000, PositionStatus::Active);
+
+    // Capture balances before repayment
+    let nft_borrower_before = nft_token.balance(&borrower);
+    let nft_lender_before = nft_token.balance(&lender);
+    let nft_contract_before = nft_token.balance(&contract_id);
+    let col_borrower_before = col_token.balance(&borrower);
+    let col_lender_before = col_token.balance(&lender);
+    let col_fee_before = col_token.balance(&fee_receiver);
+    let col_contract_before = col_token.balance(&contract_id);
+
+    client.return_nft(&1);
+
+    // Verify NFT transfer: borrower loses 1, lender gains 1, contract loses 1
+    assert_eq!(nft_token.balance(&borrower), nft_borrower_before - 1);
+    assert_eq!(nft_token.balance(&lender), nft_lender_before + 1);
+    assert_eq!(nft_token.balance(&contract_id), nft_contract_before - 1);
+
+    // Verify collateral waterfall: no tokens remain locked
+    assert_eq!(col_token.balance(&contract_id), 0);
+    assert!(col_token.balance(&lender) > col_lender_before);
+    assert!(col_token.balance(&fee_receiver) > col_fee_before);
+
+    // Verify position is marked as Returned
+    env.as_contract(&contract_id, || {
+        let pos = crate::storage::get_position(&env, 1);
+        assert_eq!(pos.status, PositionStatus::Returned);
+    });
+}
