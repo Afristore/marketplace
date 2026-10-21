@@ -2305,3 +2305,35 @@ fn test_add_collateral_without_auth_panics() {
     env.set_auths(&[]);
     client.add_collateral(&1, &10_000_000);
 }
+
+/// Issue #1087: Unit tests for Lending health_factor view under boundary conditions and edge cases
+#[test]
+fn test_health_factor_edge_cases_issue_1087() {
+    let env = Env::default();
+    let (client, _contract_id, _borrower, _liquidator, _col_token) =
+        setup_add_collateral(&env, PositionStatus::Active);
+
+    // Initial health factor with zero or low initial accrued interest
+    let initial_hf = client.health_factor(&1);
+    assert!(initial_hf > 0);
+
+    // Jump ledger timestamp to accrue interest and verify health degradation
+    env.ledger().with_mut(|li| {
+        li.timestamp += 86400 * 30; // 30 days
+    });
+
+    let degraded_hf = client.health_factor(&1);
+    assert!(degraded_hf <= initial_hf);
+}
+
+#[test]
+#[should_panic]
+fn test_health_factor_non_existent_position_panics_issue_1087() {
+    let env = Env::default();
+    let (client, _contract_id, _borrower, _liquidator, _col_token) =
+        setup_add_collateral(&env, PositionStatus::Active);
+
+    // Non-existent position ID (e.g. 99999) must panic
+    client.health_factor(&99999);
+}
+
