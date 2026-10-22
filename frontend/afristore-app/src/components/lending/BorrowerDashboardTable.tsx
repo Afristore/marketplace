@@ -45,6 +45,8 @@ export interface BorrowerDebt {
   elapsedMonths: number;
   /** Liquidation threshold in bps, e.g. 11000 = 110%. */
   liquidationThresholdBps: number;
+  /** Indexed oracle health factor; null means no quote is available yet. */
+  healthFactorBps?: bigint | null;
 }
 
 export type HealthFactorSortOrder = "asc" | "desc";
@@ -59,7 +61,7 @@ interface BorrowerDashboardTableProps {
 interface DerivedRow {
   debt: BorrowerDebt;
   currentDebtUsd: bigint;
-  healthFactorBps: bigint;
+  healthFactorBps: bigint | null;
 }
 
 function formatUsd(value: bigint): string {
@@ -72,15 +74,19 @@ function formatUsd(value: bigint): string {
   return `$${sign}${wholeStr}.${centsStr}`;
 }
 
-function formatHealthFactor(hf: bigint): string {
+function formatHealthFactor(hf: bigint | null): string {
+  if (hf === null) return "—";
   if (hf >= MAX_HEALTH_FACTOR_BPS) return "\u2014"; // em dash, no debt
   const whole = hf / 100n;
   const frac = (hf % 100n).toString().padStart(2, "0");
   return `${whole}.${frac}%`;
 }
 
-function healthFactorTone(hf: bigint, liquidationThresholdBps: number): string {
-  if (hf >= MAX_HEALTH_FACTOR_BPS) {
+function healthFactorTone(
+  hf: bigint | null,
+  liquidationThresholdBps: number,
+): string {
+  if (hf === null || hf >= MAX_HEALTH_FACTOR_BPS) {
     return "bg-white/5 text-white/50 ring-1 ring-white/10";
   }
   if (hf <= BigInt(liquidationThresholdBps)) {
@@ -123,15 +129,20 @@ export function BorrowerDashboardTable({
         principal,
       );
       const currentDebtUsd = principal + accrued;
-      const healthFactorBps = calculateHealthFactor(
-        toBigInt(debt.collateralUsdValue, "collateralUsdValue"),
-        currentDebtUsd,
-      );
+      const healthFactorBps =
+        debt.healthFactorBps !== undefined
+          ? debt.healthFactorBps
+          : calculateHealthFactor(
+              toBigInt(debt.collateralUsdValue, "collateralUsdValue"),
+              currentDebtUsd,
+            );
       return { debt, currentDebtUsd, healthFactorBps };
     });
 
     return derived.sort((a, b) => {
-      const diff = a.healthFactorBps - b.healthFactorBps;
+      const diff =
+        (a.healthFactorBps ?? MAX_HEALTH_FACTOR_BPS) -
+        (b.healthFactorBps ?? MAX_HEALTH_FACTOR_BPS);
       return sortOrder === "asc" ? Number(diff) : Number(-diff);
     });
   }, [debts, sortOrder]);
@@ -173,7 +184,10 @@ export function BorrowerDashboardTable({
   return (
     <div className="overflow-hidden rounded-3xl bg-midnight-900/60 border border-white/5 backdrop-blur-xl">
       <div className="overflow-x-auto">
-        <table data-testid="borrower-debts-table" className="w-full min-w-[720px] text-left text-sm">
+        <table
+          data-testid="borrower-debts-table"
+          className="w-full min-w-[720px] text-left text-sm"
+        >
           <thead>
             <tr className="border-b border-white/10 text-[11px] uppercase tracking-wider text-white/40">
               <th className="px-5 py-4 font-bold">
@@ -237,7 +251,7 @@ export function BorrowerDashboardTable({
 interface FragmentRowProps {
   debt: BorrowerDebt;
   currentDebtUsd: bigint;
-  healthFactorBps: bigint;
+  healthFactorBps: bigint | null;
   expanded: boolean;
   onToggleExpand: () => void;
   onTopUp?: () => void;
@@ -309,7 +323,8 @@ function FragmentRow({
 
         <td className="px-5 py-4 text-right">
           <span className="font-mono text-xs text-white/60">
-            {debt.collateralCurrency.slice(0, 6)}…{debt.collateralCurrency.slice(-4)}
+            {debt.collateralCurrency.slice(0, 6)}…
+            {debt.collateralCurrency.slice(-4)}
           </span>
         </td>
 
@@ -353,7 +368,10 @@ function FragmentRow({
       </tr>
 
       {expanded && (
-        <tr data-testid={`manage-detail-${debt.positionId}`} className="bg-midnight-950/40">
+        <tr
+          data-testid={`manage-detail-${debt.positionId}`}
+          className="bg-midnight-950/40"
+        >
           <td colSpan={5} className="px-5 py-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
               <div className="rounded-2xl bg-white/[0.02] border border-white/5 p-3">
@@ -361,7 +379,9 @@ function FragmentRow({
                   {t("lending.borrower.details.principal", "Principal")}
                 </p>
                 <p className="font-mono text-white font-semibold">
-                  {formatUsd(toBigInt(debt.declaredPriceUsd, "declaredPriceUsd"))}
+                  {formatUsd(
+                    toBigInt(debt.declaredPriceUsd, "declaredPriceUsd"),
+                  )}
                 </p>
               </div>
               <div className="rounded-2xl bg-white/[0.02] border border-white/5 p-3">

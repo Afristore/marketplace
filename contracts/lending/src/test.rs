@@ -2114,6 +2114,15 @@ fn position_health_factor_bps(env: &Env, contract_id: &Address, position_id: u64
 }
 
 #[test]
+fn test_health_factor_view_returns_current_health_in_bps() {
+    let env = Env::default();
+    let (client, _contract_id, _borrower, _liquidator, _col_token) =
+        setup_add_collateral(&env, PositionStatus::Active);
+
+    assert_eq!(client.health_factor(&1), 11_500);
+}
+
+#[test]
 fn test_add_collateral_increases_amount_and_emits_event() {
     let env = Env::default();
     let (client, contract_id, borrower, _liquidator, col_token) =

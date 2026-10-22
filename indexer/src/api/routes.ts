@@ -97,13 +97,6 @@ function attachSseClient(req: Request, res: Response, address?: string) {
 
 const router = Router();
 
-// Mount lending routes under /api/lending
-router.use('/api/lending', lendingRoutes);
-
-// Mount lending routes for backwards compatibility (deprecated)
-// TODO: Remove in next major version
-router.use('/lending', lendingRoutes);
-
 /** GET /events/stream — subscribe to all marketplace events (explore refresh). */
 router.get('/events/stream', (req: Request, res: Response) => {
     attachSseClient(req, res);
@@ -214,14 +207,15 @@ router.get('/listings', async (req: Request, res: Response) => {
             ? Math.min(rawOffset, 10_000)
             : undefined;
 
-        const results = await prisma.listing.findMany({
-            where,
-            orderBy: LISTINGS_SORT_ORDER_BY.get(sort as string) ?? { updatedAtLedger: 'desc' },
-            take,
-            skip,
-        });
-
-        const total = await prisma.listing.count({ where });
+        const [results, total] = await prisma.$transaction([
+            prisma.listing.findMany({
+                where,
+                orderBy: LISTINGS_SORT_ORDER_BY.get(sort as string) ?? { updatedAtLedger: 'desc' },
+                take,
+                skip,
+            }),
+            prisma.listing.count({ where }),
+        ]);
         return res.json({ listings: serialize(results.map(mapListing)), total });
     } catch (err) {
         console.error('Error details:', err);
@@ -512,56 +506,41 @@ router.get('/stats', async (req: Request, res: Response) => {
         if (dateTo)   eventTimeFilter.lte = dateTo;
         const hasTimeFilter = Object.keys(eventTimeFilter).length > 0;
 
-        // Total listings count
-        const totalListings = await prisma.listing.count();
-
-        // Active listings count
-        const activeListings = await prisma.listing.count({
-            where: { status: 'Active' },
-        });
-
-        // Total volume — sum of price for all Sold listings
-        const volumeResult = await prisma.listing.aggregate({
-            _sum: { price: true },
-            where: { status: 'Sold' },
-        });
-        const totalVolume = volumeResult._sum.price?.toString() ?? '0';
-
         // Unique active users — distinct actors across marketplace events
         const userFilter: any = hasTimeFilter
             ? { ledgerTimestamp: eventTimeFilter }
             : {};
-        const distinctActors = await prisma.marketplaceEvent.findMany({
-            where: userFilter,
-            select: { actor: true },
-            distinct: ['actor'],
-        });
-        const activeUsers = distinctActors.length;
-
-        // Event counts within the time window (or all-time if no filter)
-        const totalEvents = await prisma.marketplaceEvent.count({
-            where: userFilter,
-        });
 
         // Sales count within time window
         const salesFilter: any = { eventType: 'ARTWORK_SOLD' };
         if (hasTimeFilter) salesFilter.ledgerTimestamp = eventTimeFilter;
-        const totalSales = await prisma.marketplaceEvent.count({
-            where: salesFilter,
-        });
 
-        // Volume within time window — sum price of sold listings whose updatedAt
-        // falls in the window (using ledgerTimestamp from events as proxy)
-        const windowVolumeResult = hasTimeFilter
-            ? await prisma.listing.aggregate({
+        // Run all aggregate reads atomically so stats cannot mix pre/post-write snapshots.
+        const [
+            totalListings,
+            activeListings,
+            volumeResult,
+            distinctActors,
+            totalEvents,
+            totalSales,
+        ] = await prisma.$transaction([
+            prisma.listing.count(),
+            prisma.listing.count({ where: { status: 'Active' } }),
+            prisma.listing.aggregate({
                 _sum: { price: true },
-                where: {
-                    status: 'Sold',
-                    // ledgerTimestamp is on MarketplaceEvent, not Listing — use
-                    // an EXISTS sub-query approximation via a join on event time
-                },
-            })
-            : null;
+                where: { status: 'Sold' },
+            }),
+            prisma.marketplaceEvent.findMany({
+                where: userFilter,
+                select: { actor: true },
+                distinct: ['actor'],
+            }),
+            prisma.marketplaceEvent.count({ where: userFilter }),
+            prisma.marketplaceEvent.count({ where: salesFilter }),
+        ]);
+
+        const totalVolume = volumeResult._sum.price?.toString() ?? '0';
+        const activeUsers = distinctActors.length;
 
         res.json({
             totalListings,
@@ -587,12 +566,14 @@ router.get('/stats', async (req: Request, res: Response) => {
 router.get('/wallets/:address/tokens', async (req: Request, res: Response) => {
     const { address } = req.params;
     try {
-        const ownedListings = await prisma.listing.findMany({
-            where: { owner: address as string },
-        });
-        const stakedNFTs = await prisma.stakedNFT.findMany({
-            where: { owner: address as string },
-        });
+        const [ownedListings, stakedNFTs] = await prisma.$transaction([
+            prisma.listing.findMany({
+                where: { owner: address as string },
+            }),
+            prisma.stakedNFT.findMany({
+                where: { owner: address as string },
+            }),
+        ]);
         res.json({
             ownedListings: serialize(ownedListings.map(mapListing)),
             stakedNFTs: serialize(stakedNFTs),
@@ -607,45 +588,44 @@ router.get('/wallets/:address/tokens', async (req: Request, res: Response) => {
 router.get('/wallets/:address/portfolio', strictRateLimiter, async (req: Request, res: Response) => {
     const { address } = req.params;
     try {
-        // Owned NFTs from marketplace listings
-        const ownedListings = await prisma.listing.findMany({
-            where: { owner: address as string },
-            select: { collection: true },
-        });
+        const { ownedListings, stakedNFTs, collectionFloorPrices, totalValue } =
+            await prisma.$transaction(async (tx) => {
+                // Owned NFTs from marketplace listings
+                const ownedListings = await tx.listing.findMany({
+                    where: { owner: address as string },
+                    select: { collection: true },
+                });
 
-        // Active staked NFTs
-        const stakedNFTs = await prisma.stakedNFT.findMany({
-            where: { owner: address as string, status: 'Active' },
-            select: { collection: true },
-        });
+                // Active staked NFTs
+                const stakedNFTs = await tx.stakedNFT.findMany({
+                    where: { owner: address as string, status: 'Active' },
+                    select: { collection: true },
+                });
 
-        // Unique collections across both owned and staked
-        const collectionSet = new Set<string>();
-        ownedListings.forEach(l => collectionSet.add(l.collection));
-        stakedNFTs.forEach(s => collectionSet.add(s.collection));
+                // Unique collections across both owned and staked
+                const collectionSet = new Set<string>();
+                ownedListings.forEach(l => collectionSet.add(l.collection));
+                stakedNFTs.forEach(s => collectionSet.add(s.collection));
 
-        let totalValue = 0;
-        const collectionFloorPrices: Record<string, string> = {};
+                let totalValue = 0;
+                const collectionFloorPrices: Record<string, string> = {};
+                const collections = [...collectionSet];
 
-        // Query floor prices for all unique collections in parallel
-        const collections = [...collectionSet];
-        const floorResults = await Promise.all(
-            collections.map(collection =>
-                prisma.listing.findFirst({
-                    where: { collection, status: 'Active' },
-                    orderBy: { price: 'asc' },
-                    select: { price: true },
-                })
-            )
-        );
+                for (const collection of collections) {
+                    const floorListing = await tx.listing.findFirst({
+                        where: { collection, status: 'Active' },
+                        orderBy: { price: 'asc' },
+                        select: { price: true },
+                    });
+                    if (floorListing) {
+                        const fp = Number(floorListing.price);
+                        collectionFloorPrices[collection] = fp.toFixed(7);
+                        totalValue += fp;
+                    }
+                }
 
-        for (const [i, floorListing] of floorResults.entries()) {
-            if (floorListing) {
-                const fp = Number(floorListing.price);
-                collectionFloorPrices[collections[i]] = fp.toFixed(7);
-                totalValue += fp;
-            }
-        }
+                return { ownedListings, stakedNFTs, collectionFloorPrices, totalValue };
+            });
 
         res.json({
             totalValue: totalValue.toFixed(7),
@@ -710,7 +690,7 @@ router.get('/collections/:address/stats', async (req: Request, res: Response) =>
             return res.status(404).json({ error: 'Collection not found' });
         }
 
-        const [volumeResult, floorResult, totalItems] = await Promise.all([
+        const [volumeResult, floorResult, totalItems] = await prisma.$transaction([
             prisma.listing.aggregate({
                 _sum: { price: true },
                 where: { collection: address, status: 'Sold' },
@@ -752,5 +732,9 @@ router.get('/collections/:address', async (req: Request, res: Response) => {
         res.status(500).json({ error: 'Failed to fetch collection' });
     }
 });
+
+// The app mounts this router at /api; preserve the position routes above.
+router.use('/lending', lendingRoutes);
+router.use(lendingRoutes);
 
 export default router;

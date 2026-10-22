@@ -33,6 +33,8 @@ pub enum Error {
     EditionAlreadyRegistered = 10,
     InvalidSignature = 11,
     MaxSupplyReached = 12,
+    InvalidAmount = 13,
+    AmountTooLarge = 14,
 }
 
 // ─── Data types ───────────────────────────────────────────────────────────────
@@ -131,6 +133,10 @@ impl LazyMint1155 {
         signature: BytesN<64>,
     ) -> Result<(), Error> {
         Self::extend_instance_ttl(&env);
+        if amount == 0 {
+            return Err(Error::InvalidAmount);
+        }
+        let amount_i128 = i128::try_from(amount).map_err(|_| Error::AmountTooLarge)?;
         buyer.require_auth();
 
         // 1. Expiry
@@ -176,8 +182,8 @@ impl LazyMint1155 {
         if voucher.price_per_unit > 0 {
             let total_price = voucher
                 .price_per_unit
-                .checked_mul(amount as i128)
-                .unwrap_or(i128::MAX);
+                .checked_mul(amount_i128)
+                .ok_or(Error::AmountTooLarge)?;
             let creator: Address = env.storage().instance().get(&DataKey::Creator).unwrap();
             TokenClient::new(&env, &voucher.currency).transfer(&buyer, &creator, &total_price);
         }

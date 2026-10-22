@@ -28,6 +28,11 @@ export function TopUpCollateralModal({
 }: TopUpCollateralModalProps) {
   const { addCollateral, isAddingCollateral, error } = useAddCollateral(borrowerPublicKey);
   const [amount, setAmount] = useState("");
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const parsedAmount = Number(amount);
+  const isAmountValid =
+    amount.trim() !== "" && Number.isFinite(parsedAmount) && parsedAmount > 0;
   
   const currentDebtUsd = useMemo(() => {
     if (!debt) return 0n;
@@ -60,21 +65,40 @@ export function TopUpCollateralModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!amount || isNaN(Number(amount))) return;
-    
+    setSubmitError(null);
+
+    if (!isAmountValid) {
+      setSubmitError("Enter an amount greater than zero");
+      return;
+    }
+
     // convert amount to the 7-decimal fixed-point expected by the contract
-    const addedAmount = BigInt(Math.floor(Number(amount) * 10_000_000));
-    
-    const success = await addCollateral({
-      positionId: debt.positionId,
-      amount: addedAmount,
-      collateralCurrency: debt.collateralCurrency,
-      borrowerPublicKey: borrowerPublicKey || undefined,
-    });
-    
-    if (success) {
-      setAmount("");
-      onClose();
+    let addedAmount: bigint;
+    try {
+      addedAmount = BigInt(Math.floor(parsedAmount * 10_000_000));
+    } catch {
+      setSubmitError("Enter a valid amount");
+      return;
+    }
+
+    try {
+      const success = await addCollateral({
+        positionId: debt.positionId,
+        amount: addedAmount,
+        collateralCurrency: debt.collateralCurrency,
+        borrowerPublicKey: borrowerPublicKey || undefined,
+      });
+
+      if (success) {
+        setAmount("");
+        onClose();
+      }
+    } catch (err) {
+      // The hook already surfaces a readable message; this is the last
+      // resort so the modal can never leave an unhandled rejection.
+      setSubmitError(
+        err instanceof Error ? err.message : "Failed to add collateral"
+      );
     }
   };
 
@@ -99,9 +123,12 @@ export function TopUpCollateralModal({
 
         <div className="p-6">
           <form onSubmit={handleSubmit} className="space-y-6">
-            {error && (
-              <div className="rounded-xl bg-red-50 p-4 text-sm text-red-600">
-                {error}
+            {(error || submitError) && (
+              <div
+                data-testid="topup-error"
+                className="rounded-xl bg-red-50 p-4 text-sm text-red-600"
+              >
+                {submitError ?? error}
               </div>
             )}
             
@@ -149,7 +176,7 @@ export function TopUpCollateralModal({
 
             <button
               type="submit"
-              disabled={isAddingCollateral || !amount}
+              disabled={isAddingCollateral || !isAmountValid}
               className="flex w-full items-center justify-center gap-2 rounded-2xl bg-mint-500 py-4 font-bold text-white shadow-lg shadow-mint-500/20 hover:bg-mint-600 transition-all disabled:opacity-50"
             >
               {isAddingCollateral ? (

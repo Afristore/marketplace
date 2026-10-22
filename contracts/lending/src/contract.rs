@@ -429,4 +429,22 @@ impl LendingContract {
             result.borrower_rem,
         );
     }
+
+    /// Return the current collateral health factor for a position, in basis points.
+    pub fn health_factor(env: Env, position_id: u64) -> i128 {
+        extend_instance_ttl(&env);
+        let position = get_position(&env, position_id);
+        let config = get_config(&env);
+        let oracle_price =
+            oracle::get_price(&env, &config.oracle_address, &position.collateral_currency);
+        let collateral_value_usd = (position.collateral_amount * oracle_price) / 10_000_000;
+        let owed_usd =
+            position.declared_price_usd + accrued_interest_usd(&position, env.ledger().timestamp());
+
+        if owed_usd > 0 {
+            collateral_value_usd * 10_000 / owed_usd
+        } else {
+            10_000
+        }
+    }
 }

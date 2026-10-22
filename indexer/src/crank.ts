@@ -160,18 +160,24 @@ function calculateHealthFactor(collateralValue: number, loanAmount: number): num
 
 async function updatePositionHealthFactors() {
   try {
-    const positions = await prisma.lendingPosition.findMany({
-      where: { status: 'Active' },
-    });
-
-    const config = await prisma.lendingConfig.findUnique({
-      where: { id: 1 },
+    // Snapshot active positions + config atomically so the health pass
+    // cannot race with mid-cycle config/position mutations.
+    const { positions, config } = await prisma.$transaction(async (tx) => {
+      const positions = await tx.lendingPosition.findMany({
+        where: { status: 'Active' },
+      });
+      const config = await tx.lendingConfig.findUnique({
+        where: { id: 1 },
+      });
+      return { positions, config };
     });
 
     if (!config) {
       log.warn('LendingConfig not found; skipping health factor update');
       return;
     }
+
+    const updates: Array<{ positionId: bigint; healthFactor: string; belowThreshold: boolean }> = [];
 
     for (const position of positions) {
       const collateralPrice = await fetchOraclePrice(position.nftContract);
@@ -183,18 +189,32 @@ async function updatePositionHealthFactors() {
       const collateralValue = collateralPrice * Number(position.collateralAmount);
       const healthFactor = calculateHealthFactor(collateralValue, Number(position.declaredPriceUsd));
 
-      await prisma.lendingPosition.update({
-        where: { positionId: position.positionId },
-        data: {
-          healthFactor: healthFactor.toString(),
-        },
+      updates.push({
+        positionId: position.positionId,
+        healthFactor: healthFactor.toString(),
+        belowThreshold: healthFactor < config.minLiqThresholdBps / 10000,
       });
+    }
 
-      if (healthFactor < config.minLiqThresholdBps / 10000) {
-        log.warn('Position below liquidation threshold', {
-          positionId: position.positionId,
-          healthFactor,
-        });
+    if (updates.length > 0) {
+      // Apply all health-factor writes atomically so a mid-loop failure
+      // cannot leave only a subset of positions updated.
+      await prisma.$transaction(
+        updates.map((u) =>
+          prisma.lendingPosition.update({
+            where: { positionId: u.positionId },
+            data: { healthFactor: u.healthFactor },
+          }),
+        ),
+      );
+
+      for (const u of updates) {
+        if (u.belowThreshold) {
+          log.warn('Position below liquidation threshold', {
+            positionId: u.positionId,
+            healthFactor: Number(u.healthFactor),
+          });
+        }
       }
     }
   } catch (err) {

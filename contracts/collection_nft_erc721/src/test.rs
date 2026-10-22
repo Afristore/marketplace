@@ -434,6 +434,61 @@ fn operator_can_approve_on_behalf_of_owner() {
     assert_eq!(client.get_approved(&id), Some(charlie));
 }
 
+#[test]
+fn revoked_operator_cannot_transfer_from_until_reapproved() {
+    let (env, client, _, _) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let operator = Address::generate(&env);
+
+    let first = client.mint(&alice, &String::from_str(&env, "uri-0"));
+    let second = client.mint(&alice, &String::from_str(&env, "uri-1"));
+
+    client.set_approval_for_all(&alice, &operator, &true);
+    client.transfer_from(&operator, &alice, &bob, &first);
+    assert_eq!(client.owner_of(&first), bob);
+
+    client.set_approval_for_all(&alice, &operator, &false);
+    assert!(!client.is_approved_for_all(&alice, &operator));
+
+    // Revocation takes effect immediately and the failed call changes nothing.
+    let result = client.try_transfer_from(&operator, &alice, &bob, &second);
+    assert_eq!(result, Err(Ok(Error::NotApproved)));
+    assert_eq!(client.owner_of(&second), alice);
+    assert_eq!(client.balance_of(&alice), 1);
+    assert_eq!(client.balance_of(&bob), 1);
+
+    client.set_approval_for_all(&alice, &operator, &true);
+    client.transfer_from(&operator, &alice, &bob, &second);
+    assert_eq!(client.owner_of(&second), bob);
+}
+
+#[test]
+fn operator_revocation_is_scoped_to_the_revoking_owner() {
+    let (env, client, _, _) = setup();
+    let alice = Address::generate(&env);
+    let carol = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let operator = Address::generate(&env);
+
+    let alice_token = client.mint(&alice, &String::from_str(&env, "uri-0"));
+    let carol_token = client.mint(&carol, &String::from_str(&env, "uri-1"));
+
+    client.set_approval_for_all(&alice, &operator, &true);
+    client.set_approval_for_all(&carol, &operator, &true);
+    client.set_approval_for_all(&alice, &operator, &false);
+
+    assert!(!client.is_approved_for_all(&alice, &operator));
+    assert!(client.is_approved_for_all(&carol, &operator));
+
+    let result = client.try_transfer_from(&operator, &alice, &bob, &alice_token);
+    assert_eq!(result, Err(Ok(Error::NotApproved)));
+    assert_eq!(client.owner_of(&alice_token), alice);
+
+    client.transfer_from(&operator, &carol, &bob, &carol_token);
+    assert_eq!(client.owner_of(&carol_token), bob);
+}
+
 // ── Burns ─────────────────────────────────────────────────────────────────────
 
 #[test]

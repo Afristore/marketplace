@@ -10,12 +10,12 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useToast } from "@/components/ToastProvider";
+import { useSafeToast } from "@/hooks/useSafeToast";
 import { useTransientErrorToast } from "@/hooks/useTransientErrorToast";
 import { getLendingAdmin, whitelistCurrency } from "@/lib/lending";
 
 export function useWhitelistCurrency(adminPublicKey: string | null) {
-  const { pushToast } = useToast();
+  const pushToast = useSafeToast();
   const [isWhitelisting, setIsWhitelisting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useTransientErrorToast(error);

@@ -18,6 +18,14 @@ pub enum DataKey {
 
 pub const LEDGER_TTL_BUMP: u32 = 432_000;
 pub const LEDGER_TTL_THRESHOLD: u32 = 144_000;
+pub const INSTANCE_TTL_BUMP: u32 = 432_000;
+pub const INSTANCE_TTL_THRESHOLD: u32 = 144_000;
+
+pub fn extend_instance_ttl(env: &Env) {
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_TTL_THRESHOLD, INSTANCE_TTL_BUMP);
+}
 
 pub fn save_staked_position(env: &Env, key: &DataKey, position: &StakedPosition) {
     env.storage().persistent().set(key, position);
