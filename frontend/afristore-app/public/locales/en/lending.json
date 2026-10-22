@@ -76,6 +76,30 @@
         "ascending": "ascending",
         "descending": "descending"
       }
+    },
+    "lender": {
+      "loading": "Loading your escrowed NFTs…",
+      "empty": {
+        "title": "No Listings Yet",
+        "description": "You have not escrowed any NFTs for lending. Create a listing to start earning interest."
+      },
+      "table": {
+        "nft": "NFT",
+        "principal": "Principal",
+        "earnedInterest": "Earned Interest",
+        "currency": "Currency",
+        "status": "Status",
+        "actions": "Actions"
+      },
+      "status": {
+        "open": "Open",
+        "activeLoan": "Active Loan",
+        "repaid": "Repaid",
+        "liquidated": "Liquidated"
+      },
+      "actions": {
+        "cancelListing": "Cancel Listing"
+      }
     }
   }
 }
