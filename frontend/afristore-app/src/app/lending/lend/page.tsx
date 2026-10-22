@@ -38,6 +38,8 @@ export default function LendPage() {
   const [liquidationThresholdBps, setLiquidationThresholdBps] = useState<number>(11000); // 110%
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [submitSuccess, setSubmitSuccess] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   const handleSelectNft = (token: OwnedToken) => {
     setSelectedNft(token);
@@ -53,14 +55,28 @@ export default function LendPage() {
     if (!selectedNft || parsedAmount <= 0) return;
 
     setIsSubmitting(true);
+    setSubmitError(null);
     try {
       // Simulation of listing transaction for frontend flow
       await new Promise((resolve) => setTimeout(resolve, 50));
       setSubmitSuccess(true);
     } catch (err) {
       console.error("Listing creation failed:", err);
+      setSubmitError(
+        "Failed to create the lending listing. Please try again.",
+      );
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleConnect = async () => {
+    setConnectError(null);
+    try {
+      await connect();
+    } catch (err) {
+      console.error("Wallet connection failed:", err);
+      setConnectError("Could not connect your wallet. Please try again.");
     }
   };
 
@@ -101,7 +117,7 @@ export default function LendPage() {
             Connect your Freighter or Stellar-compatible wallet to view your owned African art NFTs and create lending listings.
           </p>
           <button
-            onClick={() => connect()}
+            onClick={handleConnect}
             disabled={isConnecting}
             className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-terracotta-500 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-brand-500/25 hover:from-brand-600 hover:to-terracotta-600 transition-all"
           >
@@ -117,6 +133,15 @@ export default function LendPage() {
               </>
             )}
           </button>
+          {connectError && (
+            <div
+              role="alert"
+              className="mt-4 inline-flex items-center gap-2 rounded-xl bg-red-500/10 border border-red-500/20 px-4 py-2 text-xs text-red-300"
+            >
+              <AlertCircle size={14} className="shrink-0 text-red-400" />
+              <span>{connectError}</span>
+            </div>
+          )}
         </div>
       ) : isLoading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -367,6 +392,16 @@ export default function LendPage() {
                     <div className="flex items-center gap-2 rounded-xl bg-mint-500/10 border border-mint-500/20 p-3 text-xs text-mint-300">
                       <CheckCircle2 size={16} className="text-mint-400 shrink-0" />
                       <span>NFT successfully listed for lending!</span>
+                    </div>
+                  )}
+
+                  {submitError && (
+                    <div
+                      role="alert"
+                      className="flex items-center gap-2 rounded-xl bg-red-500/10 border border-red-500/20 p-3 text-xs text-red-300"
+                    >
+                      <AlertCircle size={16} className="text-red-400 shrink-0" />
+                      <span>{submitError}</span>
                     </div>
                   )}
 
