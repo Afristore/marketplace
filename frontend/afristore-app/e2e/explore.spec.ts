@@ -8,6 +8,7 @@ import {
   resetE2eListingsInBrowser,
   E2eIndexerListing,
 } from "./helpers/marketplace-mocks";
+import { safeGoto, guardRoute } from "./helpers/error-handling";
 
 const INDEXER_URL = (
   process.env.NEXT_PUBLIC_INDEXER_URL ?? "http://localhost:4000"
@@ -56,26 +57,32 @@ const EXTRA_METADATA: Record<string, typeof MOCK_ARTWORK_METADATA> = {
 
 /** Serves distinct per-CID metadata for listings created with the CIDs above. */
 async function mockExtraArtworkMetadata(page: Page) {
-  await page.route("**/gateway.pinata.cloud/ipfs/**", async (route) => {
-    const cid = route.request().url().split("/ipfs/").pop() ?? "";
-    const meta = EXTRA_METADATA[cid];
-    if (!meta) return route.fallback();
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(meta),
-    });
-  });
-  await page.route("**/ipfs.io/ipfs/**", async (route) => {
-    const cid = route.request().url().split("/ipfs/").pop() ?? "";
-    const meta = EXTRA_METADATA[cid];
-    if (!meta) return route.fallback();
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(meta),
-    });
-  });
+  await page.route(
+    "**/gateway.pinata.cloud/ipfs/**",
+    guardRoute(async (route) => {
+      const cid = route.request().url().split("/ipfs/").pop() ?? "";
+      const meta = EXTRA_METADATA[cid];
+      if (!meta) return route.fallback();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(meta),
+      });
+    }),
+  );
+  await page.route(
+    "**/ipfs.io/ipfs/**",
+    guardRoute(async (route) => {
+      const cid = route.request().url().split("/ipfs/").pop() ?? "";
+      const meta = EXTRA_METADATA[cid];
+      if (!meta) return route.fallback();
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(meta),
+      });
+    }),
+  );
 }
 
 /** CID → art category map mirroring the indexer's denormalized `category` column. */
@@ -129,7 +136,7 @@ test.describe("Explore page loads first page of listings (#491)", () => {
     }
 
     const listingsRequest = waitForListingsRequest(page);
-    await page.goto("/explore");
+    await safeGoto(page, "/explore");
     await listingsRequest;
 
     await expect(page.getByText("Explore Artworks")).toBeVisible();
@@ -198,7 +205,7 @@ test.describe("Explore page sorts by Price (#494)", () => {
     page,
   }) => {
     const listingsRequest = waitForListingsRequest(page);
-    await page.goto("/explore");
+    await safeGoto(page, "/explore");
     await listingsRequest;
 
     await expect(page.getByText("Nairobi Streets")).toBeVisible({
@@ -250,7 +257,7 @@ test.describe("Explore page filters by category/kind (#495)", () => {
     page,
   }) => {
     const listingsRequest = waitForListingsRequest(page);
-    await page.goto("/explore");
+    await safeGoto(page, "/explore");
     await listingsRequest;
 
     await expect(page.getByText("Baobab Twilight")).toBeVisible({
@@ -299,7 +306,7 @@ test.describe('Explore page "Load More" appends next page of results (#492)', ()
     }
 
     const listingsRequest = waitForListingsRequest(page);
-    await page.goto("/explore");
+    await safeGoto(page, "/explore");
     await listingsRequest;
 
     await expect(
@@ -353,7 +360,7 @@ test.describe("Search bar returns relevant collection/NFT results (#496)", () =>
     page,
   }) => {
     const listingsRequest = waitForListingsRequest(page);
-    await page.goto("/explore");
+    await safeGoto(page, "/explore");
     await listingsRequest;
 
     await expect(page.getByText("Lagos Skyline")).toBeVisible({
@@ -431,7 +438,7 @@ test.describe("Explore page sorts by Newest correctly (#493)", () => {
 
   test("sorts listings by newest and oldest first", async ({ page }) => {
     const listingsRequest = waitForListingsRequest(page);
-    await page.goto("/explore");
+    await safeGoto(page, "/explore");
     await listingsRequest;
 
     // "Newest First" is the default sort — most recently created listing leads.
@@ -511,7 +518,7 @@ test.describe("Explore page applies category, price range, and status filters to
     page,
   }) => {
     const listingsRequest = waitForListingsRequest(page);
-    await page.goto("/explore");
+    await safeGoto(page, "/explore");
     await listingsRequest;
 
     await expect(page.getByText("Baobab Twilight")).toBeVisible({
@@ -616,7 +623,7 @@ test.describe("Clearing all filters on the Explore page resets the view to defau
     page,
   }) => {
     const listingsRequest = waitForListingsRequest(page);
-    await page.goto("/explore");
+    await safeGoto(page, "/explore");
     await listingsRequest;
 
     await expect(page.getByText("Baobab Twilight")).toBeVisible({

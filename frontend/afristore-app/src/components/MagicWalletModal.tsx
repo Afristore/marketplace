@@ -36,6 +36,9 @@ export function MagicWalletModal({ isOpen, onClose }: MagicWalletModalProps) {
   const [emailInput, setEmailInput] = useState("");
   const [hasStartedConnect, setHasStartedConnect] = useState(false);
   const [showEmailForm, setShowEmailForm] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const displayError = error || localError;
 
   // Close when connected
   useEffect(() => {
@@ -52,19 +55,31 @@ export function MagicWalletModal({ isOpen, onClose }: MagicWalletModalProps) {
     if (!emailInput.trim()) return;
 
     setHasStartedConnect(true);
+    setLocalError(null);
     try {
       await loginWithEmail(emailInput);
     } catch (err) {
       console.error("Email login failed:", err);
+      setLocalError(
+        err instanceof Error
+          ? err.message
+          : "Email login failed. Please try again.",
+      );
     }
   };
 
   const handlePasskeyLogin = async () => {
     setHasStartedConnect(true);
+    setLocalError(null);
     try {
       await loginWithPasskey();
     } catch (err) {
       console.error("Passkey login failed:", err);
+      setLocalError(
+        err instanceof Error
+          ? err.message
+          : "Passkey login failed. Please try again.",
+      );
     }
   };
 
@@ -232,10 +247,13 @@ export function MagicWalletModal({ isOpen, onClose }: MagicWalletModalProps) {
             )}
           </div>
 
-          {error && status !== "CONNECTED" && !isConnecting && (
-            <div className="mt-6 rounded-xl bg-terracotta-50 p-3 flex items-start gap-2 text-xs text-terracotta-700 animate-slide-up">
+          {displayError && status !== "CONNECTED" && !isConnecting && (
+            <div
+              role="alert"
+              className="mt-6 rounded-xl bg-terracotta-50 p-3 flex items-start gap-2 text-xs text-terracotta-700 animate-slide-up"
+            >
               <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
-              <p>{error}</p>
+              <p>{displayError}</p>
             </div>
           )}
         </div>

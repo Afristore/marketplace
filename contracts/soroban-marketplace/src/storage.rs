@@ -298,7 +298,11 @@ pub fn is_artist_revoked_storage(env: &Env, artist: &Address) -> bool {
 }
 
 pub fn set_treasury_storage(env: &Env, addr: &Address) {
-    env.storage().persistent().set(&DataKey::Treasury, addr);
+    let key = DataKey::Treasury;
+    env.storage().persistent().set(&key, addr);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
 }
 
 pub fn get_treasury_storage(env: &Env) -> Option<Address> {
@@ -314,9 +318,11 @@ pub fn get_treasury_storage(env: &Env) -> Option<Address> {
 }
 
 pub fn set_protocol_fee_bps_storage(env: &Env, bps: u32) {
+    let key = DataKey::ProtocolFeeBps;
+    env.storage().persistent().set(&key, &bps);
     env.storage()
         .persistent()
-        .set(&DataKey::ProtocolFeeBps, &bps);
+        .extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
 }
 
 pub fn get_protocol_fee_bps_storage(env: &Env) -> Option<u32> {

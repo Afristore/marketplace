@@ -329,6 +329,76 @@ fn test_distribute_dust_goes_to_caller() {
     assert_eq!(tc.balance(&contract_id), 0);
 }
 
+// ── Rounding remainder (dust) distribution ───────────────────────────────────
+
+/// Distributes `balance` over `split`, given as `(share_bps, expected_payout)`
+/// pairs, then asserts every exact payout, the caller's exact dust, and that
+/// the full balance is accounted for with nothing left in the contract.
+fn assert_exact_split_with_dust(balance: i128, split: &[(u32, i128)], expected_dust: i128) {
+    let (env, client, token, contract_id) = setup();
+    let caller = Address::generate(&env);
+
+    let mut beneficiaries = vec![&env];
+    let mut shares = vec![&env];
+    for &(share, _) in split {
+        beneficiaries.push_back(Address::generate(&env));
+        shares.push_back(share);
+    }
+
+    client.initialize(&token, &beneficiaries, &shares);
+    StellarAssetClient::new(&env, &token).mint(&contract_id, &balance);
+    client.distribute(&token, &caller);
+
+    let tc = TokenClient::new(&env, &token);
+    let dust = tc.balance(&caller);
+    assert_eq!(dust, expected_dust, "caller must receive exactly the dust");
+    // Flooring loses strictly less than one stroop per beneficiary.
+    assert!(dust < split.len() as i128);
+
+    let mut accounted = dust;
+    for (beneficiary, &(_, expected_payout)) in beneficiaries.iter().zip(split) {
+        let received = tc.balance(&beneficiary);
+        assert_eq!(received, expected_payout);
+        accounted += received;
+    }
+    assert_eq!(accounted, balance, "no stroops may be lost");
+    assert_eq!(tc.balance(&contract_id), 0, "contract must drain to zero");
+}
+
+#[test]
+fn test_distribute_dust_odd_balance_three_way_split() {
+    // floor(10_003 * 3_333 / 10_000) = 3_333, floor(10_003 * 3_334 / 10_000) = 3_335
+    assert_exact_split_with_dust(10_003, &[(3_333, 3_333), (3_333, 3_333), (3_334, 3_335)], 2);
+}
+
+#[test]
+fn test_distribute_dust_prime_balance_three_way_split() {
+    // floor(10_007 * 3_333 / 10_000) = 3_335, floor(10_007 * 3_334 / 10_000) = 3_336
+    assert_exact_split_with_dust(10_007, &[(3_333, 3_335), (3_333, 3_335), (3_334, 3_336)], 1);
+}
+
+#[test]
+fn test_distribute_dust_small_prime_balance_three_way_split() {
+    // floor(7 * 3_333 / 10_000) = 2, floor(7 * 3_334 / 10_000) = 2
+    assert_exact_split_with_dust(7, &[(3_333, 2), (3_333, 2), (3_334, 2)], 1);
+}
+
+#[test]
+fn test_distribute_dust_prime_balance_five_way_split() {
+    // floor(13 * 2_000 / 10_000) = 2 each; the remainder spans several stroops.
+    assert_exact_split_with_dust(
+        13,
+        &[(2_000, 2), (2_000, 2), (2_000, 2), (2_000, 2), (2_000, 2)],
+        3,
+    );
+}
+
+#[test]
+fn test_distribute_dust_balance_below_every_share_goes_to_caller() {
+    // Every share floors to zero, so the whole balance is dust.
+    assert_exact_split_with_dust(1, &[(3_333, 0), (3_333, 0), (3_334, 0)], 1);
+}
+
 // ── get_beneficiaries ────────────────────────────────────────────────
 
 #[test]

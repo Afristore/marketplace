@@ -145,3 +145,118 @@ describe("GuardButton", () => {
     expect(screen.getByRole("button")).toBeDisabled();
   });
 });
+
+// ── GuardButton async error handling ──────────────────────────────────────────
+
+describe("GuardButton — async error handling", () => {
+  let consoleErrorSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    mockWalletContext.isConnected = true;
+    mockWalletContext.isWrongNetwork = false;
+    jest.clearAllMocks();
+    consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("awaits an async onAction and shows nothing on success", async () => {
+    const onAction = jest.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(<GuardButton onAction={onAction}>Buy Now</GuardButton>);
+
+    await user.click(screen.getByRole("button", { name: /buy now/i }));
+
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("catches a rejected async onAction and shows the error", async () => {
+    const onAction = jest.fn().mockRejectedValue(new Error("Network down"));
+    const user = userEvent.setup();
+    render(<GuardButton onAction={onAction}>Buy Now</GuardButton>);
+
+    await user.click(screen.getByRole("button", { name: /buy now/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Network down");
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "GuardButton action failed:",
+      expect.any(Error),
+    );
+    // The button stays usable after a failure.
+    expect(screen.getByRole("button", { name: /buy now/i })).toBeEnabled();
+  });
+
+  it("catches an onAction that throws synchronously", async () => {
+    const onAction = jest.fn(() => {
+      throw new Error("Sync failure");
+    });
+    const user = userEvent.setup();
+    render(<GuardButton onAction={onAction}>Buy Now</GuardButton>);
+
+    await user.click(screen.getByRole("button", { name: /buy now/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Sync failure");
+  });
+
+  it("uses a generic message for non-Error rejections", async () => {
+    const onAction = jest.fn().mockRejectedValue({ code: 500 });
+    const user = userEvent.setup();
+    render(<GuardButton onAction={onAction}>Buy Now</GuardButton>);
+
+    await user.click(screen.getByRole("button", { name: /buy now/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Something went wrong. Please try again.",
+    );
+  });
+
+  it("maps Soroban contract errors to a readable message", async () => {
+    const onAction = jest
+      .fn()
+      .mockRejectedValue(new Error("HostError: Error(Contract, #11)"));
+    const user = userEvent.setup();
+    render(<GuardButton onAction={onAction}>Bid</GuardButton>);
+
+    await user.click(screen.getByRole("button", { name: /bid/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your bid is too low for this auction. (code 11)",
+    );
+  });
+
+  it("clears the error when a retry succeeds", async () => {
+    const onAction = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("Temporary failure"))
+      .mockResolvedValueOnce(undefined);
+    const user = userEvent.setup();
+    render(<GuardButton onAction={onAction}>Buy Now</GuardButton>);
+    const button = screen.getByRole("button", { name: /buy now/i });
+
+    await user.click(button);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Temporary failure",
+    );
+
+    await user.click(button);
+    await waitFor(() =>
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+    );
+    expect(onAction).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not run a failing onAction while disconnected", async () => {
+    mockWalletContext.isConnected = false;
+    const onAction = jest.fn().mockRejectedValue(new Error("should not run"));
+    const user = userEvent.setup();
+    render(<GuardButton onAction={onAction}>Buy Now</GuardButton>);
+
+    await user.click(screen.getByRole("button", { name: /buy now/i }));
+
+    expect(onAction).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByTestId("connect-modal")).toBeInTheDocument();
+  });
+});

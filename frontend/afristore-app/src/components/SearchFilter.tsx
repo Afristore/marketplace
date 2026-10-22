@@ -1,11 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import {
   Search,
   SlidersHorizontal,
   ArrowUpDown,
   X,
   Filter,
+  AlertCircle,
 } from "lucide-react";
 import { ART_CATEGORIES } from "./ListingForm";
 
@@ -31,7 +33,7 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
 
 interface SearchFilterProps {
   filters: Filters;
-  onFilterChange: (filters: Partial<Filters>) => void;
+  onFilterChange: (filters: Partial<Filters>) => void | Promise<void>;
   showFilters: boolean;
   setShowFilters: (show: boolean) => void;
   totalResults: number;
@@ -44,8 +46,38 @@ export function SearchFilter({
   setShowFilters,
   totalResults,
 }: SearchFilterProps) {
-  const clearFilters = () => {
-    onFilterChange({
+  const [error, setError] = useState<string | null>(null);
+
+  const handleFilterChange = async (newFilters: Partial<Filters>) => {
+    setError(null);
+    try {
+      await onFilterChange(newFilters);
+    } catch (err: unknown) {
+      console.error("Filter change failed:", err);
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Failed to apply filter. Please try again.";
+      setError(message);
+    }
+  };
+
+  const handleToggleFilters = () => {
+    setError(null);
+    try {
+      setShowFilters(!showFilters);
+    } catch (err: unknown) {
+      console.error("Toggle filters failed:", err);
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Failed to toggle filters. Please try again.";
+      setError(message);
+    }
+  };
+
+  const clearFilters = async () => {
+    await handleFilterChange({
       search: "",
       status: "All",
       category: "All",
@@ -74,14 +106,14 @@ export function SearchFilter({
               type="text"
               placeholder="Search by title, artist, or description..."
               value={filters.search}
-              onChange={(e) => onFilterChange({ search: e.target.value })}
+              onChange={(e) => handleFilterChange({ search: e.target.value })}
               className="w-full rounded-2xl border border-gray-200 bg-gray-50 py-3 pl-12 pr-4 text-sm text-gray-900 placeholder:text-gray-400 focus:border-brand-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-brand-500/10 transition-all shadow-sm"
             />
           </div>
 
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setShowFilters(!showFilters)}
+              onClick={handleToggleFilters}
               className={`flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-semibold transition-all ${
                 showFilters || hasActiveFilters
                   ? "border-brand-500 bg-brand-50 text-brand-600 shadow-sm"
@@ -106,7 +138,7 @@ export function SearchFilter({
               <select
                 value={filters.sort}
                 onChange={(e) =>
-                  onFilterChange({ sort: e.target.value as SortOption })
+                  handleFilterChange({ sort: e.target.value as SortOption })
                 }
                 className="appearance-none rounded-xl border border-gray-200 bg-gray-50 py-3 pl-12 pr-10 text-sm font-semibold text-gray-700 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/10 cursor-pointer shadow-sm transition-all"
               >
@@ -119,6 +151,26 @@ export function SearchFilter({
             </div>
           </div>
         </div>
+
+        {error && (
+          <div
+            role="alert"
+            className="mt-3 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-xs text-red-700 animate-slide-up"
+          >
+            <div className="flex items-center gap-2">
+              <AlertCircle size={14} className="flex-shrink-0 text-red-500" />
+              <span>{error}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="ml-2 text-red-500 hover:text-red-700 transition-colors"
+              aria-label="Dismiss error"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
         <div
           className={`overflow-hidden transition-all duration-300 ease-in-out ${
@@ -134,7 +186,7 @@ export function SearchFilter({
                 {STATUS_FILTERS.map((status) => (
                   <button
                     key={status}
-                    onClick={() => onFilterChange({ status })}
+                    onClick={() => handleFilterChange({ status })}
                     className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${
                       filters.status === status
                         ? "bg-brand-500 text-white shadow-md shadow-brand-500/20"
@@ -153,7 +205,7 @@ export function SearchFilter({
               </label>
               <select
                 value={filters.category}
-                onChange={(e) => onFilterChange({ category: e.target.value })}
+                onChange={(e) => handleFilterChange({ category: e.target.value })}
                 className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
               >
                 <option value="All">All Categories</option>
@@ -174,7 +226,7 @@ export function SearchFilter({
                   type="number"
                   placeholder="Min"
                   value={filters.minPrice}
-                  onChange={(e) => onFilterChange({ minPrice: e.target.value })}
+                  onChange={(e) => handleFilterChange({ minPrice: e.target.value })}
                   className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                 />
                 <span className="text-gray-400">—</span>
@@ -182,7 +234,7 @@ export function SearchFilter({
                   type="number"
                   placeholder="Max"
                   value={filters.maxPrice}
-                  onChange={(e) => onFilterChange({ maxPrice: e.target.value })}
+                  onChange={(e) => handleFilterChange({ maxPrice: e.target.value })}
                   className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                 />
               </div>

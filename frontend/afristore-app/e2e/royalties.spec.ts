@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { mockFreighter, TEST_PUBLIC_KEY } from "./freighter-mock";
+import { safeGoto } from "./helpers/error-handling";
 
 test.describe("Royalties Splitter", () => {
   test.beforeEach(async ({ page }) => {
@@ -8,7 +9,7 @@ test.describe("Royalties Splitter", () => {
 
   test("total split percentages strictly enforced to 100%", async ({ page }) => {
     // Navigate to the splitter page
-    await page.goto("/dashboard/splitter");
+    await safeGoto(page, "/dashboard/splitter");
 
     // Wait for page to load and wallet to connect
     const shortKey = `${TEST_PUBLIC_KEY.slice(0, 4)}…${TEST_PUBLIC_KEY.slice(-4)}`;
@@ -110,7 +111,7 @@ test.describe("Royalties Splitter", () => {
   });
 
   test("shows error when percentages do not add up to 100%", async ({ page }) => {
-    await page.goto("/dashboard/splitter");
+    await safeGoto(page, "/dashboard/splitter");
 
     const shortKey = `${TEST_PUBLIC_KEY.slice(0, 4)}…${TEST_PUBLIC_KEY.slice(-4)}`;
     await expect(page.getByText(shortKey)).toBeVisible({ timeout: 10_000 });
@@ -135,7 +136,7 @@ test.describe("Royalties Splitter", () => {
   });
 
   test("displays total percentage indicator with correct styling", async ({ page }) => {
-    await page.goto("/dashboard/splitter");
+    await safeGoto(page, "/dashboard/splitter");
 
     const shortKey = `${TEST_PUBLIC_KEY.slice(0, 4)}…${TEST_PUBLIC_KEY.slice(-4)}`;
     await expect(page.getByText(shortKey)).toBeVisible({ timeout: 10_000 });
@@ -170,7 +171,7 @@ test.describe("Royalties Splitter", () => {
   });
 
   test("allows removing beneficiaries and recalculates total", async ({ page }) => {
-    await page.goto("/dashboard/splitter");
+    await safeGoto(page, "/dashboard/splitter");
 
     const shortKey = `${TEST_PUBLIC_KEY.slice(0, 4)}…${TEST_PUBLIC_KEY.slice(-4)}`;
     await expect(page.getByText(shortKey)).toBeVisible({ timeout: 10_000 });

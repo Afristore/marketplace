@@ -434,6 +434,61 @@ fn operator_can_approve_on_behalf_of_owner() {
     assert_eq!(client.get_approved(&id), Some(charlie));
 }
 
+#[test]
+fn revoked_operator_cannot_transfer_from_until_reapproved() {
+    let (env, client, _, _) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let operator = Address::generate(&env);
+
+    let first = client.mint(&alice, &String::from_str(&env, "uri-0"));
+    let second = client.mint(&alice, &String::from_str(&env, "uri-1"));
+
+    client.set_approval_for_all(&alice, &operator, &true);
+    client.transfer_from(&operator, &alice, &bob, &first);
+    assert_eq!(client.owner_of(&first), bob);
+
+    client.set_approval_for_all(&alice, &operator, &false);
+    assert!(!client.is_approved_for_all(&alice, &operator));
+
+    // Revocation takes effect immediately and the failed call changes nothing.
+    let result = client.try_transfer_from(&operator, &alice, &bob, &second);
+    assert_eq!(result, Err(Ok(Error::NotApproved)));
+    assert_eq!(client.owner_of(&second), alice);
+    assert_eq!(client.balance_of(&alice), 1);
+    assert_eq!(client.balance_of(&bob), 1);
+
+    client.set_approval_for_all(&alice, &operator, &true);
+    client.transfer_from(&operator, &alice, &bob, &second);
+    assert_eq!(client.owner_of(&second), bob);
+}
+
+#[test]
+fn operator_revocation_is_scoped_to_the_revoking_owner() {
+    let (env, client, _, _) = setup();
+    let alice = Address::generate(&env);
+    let carol = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let operator = Address::generate(&env);
+
+    let alice_token = client.mint(&alice, &String::from_str(&env, "uri-0"));
+    let carol_token = client.mint(&carol, &String::from_str(&env, "uri-1"));
+
+    client.set_approval_for_all(&alice, &operator, &true);
+    client.set_approval_for_all(&carol, &operator, &true);
+    client.set_approval_for_all(&alice, &operator, &false);
+
+    assert!(!client.is_approved_for_all(&alice, &operator));
+    assert!(client.is_approved_for_all(&carol, &operator));
+
+    let result = client.try_transfer_from(&operator, &alice, &bob, &alice_token);
+    assert_eq!(result, Err(Ok(Error::NotApproved)));
+    assert_eq!(client.owner_of(&alice_token), alice);
+
+    client.transfer_from(&operator, &carol, &bob, &carol_token);
+    assert_eq!(client.owner_of(&carol_token), bob);
+}
+
 // ── Burns ─────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -757,6 +812,30 @@ fn update_platform_fee_fails_without_admin_auth() {
     env.set_auths(&[]);
 
     let result = client.try_update_platform_fee(&Address::generate(&env), &500u32);
+
+    assert!(result.is_err());
+    assert_eq!(client.platform_fee(), (fee_receiver, INITIAL_FEE_BPS));
+}
+
+#[test]
+fn update_platform_fee_rejected_when_signed_by_non_admin() {
+    let env = Env::default();
+    let (client, _admin, fee_receiver) = setup_launchpad(&env);
+    let non_admin = Address::generate(&env);
+
+    // Mock authorization for non_admin instead of stored admin
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &non_admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &client.address,
+            fn_name: "update_platform_fee",
+            args: (&Address::generate(&env), 500u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    let new_receiver = Address::generate(&env);
+    let result = client.try_update_platform_fee(&new_receiver, &500u32);
 
     assert!(result.is_err());
     assert_eq!(client.platform_fee(), (fee_receiver, INITIAL_FEE_BPS));

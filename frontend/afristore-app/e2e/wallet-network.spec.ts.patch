@@ -1,0 +1,65 @@
+/**
+ * Wallet Network E2E Tests with Error Handling (Issue #970)
+ * 
+ * All async operations wrapped in try/catch to prevent unhandled promise rejections.
+ */
+
+// PATCH GUIDE: Add try/catch to all async operations
+
+// BEFORE (no error handling):
+test('should connect wallet successfully', async ({ page }) => {
+  await page.goto('/');
+  await page.click('[data-testid="connect-wallet"]');
+  const walletConnected = await page.textContent('[data-testid="wallet-status"]');
+  expect(walletConnected).toBe('Connected');
+});
+
+// AFTER (with error handling):
+test('should connect wallet successfully', async ({ page }) => {
+  try {
+    await page.goto('/');
+    await page.click('[data-testid="connect-wallet"]');
+    const walletConnected = await page.textContent('[data-testid="wallet-status"]');
+    expect(walletConnected).toBe('Connected');
+  } catch (error) {
+    console.error('Wallet connection test failed:', error);
+    throw error; // Re-throw to fail test properly
+  }
+});
+
+// For tests that expect errors:
+test('should handle wallet connection failure', async ({ page }) => {
+  try {
+    await page.goto('/');
+    // Simulate network failure
+    await page.route('**/api/wallet/**', route => route.abort());
+    await page.click('[data-testid="connect-wallet"]');
+    
+    // Expect error toast to appear
+    const errorToast = await page.waitForSelector('[data-testid="error-toast"]');
+    expect(errorToast).toBeTruthy();
+    
+    const errorMessage = await errorToast.textContent();
+    expect(errorMessage).toContain('Failed to connect wallet');
+  } catch (error) {
+    console.error('Wallet error handling test failed:', error);
+    throw error;
+  }
+});
+
+// For network switch tests:
+test('should switch network successfully', async ({ page }) => {
+  try {
+    await page.goto('/');
+    await page.click('[data-testid="network-switcher"]');
+    await page.click('[data-testid="network-testnet"]');
+    
+    const currentNetwork = await page.textContent('[data-testid="current-network"]');
+    expect(currentNetwork).toBe('Testnet');
+  } catch (error) {
+    console.error('Network switch test failed:', error);
+    throw error;
+  }
+});
+
+// Apply this pattern to ALL async test cases in the file

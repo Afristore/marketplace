@@ -18,6 +18,7 @@ import {
   ensureTokenOption,
   getDefaultSupportedToken,
 } from "@/lib/token-support";
+import { getReadableErrorMessage } from "@/lib/errors";
 import posthog from "posthog-js";
 
 export const ART_CATEGORIES = [
@@ -73,6 +74,8 @@ export function ListingForm({
   const [currentMetadata, setCurrentMetadata] =
     useState<ArtworkMetadata | null>(null);
   const [isFetchingMetadata, setIsFetchingMetadata] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [metadataError, setMetadataError] = useState<string | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const tokenOptions = listing
@@ -88,6 +91,7 @@ export function ListingForm({
   useEffect(() => {
     if (listing) {
       setIsFetchingMetadata(true);
+      setMetadataError(null);
       fetchMetadata(listing.metadata_cid)
         .then((meta) => {
           setCurrentMetadata(meta);
@@ -98,6 +102,11 @@ export function ListingForm({
             amount: 1,
             tokenAddress: listing.token,
           });
+        })
+        .catch((err: unknown) => {
+          setMetadataError(
+            getReadableErrorMessage(err, "Failed to load artwork metadata"),
+          );
         })
         .finally(() => setIsFetchingMetadata(false));
     }
@@ -118,39 +127,51 @@ export function ListingForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSubmitError(null);
 
-    if (isEdit && listing && currentMetadata) {
-      const success = await update({
-        listingId: listing.listing_id,
-        originalTokenAddress: listing.token,
-        ...form,
-        title: "",
-        description: "",
-        artistName: "",
-        year: "",
-        category: "",
-        currentMetadata,
-      });
-      if (success) {
-        setSuccessId(listing.listing_id);
-        onSuccess?.(listing.listing_id);
-      }
-    } else if (!isEdit) {
-      const id = await create({ ...form });
-      if (id !== null) {
-        setSuccessId(id);
-        posthog.capture("Listing Created", {
-          listing_id: id,
-          price_xlm: form.price,
+    try {
+      if (isEdit && listing && currentMetadata) {
+        const success = await update({
+          listingId: listing.listing_id,
+          originalTokenAddress: listing.token,
+          ...form,
+          title: "",
+          description: "",
+          artistName: "",
+          year: "",
+          category: "",
+          currentMetadata,
         });
-        onSuccess?.(id);
+        if (success) {
+          setSuccessId(listing.listing_id);
+          onSuccess?.(listing.listing_id);
+        }
+      } else if (!isEdit) {
+        const id = await create({ ...form });
+        if (id !== null) {
+          setSuccessId(id);
+          posthog.capture("Listing Created", {
+            listing_id: id,
+            price_xlm: form.price,
+          });
+          onSuccess?.(id);
+        }
       }
+    } catch (err: unknown) {
+      setSubmitError(
+        getReadableErrorMessage(
+          err,
+          isEdit ? "Failed to update listing" : "Failed to create listing",
+        ),
+      );
     }
   };
 
   const isLoading = isCreating || isUpdating || isFetchingMetadata;
   const progress = isEdit ? updateProgress : createProgress;
-  const error = isEdit ? updateError : createError;
+  const error = isEdit
+    ? (updateError || submitError || metadataError)
+    : (createError || submitError);
 
   if (successId !== null) {
     return (

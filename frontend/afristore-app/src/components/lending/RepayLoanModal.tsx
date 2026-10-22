@@ -104,10 +104,16 @@ export function RepayLoanModal({
   if (!isOpen || !position) return null;
 
   const handleRepay = async () => {
-    const ok = await returnNFT(position.id);
-    if (ok) {
-      setSuccess(true);
-      onSuccess?.();
+    try {
+      const ok = await returnNFT(position.id);
+      if (ok) {
+        setSuccess(true);
+        onSuccess?.();
+      }
+    } catch {
+      // `useReturnNFT` already converts failures into an error state and a
+      // toast; catching here guarantees the modal can never leak an
+      // unhandled promise rejection.
     }
   };
 

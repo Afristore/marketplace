@@ -109,59 +109,64 @@ export async function deployRoyaltySplitter(
   deployerPublicKey: string,
   recipients: SplitterRecipient[],
 ): Promise<string> {
-  if (isE2eMockChain()) {
-    return e2eMockDeployRoyaltySplitter(deployerPublicKey, recipients);
+  try {
+    if (isE2eMockChain()) {
+      return e2eMockDeployRoyaltySplitter(deployerPublicKey, recipients);
+    }
+
+    const wasmHashHex = config.splitterWasmHash;
+    if (!wasmHashHex) {
+      throw new Error(
+        "Royalty Splitter WASM hash not configured. Set NEXT_PUBLIC_SPLITTER_WASM_HASH.",
+      );
+    }
+
+    const wasmHash = Buffer.from(wasmHashHex, "hex");
+    if (wasmHash.length !== 32) {
+      throw new Error("Invalid WASM hash length — expected 32 bytes.");
+    }
+
+    const salt = randomSalt();
+    const rpc = getRpc();
+    const deployerAddress = new Address(deployerPublicKey);
+
+    const account = await rpc.getAccount(deployerPublicKey);
+
+    const createContractArgs = new xdr.CreateContractArgs({
+      contractIdPreimage: xdr.ContractIdPreimage.contractIdPreimageFromAddress(
+        new xdr.ContractIdPreimageFromAddress({
+          address: deployerAddress.toScAddress(),
+          salt,
+        }),
+      ),
+      executable: xdr.ContractExecutable.contractExecutableWasm(wasmHash),
+    });
+
+    const deployFunc = xdr.HostFunction.hostFunctionTypeCreateContract(createContractArgs);
+
+    const deployTx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: getNetworkPassphrase(),
+    })
+      .addOperation(
+        Operation.invokeHostFunction({
+          func: deployFunc,
+          auth: [],
+        }),
+      )
+      .setTimeout(30)
+      .build();
+
+    const deployResult = await submitAndPoll(deployTx, rpc);
+    const contractAddress = extractContractAddress(deployResult);
+
+    await initializeSplitter(deployerPublicKey, contractAddress, recipients, rpc);
+
+    return contractAddress;
+  } catch (error) {
+    console.error("Failed to deploy royalty splitter:", error);
+    throw error instanceof Error ? error : new Error(String(error));
   }
-
-  const wasmHashHex = config.splitterWasmHash;
-  if (!wasmHashHex) {
-    throw new Error(
-      "Royalty Splitter WASM hash not configured. Set NEXT_PUBLIC_SPLITTER_WASM_HASH.",
-    );
-  }
-
-  const wasmHash = Buffer.from(wasmHashHex, "hex");
-  if (wasmHash.length !== 32) {
-    throw new Error("Invalid WASM hash length — expected 32 bytes.");
-  }
-
-  const salt = randomSalt();
-  const rpc = getRpc();
-  const deployerAddress = new Address(deployerPublicKey);
-
-  const account = await rpc.getAccount(deployerPublicKey);
-
-  const createContractArgs = new xdr.CreateContractArgs({
-    contractIdPreimage: xdr.ContractIdPreimage.contractIdPreimageFromAddress(
-      new xdr.ContractIdPreimageFromAddress({
-        address: deployerAddress.toScAddress(),
-        salt,
-      }),
-    ),
-    executable: xdr.ContractExecutable.contractExecutableWasm(wasmHash),
-  });
-
-  const deployFunc = xdr.HostFunction.hostFunctionTypeCreateContract(createContractArgs);
-
-  const deployTx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: getNetworkPassphrase(),
-  })
-    .addOperation(
-      Operation.invokeHostFunction({
-        func: deployFunc,
-        auth: [],
-      }),
-    )
-    .setTimeout(30)
-    .build();
-
-  const deployResult = await submitAndPoll(deployTx, rpc);
-  const contractAddress = extractContractAddress(deployResult);
-
-  await initializeSplitter(deployerPublicKey, contractAddress, recipients, rpc);
-
-  return contractAddress;
 }
 
 async function initializeSplitter(
@@ -199,38 +204,43 @@ async function initializeSplitter(
 export async function getSplitterRecipients(
   contractId: string,
 ): Promise<SplitterRecipient[]> {
-  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
-  const contract = new Contract(contractId);
-  const rpc = getRpc();
-  const account = await rpc.getAccount(DUMMY_KEY);
+  try {
+    const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+    const contract = new Contract(contractId);
+    const rpc = getRpc();
+    const account = await rpc.getAccount(DUMMY_KEY);
 
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: getNetworkPassphrase(),
-  })
-    .addOperation(contract.call("get_recipients"))
-    .setTimeout(30)
-    .build();
+    const tx = new TransactionBuilder(account, {
+      fee: BASE_FEE,
+      networkPassphrase: getNetworkPassphrase(),
+    })
+      .addOperation(contract.call("get_recipients"))
+      .setTimeout(30)
+      .build();
 
-  const simResult = await rpc.simulateTransaction(tx);
+    const simResult = await rpc.simulateTransaction(tx);
 
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
-    throw new Error("Unable to fetch splitter recipients.");
+    if (SorobanRpc.Api.isSimulationError(simResult)) {
+      throw new Error("Unable to fetch splitter recipients.");
+    }
+
+    const retVal = (
+      simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
+    ).result?.retval;
+    if (!retVal) throw new Error("No return value.");
+
+    const native = scValToNative(retVal) as any[];
+    return native.map((obj: any) => ({
+      address:
+        obj.address instanceof Address
+          ? obj.address.toString()
+          : String(obj.address),
+      percentage: Number(obj.percentage),
+    }));
+  } catch (error) {
+    console.error("Failed to fetch splitter recipients:", error);
+    throw error instanceof Error ? error : new Error(String(error));
   }
-
-  const retVal = (
-    simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
-  ).result?.retval;
-  if (!retVal) throw new Error("No return value.");
-
-  const native = scValToNative(retVal) as any[];
-  return native.map((obj: any) => ({
-    address:
-      obj.address instanceof Address
-        ? obj.address.toString()
-        : String(obj.address),
-    percentage: Number(obj.percentage),
-  }));
 }
 
 export async function getPendingBalance(

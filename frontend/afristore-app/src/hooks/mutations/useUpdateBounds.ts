@@ -10,7 +10,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useToast } from "@/components/ToastProvider";
+import { useSafeToast } from "@/hooks/useSafeToast";
 import { useTransientErrorToast } from "@/hooks/useTransientErrorToast";
 import { getLendingAdmin, updateBounds } from "@/lib/lending";
 import type { LendingBounds } from "@/lib/lending";
@@ -75,7 +75,7 @@ export function validateBounds(bounds: UpdateBoundsInput): BoundsValidation {
 }
 
 export function useUpdateBounds(adminPublicKey: string | null) {
-  const { pushToast } = useToast();
+  const pushToast = useSafeToast();
   const [isUpdating, setIsUpdating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useTransientErrorToast(error);

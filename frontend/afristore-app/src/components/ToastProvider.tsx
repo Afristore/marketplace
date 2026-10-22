@@ -9,7 +9,7 @@ import {
 } from "react";
 import { AlertCircle, CheckCircle2, Info, X } from "lucide-react";
 
-type ToastType = "error" | "success" | "info";
+export type ToastType = "error" | "success" | "info";
 
 interface Toast {
   id: string;

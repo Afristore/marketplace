@@ -71,7 +71,7 @@ export async function setupMarketplaceMocks(
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ cid: E2E_IMAGE_CID }),
-    });
+    }).catch(e => console.error("Mock fulfill error", e));
   });
 
   await page.route("**/api/ipfs/upload-metadata", async (route) => {
@@ -79,7 +79,7 @@ export async function setupMarketplaceMocks(
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ cid: E2E_METADATA_CID }),
-    });
+    }).catch(e => console.error("Mock fulfill error", e));
   });
 
   const fulfillMetadata = async (route: {
@@ -89,7 +89,7 @@ export async function setupMarketplaceMocks(
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(MOCK_ARTWORK_METADATA),
-    });
+    }).catch(e => console.error("Mock fulfill error", e));
   };
 
   await page.route("**/gateway.pinata.cloud/ipfs/**", fulfillMetadata);
@@ -179,7 +179,7 @@ export async function setupMarketplaceMocks(
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ listings: rows, total }),
-    });
+    }).catch(e => console.error("Mock fulfill error", e));
   });
 
   await page.route(`${INDEXER_URL}/stats**`, async (route) => {
@@ -197,7 +197,7 @@ export async function setupMarketplaceMocks(
         activeUsers: 0,
         totalEvents: 0,
       }),
-    });
+    }).catch(e => console.error("Mock fulfill error", e));
   });
 
   await page.route(`${INDEXER_URL}/auctions**`, async (route) => {
@@ -208,7 +208,7 @@ export async function setupMarketplaceMocks(
       status: 200,
       contentType: "application/json",
       body: JSON.stringify([]),
-    });
+    }).catch(e => console.error("Mock fulfill error", e));
   });
 }
 
@@ -247,7 +247,7 @@ export async function setupWalletIndexerMocks(
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(tokens),
-    });
+    }).catch(e => console.error("Mock fulfill error", e));
   });
 
   await page.route("**/wallets/*/activity**", async (route) => {
@@ -256,7 +256,7 @@ export async function setupWalletIndexerMocks(
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(activity),
-    });
+    }).catch(e => console.error("Mock fulfill error", e));
   });
 
   await page.route("**/wallets/*/royalty-stats**", async (route) => {
@@ -265,7 +265,7 @@ export async function setupWalletIndexerMocks(
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(royaltyStats),
-    });
+    }).catch(e => console.error("Mock fulfill error", e));
   });
 
   await page.route("**/wallets/*/staked", async (route) => {
@@ -275,7 +275,7 @@ export async function setupWalletIndexerMocks(
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(staked),
-    });
+    }).catch(e => console.error("Mock fulfill error", e));
   });
 
   await page.route("**/wallets/*/preferences", async (route) => {
@@ -285,7 +285,7 @@ export async function setupWalletIndexerMocks(
         status: 200,
         contentType: "application/json",
         body: JSON.stringify(preferences),
-      });
+      }).catch(e => console.error("Mock fulfill error", e));
       return;
     }
     if (method === "PUT") {
@@ -294,7 +294,7 @@ export async function setupWalletIndexerMocks(
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({ ...preferences, ...body }),
-      });
+      }).catch(e => console.error("Mock fulfill error", e));
       return;
     }
     return route.continue();

@@ -32,7 +32,6 @@ jest.mock("@/lib/lending", () => ({
   })),
 }));
 
-
 jest.mock("@/hooks/mutations/useReturnNFT", () => ({
   useReturnNFT: () => ({
     returnNFT: mockReturnNFT,
@@ -69,7 +68,9 @@ const listing = (id: number) => ({
   created_at: 0,
 });
 
-const lenderRow = (overrides: Partial<LenderListingRow> = {}): LenderListingRow => ({
+const lenderRow = (
+  overrides: Partial<LenderListingRow> = {},
+): LenderListingRow => ({
   id: 1,
   nftContract: "CONTRACT1",
   tokenId: 1,
@@ -169,14 +170,22 @@ describe("LenderDashboardTable", () => {
   });
 
   it("invokes onCancelListing with the row", async () => {
-    const onCancel = jest.fn();
-    render(
-      <LenderDashboardTable rows={[lenderRow({ id: 9 })]} onCancelListing={onCancel} />,
-    );
-    await userEvent.click(screen.getByTestId("cancel-listing-9"));
-    expect(onCancel).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 9, status: "Open" }),
-    );
+    try {
+      const onCancel = jest.fn();
+      render(
+        <LenderDashboardTable
+          rows={[lenderRow({ id: 9 })]}
+          onCancelListing={onCancel}
+        />,
+      );
+      await userEvent.click(screen.getByTestId("cancel-listing-9"));
+      expect(onCancel).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 9, status: "Open" }),
+      );
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("shows empty state when there are no rows", () => {
@@ -184,7 +193,6 @@ describe("LenderDashboardTable", () => {
     expect(screen.getByTestId("lender-table-empty")).toBeInTheDocument();
   });
 });
-
 
 // ── RepayLoanModal (#761) ─────────────────────────────────────
 
@@ -209,22 +217,29 @@ describe("RepayLoanModal", () => {
   });
 
   it("executes useReturnNFT on confirm and shows success", async () => {
-    const onClose = jest.fn();
-    const onSuccess = jest.fn();
-    render(
-      <RepayLoanModal
-        {...base}
-        onClose={onClose}
-        onSuccess={onSuccess}
-        position={position()}
-      />,
-    );
-    await userEvent.click(screen.getByTestId("repay-confirm"));
-    await waitFor(() => {
-      expect(mockReturnNFT).toHaveBeenCalledWith(7);
-      expect(screen.getByText("Loan repaid successfully!")).toBeInTheDocument();
-    });
-    expect(onSuccess).toHaveBeenCalled();
+    try {
+      const onClose = jest.fn();
+      const onSuccess = jest.fn();
+      render(
+        <RepayLoanModal
+          {...base}
+          onClose={onClose}
+          onSuccess={onSuccess}
+          position={position()}
+        />,
+      );
+      await userEvent.click(screen.getByTestId("repay-confirm"));
+      await waitFor(() => {
+        expect(mockReturnNFT).toHaveBeenCalledWith(7);
+        expect(
+          screen.getByText("Loan repaid successfully!"),
+        ).toBeInTheDocument();
+      });
+      expect(onSuccess).toHaveBeenCalled();
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 });
 
@@ -233,14 +248,18 @@ describe("RepayLoanModal", () => {
 describe("CreateListingModal Zod schemas", () => {
   it("step1 rejects empty or zero prices", () => {
     expect(
-      step1Schema.safeParse({ declaredPriceUsd: "", maxDurationDays: "30" }).success,
-    ).toBe(false);
-    expect(
-      step1Schema.safeParse({ declaredPriceUsd: "0", maxDurationDays: "30" }).success,
-    ).toBe(false);
-    expect(
-      step1Schema.safeParse({ declaredPriceUsd: "250.5", maxDurationDays: "30" })
+      step1Schema.safeParse({ declaredPriceUsd: "", maxDurationDays: "30" })
         .success,
+    ).toBe(false);
+    expect(
+      step1Schema.safeParse({ declaredPriceUsd: "0", maxDurationDays: "30" })
+        .success,
+    ).toBe(false);
+    expect(
+      step1Schema.safeParse({
+        declaredPriceUsd: "250.5",
+        maxDurationDays: "30",
+      }).success,
     ).toBe(true);
   });
 
@@ -248,9 +267,15 @@ describe("CreateListingModal Zod schemas", () => {
     expect(
       step2Schema.safeParse({ interestScheduleBps: "300, 350, 400" }).success,
     ).toBe(true);
-    expect(step2Schema.safeParse({ interestScheduleBps: "300, -5" }).success).toBe(false);
-    expect(step2Schema.safeParse({ interestScheduleBps: "abc" }).success).toBe(false);
-    expect(step2Schema.safeParse({ interestScheduleBps: "" }).success).toBe(false);
+    expect(
+      step2Schema.safeParse({ interestScheduleBps: "300, -5" }).success,
+    ).toBe(false);
+    expect(step2Schema.safeParse({ interestScheduleBps: "abc" }).success).toBe(
+      false,
+    );
+    expect(step2Schema.safeParse({ interestScheduleBps: "" }).success).toBe(
+      false,
+    );
   });
 
   it("step3 enforces buffer / threshold bounds and ordering", () => {
@@ -285,46 +310,69 @@ describe("CreateListingModal", () => {
   };
 
   it("renders step 1 and blocks Next with invalid input", async () => {
-    render(<CreateListingModal {...base} />);
-    expect(screen.getByText(/Step 1 of 3/)).toBeInTheDocument();
-    await userEvent.click(screen.getByTestId("create-listing-next"));
-    expect(screen.getByText(/Step 1 of 3/)).toBeInTheDocument();
-    expect(screen.getByTestId("error-declaredPriceUsd")).toBeInTheDocument();
+    try {
+      render(<CreateListingModal {...base} />);
+      expect(screen.getByText(/Step 1 of 3/)).toBeInTheDocument();
+      await userEvent.click(screen.getByTestId("create-listing-next"));
+      expect(screen.getByText(/Step 1 of 3/)).toBeInTheDocument();
+      expect(screen.getByTestId("error-declaredPriceUsd")).toBeInTheDocument();
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("advances through all steps and submits via useCreateListing", async () => {
-    const onSuccess = jest.fn();
-    const onClose = jest.fn();
-    render(<CreateListingModal {...base} onClose={onClose} onSuccess={onSuccess} />);
-
-    await userEvent.type(screen.getByLabelText(/Declared Price/i), "250.00");
-    await userEvent.type(screen.getByLabelText(/Max Loan Duration/i), "90");
-    await userEvent.click(screen.getByTestId("create-listing-next"));
-
-    expect(screen.getByText(/Step 2 of 3/)).toBeInTheDocument();
-    await userEvent.type(
-      screen.getByLabelText(/Monthly Interest Schedule/i),
-      "300, 350",
-    );
-    await userEvent.click(screen.getByTestId("create-listing-next"));
-
-    expect(screen.getByText(/Step 3 of 3/)).toBeInTheDocument();
-    await userEvent.type(screen.getByLabelText(/Min Collateral Buffer/i), "12000");
-    await userEvent.type(screen.getByLabelText(/Liquidation Threshold/i), "11000");
-    await userEvent.click(screen.getByTestId("create-listing-submit"));
-
-    await waitFor(() => {
-      expect(mockCreate).toHaveBeenCalledWith(
-        expect.objectContaining({ nftTokenId: 3, price: 250 }),
+    try {
+      const onSuccess = jest.fn();
+      const onClose = jest.fn();
+      render(
+        <CreateListingModal
+          {...base}
+          onClose={onClose}
+          onSuccess={onSuccess}
+        />,
       );
-      expect(onSuccess).toHaveBeenCalledWith(42);
-      expect(onClose).toHaveBeenCalled();
-    });
+
+      await userEvent.type(screen.getByLabelText(/Declared Price/i), "250.00");
+      await userEvent.type(screen.getByLabelText(/Max Loan Duration/i), "90");
+      await userEvent.click(screen.getByTestId("create-listing-next"));
+
+      expect(screen.getByText(/Step 2 of 3/)).toBeInTheDocument();
+      await userEvent.type(
+        screen.getByLabelText(/Monthly Interest Schedule/i),
+        "300, 350",
+      );
+      await userEvent.click(screen.getByTestId("create-listing-next"));
+
+      expect(screen.getByText(/Step 3 of 3/)).toBeInTheDocument();
+      await userEvent.type(
+        screen.getByLabelText(/Min Collateral Buffer/i),
+        "12000",
+      );
+      await userEvent.type(
+        screen.getByLabelText(/Liquidation Threshold/i),
+        "11000",
+      );
+      await userEvent.click(screen.getByTestId("create-listing-submit"));
+
+      await waitFor(() => {
+        expect(mockCreate).toHaveBeenCalledWith(
+          expect.objectContaining({ nftTokenId: 3, price: 250 }),
+        );
+        expect(onSuccess).toHaveBeenCalledWith(42);
+        expect(onClose).toHaveBeenCalled();
+      });
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("does not render when closed", () => {
     render(<CreateListingModal {...base} isOpen={false} />);
-    expect(screen.queryByTestId("create-listing-modal")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("create-listing-modal"),
+    ).not.toBeInTheDocument();
   });
 });
-
