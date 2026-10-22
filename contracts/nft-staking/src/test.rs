@@ -1760,7 +1760,22 @@ fn test_unstake_erc1155_fails_for_different_user() {
 /// the escrowed tokens (the reward accrual runs without moving reward tokens).
 #[test]
 fn test_unstake_erc1155_after_time_passes_still_returns_tokens() {
-    let (env, staking, user, collection, _admin) = setup_erc1155();
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let collection = env.register_contract(None, mock_erc1155::MockErc1155);
+
+    // Rewards are paid out on unstake, so the pool needs a real, funded
+    // reward token.
+    let reward_token = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
+    let staking_id = env.register_contract(None, crate::NftStaking);
+    let staking = NftStakingClient::new(&env, &staking_id);
+    staking.init(&admin, &collection, &reward_token, &1_000_000i128);
+    StellarAssetClient::new(&env, &reward_token).mint(&staking_id, &1_000_000_000_000_i128);
 
     env.ledger().set_timestamp(1000);
     mint_erc1155(&env, &collection, &user, 0, 10);
