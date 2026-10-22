@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { X, Loader2 } from "lucide-react";
 import { useUpdateBounds, validateBounds } from "@/hooks/mutations/useUpdateBounds";
+import { useSafeToast } from "@/hooks/useSafeToast";
 
 interface AdminConfigModalProps {
   isOpen: boolean;
@@ -16,6 +17,7 @@ export function AdminConfigModal({
   adminPublicKey,
 }: AdminConfigModalProps) {
   const { update, isUpdating, error } = useUpdateBounds(adminPublicKey);
+  const pushToast = useSafeToast();
   
   const [minBufferBps, setMinBufferBps] = useState("1000");
   const [maxBufferBps, setMaxBufferBps] = useState("3000");
@@ -40,12 +42,17 @@ export function AdminConfigModal({
     const validation = validateBounds(bounds);
     if (!validation.valid) {
       setLocalError(validation.error);
+      pushToast(validation.error, "error");
       return;
     }
     
     const success = await update(bounds);
     if (success) {
+      pushToast("Protocol bounds updated successfully", "success");
       onClose();
+    } else if (error) {
+      setLocalError(error);
+      pushToast(error, "error");
     }
   };
 
