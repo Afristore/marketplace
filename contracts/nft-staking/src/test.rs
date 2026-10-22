@@ -1462,12 +1462,17 @@ fn setup_erc1155() -> (Env, NftStakingClient<'static>, Address, Address, Address
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let collection = env.register_contract(None, mock_erc1155::MockErc1155);
-    let reward_token = Address::generate(&env);
+    // Rewards are paid out on unstake, so the pool needs a real, funded
+    // reward token.
+    let reward_token = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
 
     let staking_id = env.register_contract(None, crate::NftStaking);
     let staking = NftStakingClient::new(&env, &staking_id);
 
     staking.init(&admin, &collection, &reward_token, &1_000_000i128);
+    StellarAssetClient::new(&env, &reward_token).mint(&staking_id, &1_000_000_000_000_i128);
 
     (env, staking, user, collection, admin)
 }
