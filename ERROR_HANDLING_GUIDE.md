@@ -6,6 +6,7 @@
 - #1003: AdminConfigModal.tsx error handling
 - #1004: LenderDashboardTable.tsx i18n support
 - #1009: lendingHooks.test.tsx error handling + lending UI error states
+- #1038: useAdmin.test.tsx error handling
 
 ## Error Handling Pattern (Issues #970, #1002, #1003)
 
