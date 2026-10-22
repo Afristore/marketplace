@@ -19,6 +19,7 @@ import {
   Wallet,
 } from "lucide-react";
 import clsx from "clsx";
+import { useTranslation } from "react-i18next";
 import {
   calculateAccruedInterest,
   calculateHealthFactor,
@@ -44,6 +45,8 @@ export interface BorrowerDebt {
   elapsedMonths: number;
   /** Liquidation threshold in bps, e.g. 11000 = 110%. */
   liquidationThresholdBps: number;
+  /** Indexed oracle health factor; null means no quote is available yet. */
+  healthFactorBps?: bigint | null;
 }
 
 export type HealthFactorSortOrder = "asc" | "desc";
@@ -58,7 +61,7 @@ interface BorrowerDashboardTableProps {
 interface DerivedRow {
   debt: BorrowerDebt;
   currentDebtUsd: bigint;
-  healthFactorBps: bigint;
+  healthFactorBps: bigint | null;
 }
 
 function formatUsd(value: bigint): string {
@@ -71,15 +74,19 @@ function formatUsd(value: bigint): string {
   return `$${sign}${wholeStr}.${centsStr}`;
 }
 
-function formatHealthFactor(hf: bigint): string {
+function formatHealthFactor(hf: bigint | null): string {
+  if (hf === null) return "—";
   if (hf >= MAX_HEALTH_FACTOR_BPS) return "\u2014"; // em dash, no debt
   const whole = hf / 100n;
   const frac = (hf % 100n).toString().padStart(2, "0");
   return `${whole}.${frac}%`;
 }
 
-function healthFactorTone(hf: bigint, liquidationThresholdBps: number): string {
-  if (hf >= MAX_HEALTH_FACTOR_BPS) {
+function healthFactorTone(
+  hf: bigint | null,
+  liquidationThresholdBps: number,
+): string {
+  if (hf === null || hf >= MAX_HEALTH_FACTOR_BPS) {
     return "bg-white/5 text-white/50 ring-1 ring-white/10";
   }
   if (hf <= BigInt(liquidationThresholdBps)) {
@@ -97,6 +104,7 @@ export function BorrowerDashboardTable({
   onRepay,
   isLoading = false,
 }: BorrowerDashboardTableProps) {
+  const { t } = useTranslation();
   const [sortOrder, setSortOrder] = useState<HealthFactorSortOrder>("asc");
   const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set());
 
@@ -121,15 +129,20 @@ export function BorrowerDashboardTable({
         principal,
       );
       const currentDebtUsd = principal + accrued;
-      const healthFactorBps = calculateHealthFactor(
-        toBigInt(debt.collateralUsdValue, "collateralUsdValue"),
-        currentDebtUsd,
-      );
+      const healthFactorBps =
+        debt.healthFactorBps !== undefined
+          ? debt.healthFactorBps
+          : calculateHealthFactor(
+              toBigInt(debt.collateralUsdValue, "collateralUsdValue"),
+              currentDebtUsd,
+            );
       return { debt, currentDebtUsd, healthFactorBps };
     });
 
     return derived.sort((a, b) => {
-      const diff = a.healthFactorBps - b.healthFactorBps;
+      const diff =
+        (a.healthFactorBps ?? MAX_HEALTH_FACTOR_BPS) -
+        (b.healthFactorBps ?? MAX_HEALTH_FACTOR_BPS);
       return sortOrder === "asc" ? Number(diff) : Number(-diff);
     });
   }, [debts, sortOrder]);
@@ -142,7 +155,9 @@ export function BorrowerDashboardTable({
     return (
       <div className="flex items-center justify-center gap-3 py-16 text-white/50">
         <Loader2 size={20} className="animate-spin" />
-        <span className="text-sm">Loading your active debts…</span>
+        <span className="text-sm">
+          {t("lending.borrower.loading", "Loading your active debts…")}
+        </span>
       </div>
     );
   }
@@ -153,10 +168,14 @@ export function BorrowerDashboardTable({
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-mint-500/10 text-mint-400 mb-4 ring-1 ring-mint-500/20">
           <Coins size={32} />
         </div>
-        <h3 className="text-lg font-bold text-white mb-2">No Active Debts</h3>
+        <h3 className="text-lg font-bold text-white mb-2">
+          {t("lending.borrower.empty.title", "No Active Debts")}
+        </h3>
         <p className="text-sm text-white/50 max-w-md mx-auto">
-          You do not have any open borrow positions. Browse lending listings to
-          borrow against your NFTs.
+          {t(
+            "lending.borrower.empty.description",
+            "You do not have any open borrow positions. Browse lending listings to borrow against your NFTs.",
+          )}
         </p>
       </div>
     );
@@ -165,19 +184,32 @@ export function BorrowerDashboardTable({
   return (
     <div className="overflow-hidden rounded-3xl bg-midnight-900/60 border border-white/5 backdrop-blur-xl">
       <div className="overflow-x-auto">
-        <table data-testid="borrower-debts-table" className="w-full min-w-[720px] text-left text-sm">
+        <table
+          data-testid="borrower-debts-table"
+          className="w-full min-w-[720px] text-left text-sm"
+        >
           <thead>
             <tr className="border-b border-white/10 text-[11px] uppercase tracking-wider text-white/40">
-              <th className="px-5 py-4 font-bold">Position</th>
-              <th className="px-5 py-4 font-bold">Current Debt</th>
+              <th className="px-5 py-4 font-bold">
+                {t("lending.borrower.table.position", "Position")}
+              </th>
+              <th className="px-5 py-4 font-bold">
+                {t("lending.borrower.table.currentDebt", "Current Debt")}
+              </th>
               <th className="px-5 py-4 font-bold">
                 <button
                   type="button"
                   onClick={toggleSort}
-                  aria-label={`Sort by health factor (currently ${sortOrder === "asc" ? "ascending" : "descending"})`}
+                  aria-label={t("lending.borrower.aria.sortByHealthFactor", {
+                    order:
+                      sortOrder === "asc"
+                        ? t("lending.borrower.aria.ascending", "ascending")
+                        : t("lending.borrower.aria.descending", "descending"),
+                    defaultValue: `Sort by health factor (currently ${sortOrder === "asc" ? "ascending" : "descending"})`,
+                  })}
                   className="group inline-flex items-center gap-1.5 text-white/40 hover:text-white transition-colors"
                 >
-                  Health Factor
+                  {t("lending.borrower.table.healthFactor", "Health Factor")}
                   {sortOrder === "asc" ? (
                     <ArrowUpDown size={13} className="text-brand-400" />
                   ) : (
@@ -185,8 +217,12 @@ export function BorrowerDashboardTable({
                   )}
                 </button>
               </th>
-              <th className="px-5 py-4 text-right font-bold">Collateral</th>
-              <th className="px-5 py-4 text-right font-bold">Actions</th>
+              <th className="px-5 py-4 text-right font-bold">
+                {t("lending.borrower.table.collateral", "Collateral")}
+              </th>
+              <th className="px-5 py-4 text-right font-bold">
+                {t("lending.borrower.table.actions", "Actions")}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -215,7 +251,7 @@ export function BorrowerDashboardTable({
 interface FragmentRowProps {
   debt: BorrowerDebt;
   currentDebtUsd: bigint;
-  healthFactorBps: bigint;
+  healthFactorBps: bigint | null;
   expanded: boolean;
   onToggleExpand: () => void;
   onTopUp?: () => void;
@@ -231,6 +267,8 @@ function FragmentRow({
   onTopUp,
   onRepay,
 }: FragmentRowProps) {
+  const { t } = useTranslation();
+
   return (
     <>
       <tr
@@ -247,11 +285,20 @@ function FragmentRow({
             </div>
             <div className="min-w-0">
               <p className="font-bold text-white truncate">
-                {debt.nftName ?? `Position #${debt.positionId}`}
+                {debt.nftName ??
+                  t("lending.borrower.positionNumber", {
+                    id: debt.positionId,
+                    defaultValue: `Position #${debt.positionId}`,
+                  })}
               </p>
               <p className="font-mono text-[11px] text-white/40">
                 #{debt.positionId}
-                {debt.tokenId !== undefined ? ` · Token #${debt.tokenId}` : ""}
+                {debt.tokenId !== undefined
+                  ? ` · ${t("lending.borrower.tokenNumber", {
+                      id: debt.tokenId,
+                      defaultValue: `Token #${debt.tokenId}`,
+                    })}`
+                  : ""}
               </p>
             </div>
           </div>
@@ -276,7 +323,8 @@ function FragmentRow({
 
         <td className="px-5 py-4 text-right">
           <span className="font-mono text-xs text-white/60">
-            {debt.collateralCurrency.slice(0, 6)}…{debt.collateralCurrency.slice(-4)}
+            {debt.collateralCurrency.slice(0, 6)}…
+            {debt.collateralCurrency.slice(-4)}
           </span>
         </td>
 
@@ -290,7 +338,7 @@ function FragmentRow({
               className="inline-flex items-center gap-1.5 rounded-xl bg-mint-500/10 border border-mint-500/25 px-3 py-1.5 text-xs font-bold text-mint-300 hover:bg-mint-500/20 transition-all disabled:cursor-not-allowed disabled:opacity-40"
             >
               <HandCoins size={14} />
-              Top Up
+              {t("lending.borrower.actions.topUp", "Top Up")}
             </button>
             <button
               type="button"
@@ -300,34 +348,49 @@ function FragmentRow({
               className="inline-flex items-center gap-1.5 rounded-xl bg-white/5 border border-white/10 px-3 py-1.5 text-xs font-bold text-white/80 hover:bg-white/10 hover:text-white transition-all disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Wallet size={14} />
-              Repay
+              {t("lending.borrower.actions.repay", "Repay")}
             </button>
             <button
               type="button"
               data-testid={`manage-${debt.positionId}`}
               onClick={onToggleExpand}
               aria-expanded={expanded}
-              aria-label={`Manage position ${debt.positionId}`}
+              aria-label={t("lending.borrower.aria.managePosition", {
+                id: debt.positionId,
+                defaultValue: `Manage position ${debt.positionId}`,
+              })}
               className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-brand-500 to-terracotta-500 px-3 py-1.5 text-xs font-bold text-white shadow-lg shadow-brand-500/20 hover:opacity-95 transition-all"
             >
-              Manage
+              {t("lending.borrower.actions.manage", "Manage")}
             </button>
           </div>
         </td>
       </tr>
 
       {expanded && (
-        <tr data-testid={`manage-detail-${debt.positionId}`} className="bg-midnight-950/40">
+        <tr
+          data-testid={`manage-detail-${debt.positionId}`}
+          className="bg-midnight-950/40"
+        >
           <td colSpan={5} className="px-5 py-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
               <div className="rounded-2xl bg-white/[0.02] border border-white/5 p-3">
-                <p className="text-white/40 mb-1">Principal</p>
+                <p className="text-white/40 mb-1">
+                  {t("lending.borrower.details.principal", "Principal")}
+                </p>
                 <p className="font-mono text-white font-semibold">
-                  {formatUsd(toBigInt(debt.declaredPriceUsd, "declaredPriceUsd"))}
+                  {formatUsd(
+                    toBigInt(debt.declaredPriceUsd, "declaredPriceUsd"),
+                  )}
                 </p>
               </div>
               <div className="rounded-2xl bg-white/[0.02] border border-white/5 p-3">
-                <p className="text-white/40 mb-1">Accrued Interest</p>
+                <p className="text-white/40 mb-1">
+                  {t(
+                    "lending.borrower.details.accruedInterest",
+                    "Accrued Interest",
+                  )}
+                </p>
                 <p className="font-mono text-white font-semibold">
                   {formatUsd(
                     currentDebtUsd -
@@ -336,13 +399,23 @@ function FragmentRow({
                 </p>
               </div>
               <div className="rounded-2xl bg-white/[0.02] border border-white/5 p-3">
-                <p className="text-white/40 mb-1">Liquidation Threshold</p>
+                <p className="text-white/40 mb-1">
+                  {t(
+                    "lending.borrower.details.liquidationThreshold",
+                    "Liquidation Threshold",
+                  )}
+                </p>
                 <p className="font-mono text-white font-semibold">
                   {(debt.liquidationThresholdBps / 100).toFixed(2)}%
                 </p>
               </div>
               <div className="rounded-2xl bg-white/[0.02] border border-white/5 p-3">
-                <p className="text-white/40 mb-1">Interest Schedule</p>
+                <p className="text-white/40 mb-1">
+                  {t(
+                    "lending.borrower.details.interestSchedule",
+                    "Interest Schedule",
+                  )}
+                </p>
                 <p className="font-mono text-white font-semibold truncate">
                   {debt.interestScheduleBps.join(" · ")} bps
                 </p>

@@ -24,7 +24,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { useToast } from "@/components/ToastProvider";
+import { useSafeToast } from "@/hooks/useSafeToast";
 import { useTransientErrorToast } from "@/hooks/useTransientErrorToast";
 import { createListing } from "@/lib/contract";
 import { getReadableErrorMessage } from "@/lib/errors";
@@ -54,7 +54,7 @@ function isUserRejectedSignature(error: unknown): boolean {
 }
 
 export function useCreateListing(artistPublicKey: string | null) {
-  const { pushToast } = useToast();
+  const pushToast = useSafeToast();
   const [isCreating, setIsCreating] = useState(false);
   const [progress, setProgress] = useState<string>("");
   const [error, setError] = useState<string | null>(null);

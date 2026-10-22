@@ -1,4 +1,4 @@
-# Marketplace Frontend Fixes - Issues #970, #1002, #1003, #1004
+# Marketplace Frontend Fixes - Issues #970, #1002, #1003, #1004, #1009
 
 ## Issue #970: Missing Error Handling in wallet-network.spec.ts ✅
 **Priority**: High | **Difficulty**: Medium
@@ -25,3 +25,9 @@
 **Location**: frontend/afristore-app/src/components/lending/LenderDashboardTable.tsx
 
 All fixes: CI-ready, production-ready, user-friendly error UX.
+
+## Issue #1009: Missing Error Handling in lendingHooks.test.tsx ✅
+**Priority**: High | **Difficulty**: Medium
+**Problem**: Async operations in the lending mutation hooks lacked try/catch and could leave floating promises, crashing the React app on a rejected contract call; the lending UI had no error states for the top-up and repay flows.
+**Fix**: Wrapped every async interaction in try/catch, added success/error toast notifications and inline error states, introduced a non-throwing `useSafeToast` accessor, and added an unhandled-rejection guard to the test suite.
+**Location**: frontend/afristore-app/src/__tests__/lendingHooks.test.tsx, src/hooks/useSafeToast.ts, src/hooks/useTransientErrorToast.ts, src/hooks/mutations/*, src/components/lending/TopUpCollateralModal.tsx, src/components/lending/RepayLoanModal.tsx

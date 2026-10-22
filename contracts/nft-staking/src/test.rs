@@ -1777,6 +1777,95 @@ fn test_unstake_erc1155_after_time_passes_still_returns_tokens() {
     assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 0);
 }
 
+// ── Issue #1092: concurrent ERC-1155 stakes across distinct users ───────────
+
+/// Two users stake different quantities of the same ERC-1155 token id into
+/// the same pool at different timestamps, then unstake at different times.
+/// Positions, escrowed quantities and reward accrual must stay isolated per
+/// user, and `total_staked` must track every stake and unstake.
+#[test]
+fn test_stake_erc1155_concurrent_users_same_token_id_are_isolated() {
+    let (env, staking, user_a, collection, _admin) = setup_erc1155();
+    let user_b = Address::generate(&env);
+    let pool = staking.address.clone();
+    let rate = staking.get_reward_rate();
+    let token_id = 0u64;
+
+    mint_erc1155(&env, &collection, &user_a, token_id, 10);
+    mint_erc1155(&env, &collection, &user_b, token_id, 20);
+
+    env.ledger().set_timestamp(1_000);
+    staking.stake_erc1155(&user_a, &collection, &token_id, &4);
+    assert_eq!(staking.total_staked(), 1);
+
+    env.ledger().set_timestamp(1_500);
+    staking.stake_erc1155(&user_b, &collection, &token_id, &7);
+    assert_eq!(staking.total_staked(), 2);
+
+    // Each user owns a distinct position keyed by (user, collection, token_id).
+    let position_a = staking
+        .get_staked_position(&user_a, &collection, &token_id)
+        .unwrap();
+    let position_b = staking
+        .get_staked_position(&user_b, &collection, &token_id)
+        .unwrap();
+    assert_eq!(
+        (position_a.owner.clone(), position_a.staked_at),
+        (user_a.clone(), 1_000)
+    );
+    assert_eq!(
+        (position_b.owner.clone(), position_b.staked_at),
+        (user_b.clone(), 1_500)
+    );
+    assert_eq!(staking.get_user_stakes(&user_a).get(0), Some(position_a));
+    assert_eq!(staking.get_user_stakes(&user_a).len(), 1);
+    assert_eq!(
+        staking.get_user_stakes(&user_b).get(0),
+        Some(position_b.clone())
+    );
+    assert_eq!(staking.get_user_stakes(&user_b).len(), 1);
+
+    assert_eq!(erc1155_balance(&env, &collection, &user_a, token_id), 6);
+    assert_eq!(erc1155_balance(&env, &collection, &user_b, token_id), 13);
+    assert_eq!(erc1155_balance(&env, &collection, &pool, token_id), 11);
+
+    // Rewards accrue from each user's own stake time.
+    env.ledger().set_timestamp(2_000);
+    assert_eq!(staking.calculate_rewards(&user_a), 1_000 * rate);
+    assert_eq!(staking.calculate_rewards(&user_b), 500 * rate);
+
+    // User A unstakes first; User B's position and accrual are untouched.
+    staking.unstake_erc1155(&user_a, &collection, &token_id, &4);
+    assert_eq!(staking.total_staked(), 1);
+    assert!(staking
+        .get_staked_position(&user_a, &collection, &token_id)
+        .is_none());
+    assert_eq!(staking.get_user_stakes(&user_a).len(), 0);
+    assert_eq!(
+        staking.get_staked_position(&user_b, &collection, &token_id),
+        Some(position_b)
+    );
+    assert_eq!(staking.calculate_rewards(&user_a), 0);
+    assert_eq!(staking.calculate_rewards(&user_b), 500 * rate);
+
+    assert_eq!(erc1155_balance(&env, &collection, &user_a, token_id), 10);
+    assert_eq!(erc1155_balance(&env, &collection, &user_b, token_id), 13);
+    assert_eq!(erc1155_balance(&env, &collection, &pool, token_id), 7);
+
+    // User B unstakes at a later interval.
+    env.ledger().set_timestamp(3_200);
+    assert_eq!(staking.calculate_rewards(&user_b), 1_700 * rate);
+    staking.unstake_erc1155(&user_b, &collection, &token_id, &7);
+    assert_eq!(staking.total_staked(), 0);
+    assert!(staking
+        .get_staked_position(&user_b, &collection, &token_id)
+        .is_none());
+    assert_eq!(staking.get_user_stakes(&user_b).len(), 0);
+
+    assert_eq!(erc1155_balance(&env, &collection, &user_b, token_id), 20);
+    assert_eq!(erc1155_balance(&env, &collection, &pool, token_id), 0);
+}
+
 // ── Issue #834: get_staked_position ─────────────────────────────────────────
 
 /// Never-staked token: the getter returns `None`.

@@ -4,6 +4,15 @@
  * - useAddCollateral
  * - useReturnNFT
  * - useLiquidate
+ *
+ * Error handling contract covered here (issue #1009):
+ *   • every async interaction is awaited inside a try/catch, so a
+ *     rejected contract call can never escape as an unhandled promise
+ *     rejection and take the React tree down;
+ *   • failures are surfaced to the user as an error toast and as an
+ *     `error` state, successes as a success toast;
+ *   • a global `unhandledRejection` listener fails the suite if any
+ *     promise is ever left unhandled.
  */
 
 import React from "react";
@@ -36,29 +45,53 @@ jest.mock("@/lib/lending", () => ({
   }),
 }));
 
+// Only `useToast` is needed here: the hooks reach the toast API through
+// `useSafeToast`, which degrades to a no-op when no provider is mounted.
 jest.mock("@/components/ToastProvider", () => ({
   useToast: () => ({
     pushToast: mockPushToast,
   }),
 }));
 
-jest.mock("@/hooks/useTransientErrorToast", () => ({
-  useTransientErrorToast: jest.fn(),
-}));
-
-jest.mock("@/lib/errors", () => ({
-  getReadableErrorMessage: (err: unknown, fallback: string) =>
-    err instanceof Error ? err.message : fallback,
-}));
+// `@/lib/errors` and `@/hooks/useTransientErrorToast` are intentionally NOT
+// mocked: the real implementations are what turn a failure into the
+// readable error toast asserted below.
 
 import { useBorrowTransaction } from "@/hooks/mutations/useBorrowTransaction";
 import { useAddCollateral } from "@/hooks/mutations/useAddCollateral";
 import { useReturnNFT } from "@/hooks/mutations/useReturnNFT";
 import { useLiquidate } from "@/hooks/mutations/useLiquidate";
 
+// ── Unhandled rejection guard ────────────────────────────────────────────────
+
+const unhandledRejections: unknown[] = [];
+
+function trackUnhandledRejection(reason: unknown) {
+  unhandledRejections.push(reason);
+}
+
+beforeAll(() => {
+  process.on("unhandledRejection", trackUnhandledRejection);
+});
+
+afterAll(() => {
+  process.off("unhandledRejection", trackUnhandledRejection);
+});
+
+afterEach(async () => {
+  // Give the microtask queue a chance to surface a late rejection before
+  // the next test starts.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  unhandledRejections.length = 0;
+});
+
 describe("Lending Mutation Hooks", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  afterEach(() => {
+    expect(unhandledRejections).toEqual([]);
   });
 
   // ── 1. useBorrowTransaction ──────────────────────────────────────────────────
@@ -72,12 +105,16 @@ describe("Lending Mutation Hooks", () => {
           <div>
             <button
               onClick={async () => {
-                const r = await borrow({
-                  listingId: 1,
-                  collateralCurrency: "CTOKEN",
-                  collateralAmount: 1000,
-                });
-                setRes(r);
+                try {
+                  const r = await borrow({
+                    listingId: 1,
+                    collateralCurrency: "CTOKEN",
+                    collateralAmount: 1000,
+                  });
+                  setRes(r);
+                } catch (err) {
+                  setRes(null);
+                }
               }}
             >
               Borrow
@@ -109,12 +146,16 @@ describe("Lending Mutation Hooks", () => {
           <div>
             <button
               onClick={async () => {
-                const r = await borrow({
-                  listingId: 5,
-                  collateralCurrency: "CUSDC",
-                  collateralAmount: 150000000n,
-                });
-                setRes(r);
+                try {
+                  const r = await borrow({
+                    listingId: 5,
+                    collateralCurrency: "CUSDC",
+                    collateralAmount: 150000000n,
+                  });
+                  setRes(r);
+                } catch (err) {
+                  setRes(null);
+                }
               }}
             >
               Borrow
@@ -140,6 +181,10 @@ describe("Lending Mutation Hooks", () => {
         "CUSDC",
         150000000n
       );
+      expect(mockPushToast).toHaveBeenCalledWith(
+        expect.stringMatching(/borrowed successfully/i),
+        "success"
+      );
     });
 
     it("provides clear error message when user has insufficient balance", async () => {
@@ -154,12 +199,16 @@ describe("Lending Mutation Hooks", () => {
           <div>
             <button
               onClick={async () => {
-                const r = await borrow({
-                  listingId: 5,
-                  collateralCurrency: "CUSDC",
-                  collateralAmount: 150000000n,
-                });
-                setRes(r);
+                try {
+                  const r = await borrow({
+                    listingId: 5,
+                    collateralCurrency: "CUSDC",
+                    collateralAmount: 150000000n,
+                  });
+                  setRes(r);
+                } catch (err) {
+                  setRes(null);
+                }
               }}
             >
               Borrow
@@ -181,6 +230,44 @@ describe("Lending Mutation Hooks", () => {
         );
       });
     });
+
+    it("surfaces the failure as an error toast instead of rejecting", async () => {
+      mockBorrow.mockRejectedValueOnce(
+        new Error("Insufficient balance for collateral requirement")
+      );
+
+      function Comp() {
+        const { borrow } = useBorrowTransaction("GBORROWER");
+        return (
+          <button
+            onClick={async () => {
+              try {
+                await borrow({
+                  listingId: 5,
+                  collateralCurrency: "CUSDC",
+                  collateralAmount: 150000000n,
+                });
+              } catch {
+                // The hook converts failures into an error state + toast.
+              }
+            }}
+          >
+            Borrow
+          </button>
+        );
+      }
+
+      const user = userEvent.setup();
+      render(<Comp />);
+      await user.click(screen.getByRole("button"));
+
+      await waitFor(() => {
+        expect(mockPushToast).toHaveBeenCalledWith(
+          "Insufficient balance for collateral requirement",
+          "error"
+        );
+      });
+    });
   });
 
   // ── 2. useAddCollateral ─────────────────────────────────────────────────────
@@ -194,11 +281,15 @@ describe("Lending Mutation Hooks", () => {
           <div>
             <button
               onClick={async () => {
-                const r = await addCollateral({
-                  positionId: 1,
-                  amount: 0n,
-                });
-                setRes(r);
+                try {
+                  const r = await addCollateral({
+                    positionId: 1,
+                    amount: 0n,
+                  });
+                  setRes(r);
+                } catch {
+                  setRes(false);
+                }
               }}
             >
               Add
@@ -219,6 +310,47 @@ describe("Lending Mutation Hooks", () => {
           "Amount must be greater than zero"
         );
       });
+      expect(mockAddCollateral).not.toHaveBeenCalled();
+    });
+
+    it("rejects a non-numeric amount without throwing", async () => {
+      function Comp() {
+        const { addCollateral, error } = useAddCollateral("GBORROWER");
+        const [res, setRes] = React.useState<boolean | undefined>(undefined);
+        return (
+          <div>
+            <button
+              onClick={async () => {
+                try {
+                  const r = await addCollateral({
+                    positionId: 1,
+                    amount: "not-a-number",
+                  });
+                  setRes(r);
+                } catch {
+                  setRes(false);
+                }
+              }}
+            >
+              Add
+            </button>
+            <span data-testid="res">{String(res)}</span>
+            <span data-testid="err">{error ?? "none"}</span>
+          </div>
+        );
+      }
+
+      const user = userEvent.setup();
+      render(<Comp />);
+      await user.click(screen.getByRole("button"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("res").textContent).toBe("false");
+        expect(screen.getByTestId("err").textContent).toBe(
+          "Amount must be a valid number"
+        );
+      });
+      expect(mockAddCollateral).not.toHaveBeenCalled();
     });
 
     it("requires position_id and amount, handles token approval flow, and returns true", async () => {
@@ -231,12 +363,16 @@ describe("Lending Mutation Hooks", () => {
           <div>
             <button
               onClick={async () => {
-                const r = await addCollateral({
-                  positionId: 10,
-                  amount: 50000000n,
-                  collateralCurrency: "CUSDC",
-                });
-                setRes(r);
+                try {
+                  const r = await addCollateral({
+                    positionId: 10,
+                    amount: 50000000n,
+                    collateralCurrency: "CUSDC",
+                  });
+                  setRes(r);
+                } catch {
+                  setRes(false);
+                }
               }}
             >
               Add
@@ -261,6 +397,48 @@ describe("Lending Mutation Hooks", () => {
         50000000n,
         "CUSDC"
       );
+      expect(mockPushToast).toHaveBeenCalledWith(
+        expect.stringMatching(/collateral added/i),
+        "success"
+      );
+    });
+
+    it("surfaces a failed top-up as an error toast", async () => {
+      mockAddCollateral.mockRejectedValueOnce(
+        new Error("Insufficient balance for collateral top-up")
+      );
+
+      function Comp() {
+        const { addCollateral } = useAddCollateral("GBORROWER");
+        return (
+          <button
+            onClick={async () => {
+              try {
+                await addCollateral({
+                  positionId: 10,
+                  amount: 50000000n,
+                  collateralCurrency: "CUSDC",
+                });
+              } catch {
+                // The hook converts failures into an error state + toast.
+              }
+            }}
+          >
+            Add
+          </button>
+        );
+      }
+
+      const user = userEvent.setup();
+      render(<Comp />);
+      await user.click(screen.getByRole("button"));
+
+      await waitFor(() => {
+        expect(mockPushToast).toHaveBeenCalledWith(
+          "Insufficient balance for collateral top-up",
+          "error"
+        );
+      });
     });
   });
 
@@ -277,8 +455,12 @@ describe("Lending Mutation Hooks", () => {
           <div>
             <button
               onClick={async () => {
-                const r = await returnNFT({ positionId: 42 });
-                setRes(r);
+                try {
+                  const r = await returnNFT({ positionId: 42 });
+                  setRes(r);
+                } catch {
+                  setRes(false);
+                }
               }}
             >
               Return
@@ -298,6 +480,10 @@ describe("Lending Mutation Hooks", () => {
       });
 
       expect(mockReturnNFT).toHaveBeenCalledWith("GBORROWER", 42);
+      expect(mockPushToast).toHaveBeenCalledWith(
+        expect.stringMatching(/repaid successfully/i),
+        "success"
+      );
     });
 
     it("returns false and sets error when returnNFT fails", async () => {
@@ -312,8 +498,12 @@ describe("Lending Mutation Hooks", () => {
           <div>
             <button
               onClick={async () => {
-                const r = await returnNFT(42);
-                setRes(r);
+                try {
+                  const r = await returnNFT(42);
+                  setRes(r);
+                } catch {
+                  setRes(false);
+                }
               }}
             >
               Return
@@ -335,6 +525,45 @@ describe("Lending Mutation Hooks", () => {
         );
       });
     });
+
+    it("requires a position id", async () => {
+      function Comp() {
+        const { returnNFT, error } = useReturnNFT("GBORROWER");
+        const [res, setRes] = React.useState<boolean | undefined>(undefined);
+        return (
+          <div>
+            <button
+              onClick={async () => {
+                try {
+                  const r = await returnNFT(
+                    undefined as unknown as number
+                  );
+                  setRes(r);
+                } catch {
+                  setRes(false);
+                }
+              }}
+            >
+              Return
+            </button>
+            <span data-testid="res">{String(res)}</span>
+            <span data-testid="err">{error ?? "none"}</span>
+          </div>
+        );
+      }
+
+      const user = userEvent.setup();
+      render(<Comp />);
+      await user.click(screen.getByRole("button"));
+
+      await waitFor(() => {
+        expect(screen.getByTestId("res").textContent).toBe("false");
+        expect(screen.getByTestId("err").textContent).toBe(
+          "Position ID is required"
+        );
+      });
+      expect(mockReturnNFT).not.toHaveBeenCalled();
+    });
   });
 
   // ── 4. useLiquidate ─────────────────────────────────────────────────────────
@@ -350,8 +579,12 @@ describe("Lending Mutation Hooks", () => {
           <div>
             <button
               onClick={async () => {
-                const r = await liquidate({ positionId: 88 });
-                setRes(r !== null ? r.toString() : "null");
+                try {
+                  const r = await liquidate({ positionId: 88 });
+                  setRes(r !== null ? r.toString() : "null");
+                } catch {
+                  setRes("null");
+                }
               }}
             >
               Liquidate
@@ -390,8 +623,12 @@ describe("Lending Mutation Hooks", () => {
           <div>
             <button
               onClick={async () => {
-                const r = await liquidate(88);
-                setRes(r !== null ? r.toString() : "null");
+                try {
+                  const r = await liquidate(88);
+                  setRes(r !== null ? r.toString() : "null");
+                } catch {
+                  setRes("null");
+                }
               }}
             >
               Liquidate
@@ -410,6 +647,40 @@ describe("Lending Mutation Hooks", () => {
         expect(screen.getByTestId("res").textContent).toBe("null");
         expect(screen.getByTestId("err").textContent).toBe(
           "Position is not eligible for liquidation"
+        );
+      });
+    });
+
+    it("surfaces a failed liquidation as an error toast", async () => {
+      mockLiquidate.mockRejectedValueOnce(
+        new Error("Position is not eligible for liquidation")
+      );
+
+      function Comp() {
+        const { liquidate } = useLiquidate("GLIQUIDATOR");
+        return (
+          <button
+            onClick={async () => {
+              try {
+                await liquidate(88);
+              } catch {
+                // The hook converts failures into an error state + toast.
+              }
+            }}
+          >
+            Liquidate
+          </button>
+        );
+      }
+
+      const user = userEvent.setup();
+      render(<Comp />);
+      await user.click(screen.getByRole("button"));
+
+      await waitFor(() => {
+        expect(mockPushToast).toHaveBeenCalledWith(
+          "Position is not eligible for liquidation",
+          "error"
         );
       });
     });

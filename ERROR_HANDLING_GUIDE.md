@@ -5,6 +5,7 @@
 - #1002: CreateListingModal.tsx error handling
 - #1003: AdminConfigModal.tsx error handling
 - #1004: LenderDashboardTable.tsx i18n support
+- #1009: lendingHooks.test.tsx error handling + lending UI error states
 
 ## Error Handling Pattern (Issues #970, #1002, #1003)
 
@@ -199,3 +200,74 @@ All changes must pass:
 
 5. **frontend/afristore-app/public/locales/en/lending.json** (new)
    - Complete translation keys for lending module
+
+## Hook-Level Error Handling (Issue #1009)
+
+### Mutation hooks never leak a rejection
+
+Every `hooks/mutations/*` hook validates its inputs, awaits the
+contract call inside a `try/catch` and returns a sentinel value
+(`null` / `false`) on failure instead of rejecting:
+
+```typescript
+const executeBorrow = useCallback(
+  async (params: BorrowTransactionParams): Promise<number | null> => {
+    if (!activeKey) {
+      setError("Wallet not connected");
+      return null;
+    }
+
+    setIsBorrowing(true);
+    setError(null);
+    try {
+      const positionId = await borrow(...);
+      pushToast(`Position #${positionId} borrowed successfully`, "success");
+      return positionId;
+    } catch (err: unknown) {
+      setError(getReadableErrorMessage(err, "Failed to execute borrow transaction"));
+      return null;
+    } finally {
+      setIsBorrowing(false);
+    }
+  },
+  [borrowerPublicKey, pushToast]
+);
+```
+
+### Safe toast access
+
+`useToast()` throws when it is used outside a `ToastProvider`, which
+would unmount the whole tree. Mutation hooks use `useSafeToast()`
+instead: it calls `useToast()` inside a `try/catch` and degrades to a
+no-op when no provider is mounted, so a missing provider can never take
+the application down.
+
+```typescript
+import { useSafeToast } from "@/hooks/useSafeToast";
+
+const pushToast = useSafeToast();
+```
+
+### Components own the last line of defence
+
+UI components wrap the hook call in a `try/catch` as well, so even an
+unexpected throw renders an inline error instead of an unhandled
+promise rejection:
+
+```typescript
+try {
+  const success = await addCollateral({ ... });
+  if (success) {
+    setAmount("");
+    onClose();
+  }
+} catch (err) {
+  setSubmitError(err instanceof Error ? err.message : "Failed to add collateral");
+}
+```
+
+### Tests must not leave promises floating
+
+`src/__tests__/lendingHooks.test.tsx` awaits every interaction inside a
+`try/catch` and registers a global `unhandledRejection` listener that
+fails the suite if any promise is ever left unhandled.

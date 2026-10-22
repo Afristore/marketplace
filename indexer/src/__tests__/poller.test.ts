@@ -767,6 +767,64 @@ describe("processEvent — POSITION_LIQUIDATED", () => {
   });
 });
 
+// ── POSITION_OPENED transactional writes ─────────────────────────────────────
+
+describe("processEvent — POSITION_OPENED", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const openedData = {
+    position_id: 201,
+    listing_id: 7,
+    borrower: "GB_BORROWER",
+    lender: "GA_LENDER",
+    nft_contract: "CNFT",
+    token_id: 3,
+    declared_price_usd: "1000",
+    collateral_currency: "CCUR",
+    collateral_amount: "500",
+    interest_schedule_bps: [100],
+    liquidation_threshold_bps: 12000,
+    start_time: 1700000000,
+    max_duration_secs: 86400,
+  };
+
+  const makeTxClient = () => ({
+    lendingPosition: { upsert: vi.fn().mockResolvedValue({}) },
+    lendingListing: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
+  });
+
+  it("writes the position and marks the listing Filled inside one transaction", async () => {
+    const txClient = makeTxClient();
+    mockPrisma.$transaction.mockImplementationOnce((fn: any) => fn(txClient));
+
+    await processEvent(
+      makeEvent("POSITION_OPENED", 201n, "GB_BORROWER", openedData, 800),
+    );
+
+    expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
+    expect(txClient.lendingPosition.upsert).toHaveBeenCalledOnce();
+    expect(txClient.lendingListing.updateMany).toHaveBeenCalledWith({
+      where: { id: 7n },
+      data: { status: "Filled", updatedAtLedger: 800 },
+    });
+    expect(mockPrisma.lendingPosition.upsert).not.toHaveBeenCalled();
+  });
+
+  it("reuses the caller's transaction client instead of opening a nested one", async () => {
+    const callerTx = makeTxClient();
+
+    await processEvent(
+      makeEvent("POSITION_OPENED", 201n, "GB_BORROWER", openedData, 800),
+      callerTx,
+      true,
+    );
+
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(callerTx.lendingPosition.upsert).toHaveBeenCalledOnce();
+    expect(callerTx.lendingListing.updateMany).toHaveBeenCalledOnce();
+  });
+});
+
 // ── CURRENCY_WHITELISTED and CURRENCY_REMOVED (#710) ─────────────────────────
 
 describe("processEvent — CURRENCY_WHITELISTED & CURRENCY_REMOVED", () => {

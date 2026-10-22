@@ -10,12 +10,12 @@ app.get('/events', (req, res) => {
 });
 
 async function run() {
-    console.log("Starting request...");
+    console.log({ msg: "Starting request" });
     await new Promise<void>((resolve, reject) => {
         const req = request(app).get('/events');
         req.buffer(false);
         req.on('response', (res) => {
-            console.log("Got response:", res.status);
+            console.log({ msg: "Got response", status: res.status });
             res.on('error', () => {}); // Ignore abort error
             req.abort();
             resolve();
@@ -26,7 +26,7 @@ async function run() {
         });
         req.end();
     });
-    console.log("Finished successfully");
+    console.log({ msg: "Finished successfully" });
 }
 
 run().catch(console.error);

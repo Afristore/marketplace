@@ -111,4 +111,65 @@ describe("useWhitelistCurrency", () => {
       expect(mockPushToast).toHaveBeenCalledWith("boom", "error"),
     );
   });
+
+  describe("async error handling", () => {
+    it("resolves false and toasts when the admin lookup rejects", async () => {
+      mockGetLendingAdmin.mockRejectedValue(new Error("RPC unavailable"));
+      const { result } = renderHook(() => useWhitelistCurrency(ADMIN));
+
+      await expect(runWhitelist(result.current, CURRENCY)).resolves.toBe(false);
+      expect(mockWhitelistCurrency).not.toHaveBeenCalled();
+      await waitFor(() =>
+        expect(mockPushToast).toHaveBeenCalledWith("RPC unavailable", "error"),
+      );
+    });
+
+    it("uses a fallback message for non-Error rejections", async () => {
+      mockGetLendingAdmin.mockResolvedValue(ADMIN);
+      mockWhitelistCurrency.mockRejectedValue("tx dropped");
+      const { result } = renderHook(() => useWhitelistCurrency(ADMIN));
+
+      await expect(runWhitelist(result.current, CURRENCY)).resolves.toBe(false);
+      await waitFor(() =>
+        expect(mockPushToast).toHaveBeenCalledWith(
+          "Failed to whitelist currency",
+          "error",
+        ),
+      );
+      expect(result.current.error).toBe("Failed to whitelist currency");
+    });
+
+    it("resets isWhitelisting and exposes the error after a failure", async () => {
+      mockGetLendingAdmin.mockResolvedValue(ADMIN);
+      mockWhitelistCurrency.mockRejectedValue(new Error("simulation failed"));
+      const { result } = renderHook(() => useWhitelistCurrency(ADMIN));
+
+      await runWhitelist(result.current, CURRENCY);
+
+      expect(result.current.isWhitelisting).toBe(false);
+      expect(result.current.error).toBe("simulation failed");
+      expect(mockPushToast).not.toHaveBeenCalledWith(
+        "Collateral currency whitelisted",
+        "success",
+      );
+    });
+
+    it("clears the previous error when a retry succeeds", async () => {
+      mockGetLendingAdmin.mockResolvedValue(ADMIN);
+      mockWhitelistCurrency
+        .mockRejectedValueOnce(new Error("first attempt failed"))
+        .mockResolvedValueOnce(undefined);
+      const { result } = renderHook(() => useWhitelistCurrency(ADMIN));
+
+      await expect(runWhitelist(result.current, CURRENCY)).resolves.toBe(false);
+      expect(result.current.error).toBe("first attempt failed");
+
+      await expect(runWhitelist(result.current, CURRENCY)).resolves.toBe(true);
+      expect(result.current.error).toBeNull();
+      expect(mockPushToast).toHaveBeenCalledWith(
+        "Collateral currency whitelisted",
+        "success",
+      );
+    });
+  });
 });

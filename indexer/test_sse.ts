@@ -1,5 +1,6 @@
 import express from 'express';
 import request from 'supertest';
+import { logger } from './src/logger.js';
 
 const app = express();
 app.get('/events', (req, res) => {
@@ -10,19 +11,19 @@ app.get('/events', (req, res) => {
 });
 
 async function run() {
-    console.log("Starting request...");
+    logger.info("Starting request");
     await new Promise<void>((resolve, reject) => {
         const req = request(app).get('/events');
         req.buffer(false); // <--- Add this!
         req.on('response', (res) => {
-            console.log("Got response:", res.status);
+            logger.info("Got response", { status: res.status });
             req.abort();
             resolve();
         });
         req.on('error', (err) => reject(err));
         req.end();
     });
-    console.log("Finished successfully");
+    logger.info("Finished successfully");
 }
 
-run().catch(console.error);
+run().catch((err) => logger.error("test_sse failed", { err }));

@@ -187,6 +187,11 @@ impl MarketplaceContract {
             whitelist.push_back(token);
             env.storage().persistent().set(&key, &whitelist);
         }
+        env.storage().persistent().extend_ttl(
+            &key,
+            crate::storage::LEDGER_TTL_THRESHOLD,
+            crate::storage::LEDGER_TTL_BUMP,
+        );
     }
 
     pub fn remove_token_from_whitelist(env: Env, token: Address) {
@@ -204,14 +209,24 @@ impl MarketplaceContract {
             }
         }
         env.storage().persistent().set(&key, &new_whitelist);
+        env.storage().persistent().extend_ttl(
+            &key,
+            crate::storage::LEDGER_TTL_THRESHOLD,
+            crate::storage::LEDGER_TTL_BUMP,
+        );
     }
 
     pub fn get_token_whitelist(env: Env) -> Vec<Address> {
         let key = crate::storage::DataKey::TokenWhitelist;
-        env.storage()
-            .persistent()
-            .get::<_, Vec<Address>>(&key)
-            .unwrap_or(Vec::new(&env))
+        let whitelist = env.storage().persistent().get::<_, Vec<Address>>(&key);
+        if whitelist.is_some() {
+            env.storage().persistent().extend_ttl(
+                &key,
+                crate::storage::LEDGER_TTL_THRESHOLD,
+                crate::storage::LEDGER_TTL_BUMP,
+            );
+        }
+        whitelist.unwrap_or(Vec::new(&env))
     }
 
     // ── Listing methods ──────────────────────────────────────
@@ -1001,6 +1016,13 @@ impl MarketplaceContract {
             .persistent()
             .get::<_, Vec<Address>>(&key)
             .unwrap_or(Vec::new(env));
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(
+                &key,
+                crate::storage::LEDGER_TTL_THRESHOLD,
+                crate::storage::LEDGER_TTL_BUMP,
+            );
+        }
         if whitelist.is_empty() {
             true
         } else {

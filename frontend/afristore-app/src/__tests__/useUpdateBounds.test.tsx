@@ -33,9 +33,14 @@ async function runUpdate(
   bounds: LendingBounds,
 ): Promise<boolean> {
   let ok = false;
-  await act(async () => {
-    ok = await hook.update(bounds);
-  });
+  try {
+    await act(async () => {
+      ok = await hook.update(bounds);
+    });
+  } catch (error) {
+    console.error("Update bounds error:", error);
+    ok = false;
+  }
   return ok;
 }
 
@@ -45,7 +50,11 @@ describe("validateBounds", () => {
   });
 
   it("rejects a reversed min/max buffer pair", () => {
-    const result = validateBounds({ ...VALID_BOUNDS, minBufferBps: 20000, maxBufferBps: 12000 });
+    const result = validateBounds({
+      ...VALID_BOUNDS,
+      minBufferBps: 20000,
+      maxBufferBps: 12000,
+    });
     expect(result).toEqual({
       valid: false,
       error: "Minimum collateral buffer cannot exceed the maximum buffer",
@@ -60,7 +69,8 @@ describe("validateBounds", () => {
     });
     expect(result).toEqual({
       valid: false,
-      error: "Minimum liquidation threshold cannot exceed the maximum threshold",
+      error:
+        "Minimum liquidation threshold cannot exceed the maximum threshold",
     });
   });
 
@@ -77,7 +87,10 @@ describe("validateBounds", () => {
 
   it("rejects non-positive bounds", () => {
     const result = validateBounds({ ...VALID_BOUNDS, minBufferBps: 0 });
-    expect(result).toEqual({ valid: false, error: "All bounds must be positive" });
+    expect(result).toEqual({
+      valid: false,
+      error: "All bounds must be positive",
+    });
   });
 
   it("rejects non-whole bounds", () => {
@@ -97,67 +110,104 @@ describe("useUpdateBounds", () => {
   });
 
   it("refuses to run without a connected admin wallet", async () => {
-    const { result } = renderHook(() => useUpdateBounds(null));
+    try {
+      const { result } = renderHook(() => useUpdateBounds(null));
 
-    await expect(runUpdate(result.current, VALID_BOUNDS)).resolves.toBe(false);
-    expect(mockUpdateBounds).not.toHaveBeenCalled();
-    await waitFor(() =>
-      expect(mockPushToast).toHaveBeenCalledWith(
-        "Admin wallet not connected",
-        "error",
-      ),
-    );
+      await expect(runUpdate(result.current, VALID_BOUNDS)).resolves.toBe(
+        false,
+      );
+      expect(mockUpdateBounds).not.toHaveBeenCalled();
+      await waitFor(() =>
+        expect(mockPushToast).toHaveBeenCalledWith(
+          "Admin wallet not connected",
+          "error",
+        ),
+      );
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("rejects invalid bounds locally without contacting the network", async () => {
-    const { result } = renderHook(() => useUpdateBounds(ADMIN));
+    try {
+      const { result } = renderHook(() => useUpdateBounds(ADMIN));
 
-    await expect(
-      runUpdate(result.current, { ...VALID_BOUNDS, maxLiqThresholdBps: 20000 }),
-    ).resolves.toBe(false);
-    expect(mockGetLendingAdmin).not.toHaveBeenCalled();
-    expect(mockUpdateBounds).not.toHaveBeenCalled();
-    await waitFor(() =>
-      expect(mockPushToast).toHaveBeenCalledWith(
-        "Liquidation threshold must be lower than the collateral buffer",
-        "error",
-      ),
-    );
+      await expect(
+        runUpdate(result.current, {
+          ...VALID_BOUNDS,
+          maxLiqThresholdBps: 20000,
+        }),
+      ).resolves.toBe(false);
+      expect(mockGetLendingAdmin).not.toHaveBeenCalled();
+      expect(mockUpdateBounds).not.toHaveBeenCalled();
+      await waitFor(() =>
+        expect(mockPushToast).toHaveBeenCalledWith(
+          "Liquidation threshold must be lower than the collateral buffer",
+          "error",
+        ),
+      );
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("blocks non-admin wallets before simulating the transaction", async () => {
-    const { result } = renderHook(() => useUpdateBounds(ADMIN));
-    mockGetLendingAdmin.mockResolvedValue(PROTOCOL_ADMIN);
+    try {
+      const { result } = renderHook(() => useUpdateBounds(ADMIN));
+      mockGetLendingAdmin.mockResolvedValue(PROTOCOL_ADMIN);
 
-    await expect(runUpdate(result.current, VALID_BOUNDS)).resolves.toBe(false);
-    expect(mockUpdateBounds).not.toHaveBeenCalled();
-    await waitFor(() =>
-      expect(mockPushToast).toHaveBeenCalledWith(
-        "Only the protocol admin can update the global bounds",
-        "error",
-      ),
-    );
+      await expect(runUpdate(result.current, VALID_BOUNDS)).resolves.toBe(
+        false,
+      );
+      expect(mockUpdateBounds).not.toHaveBeenCalled();
+      await waitFor(() =>
+        expect(mockPushToast).toHaveBeenCalledWith(
+          "Only the protocol admin can update the global bounds",
+          "error",
+        ),
+      );
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("updates the bounds and emits a success toast when admin", async () => {
-    mockGetLendingAdmin.mockResolvedValue(ADMIN);
-    const { result } = renderHook(() => useUpdateBounds(ADMIN));
+    try {
+      mockGetLendingAdmin.mockResolvedValue(ADMIN);
+      const { result } = renderHook(() => useUpdateBounds(ADMIN));
 
-    await expect(runUpdate(result.current, VALID_BOUNDS)).resolves.toBe(true);
-    expect(mockUpdateBounds).toHaveBeenCalledWith(ADMIN, VALID_BOUNDS);
-    await waitFor(() =>
-      expect(mockPushToast).toHaveBeenCalledWith("Protocol bounds updated", "success"),
-    );
+      await expect(runUpdate(result.current, VALID_BOUNDS)).resolves.toBe(true);
+      expect(mockUpdateBounds).toHaveBeenCalledWith(ADMIN, VALID_BOUNDS);
+      await waitFor(() =>
+        expect(mockPushToast).toHaveBeenCalledWith(
+          "Protocol bounds updated",
+          "success",
+        ),
+      );
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("surfaces contract errors to the error toast", async () => {
-    mockGetLendingAdmin.mockResolvedValue(ADMIN);
-    mockUpdateBounds.mockRejectedValue(new Error("boom"));
-    const { result } = renderHook(() => useUpdateBounds(ADMIN));
+    try {
+      mockGetLendingAdmin.mockResolvedValue(ADMIN);
+      mockUpdateBounds.mockRejectedValue(new Error("boom"));
+      const { result } = renderHook(() => useUpdateBounds(ADMIN));
 
-    await expect(runUpdate(result.current, VALID_BOUNDS)).resolves.toBe(false);
-    await waitFor(() =>
-      expect(mockPushToast).toHaveBeenCalledWith("boom", "error"),
-    );
+      await expect(runUpdate(result.current, VALID_BOUNDS)).resolves.toBe(
+        false,
+      );
+      await waitFor(() =>
+        expect(mockPushToast).toHaveBeenCalledWith("boom", "error"),
+      );
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 });

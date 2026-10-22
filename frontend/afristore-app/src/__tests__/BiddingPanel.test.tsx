@@ -7,6 +7,8 @@ import userEvent from "@testing-library/user-event";
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
+let mockBidError: string | null = null;
+let mockFinalizeError: string | null = null;
 const mockBid = jest.fn();
 const mockFinalize = jest.fn();
 
@@ -20,14 +22,14 @@ jest.mock("@/context/WalletContext", () => ({
 }));
 
 jest.mock("@/hooks/usePlaceBid", () => ({
-  usePlaceBid: () => ({ bid: mockBid, isBidding: false, error: null }),
+  usePlaceBid: () => ({ bid: mockBid, isBidding: false, error: mockBidError }),
 }));
 
 jest.mock("@/hooks/useAuctions", () => ({
   useFinalizeAuction: () => ({
     finalize: mockFinalize,
     isFinalizing: false,
-    error: null,
+    error: mockFinalizeError,
   }),
 }));
 
@@ -78,7 +80,11 @@ function makeAuction(overrides = {}) {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("BiddingPanel", () => {
-  beforeEach(() => jest.clearAllMocks());
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockBidError = null;
+    mockFinalizeError = null;
+  });
 
   it("renders the reserve price label", () => {
     render(<BiddingPanel auction={makeAuction()} />);
@@ -91,17 +97,22 @@ describe("BiddingPanel", () => {
   });
 
   it("calls bid with correct amount when Place Bid is clicked", async () => {
-    mockBid.mockResolvedValueOnce(true);
-    const onBidPlaced = jest.fn();
-    const user = userEvent.setup();
+    try {
+      mockBid.mockResolvedValueOnce(true);
+      const onBidPlaced = jest.fn();
+      const user = userEvent.setup();
 
-    render(<BiddingPanel auction={makeAuction()} onBidPlaced={onBidPlaced} />);
-    await user.clear(screen.getByPlaceholderText(/min/i));
-    await user.type(screen.getByPlaceholderText(/min/i), "2");
-    await user.click(screen.getByRole("button", { name: /place bid/i }));
+      render(<BiddingPanel auction={makeAuction()} onBidPlaced={onBidPlaced} />);
+      await user.clear(screen.getByPlaceholderText(/min/i));
+      await user.type(screen.getByPlaceholderText(/min/i), "2");
+      await user.click(screen.getByRole("button", { name: /place bid/i }));
 
-    await waitFor(() => expect(mockBid).toHaveBeenCalledWith(1, 2));
-    await waitFor(() => expect(onBidPlaced).toHaveBeenCalled());
+      await waitFor(() => expect(mockBid).toHaveBeenCalledWith(1, 2));
+      await waitFor(() => expect(onBidPlaced).toHaveBeenCalled());
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("shows current highest bid label when one exists", () => {
@@ -126,19 +137,24 @@ describe("BiddingPanel", () => {
   });
 
   it("calls finalize when Finalize Auction is clicked", async () => {
-    mockFinalize.mockResolvedValueOnce(true);
-    const onFinalized = jest.fn();
-    const user = userEvent.setup();
+    try {
+      mockFinalize.mockResolvedValueOnce(true);
+      const onFinalized = jest.fn();
+      const user = userEvent.setup();
 
-    render(
-      <BiddingPanel
-        auction={makeAuction({ end_time: 1, creator: "GBIDDER123" })}
-        onFinalized={onFinalized}
-      />,
-    );
-    await user.click(screen.getByRole("button", { name: /finalize/i }));
-    await waitFor(() => expect(mockFinalize).toHaveBeenCalledWith(1));
-    await waitFor(() => expect(onFinalized).toHaveBeenCalled());
+      render(
+        <BiddingPanel
+          auction={makeAuction({ end_time: 1, creator: "GBIDDER123" })}
+          onFinalized={onFinalized}
+        />,
+      );
+      await user.click(screen.getByRole("button", { name: /finalize/i }));
+      await waitFor(() => expect(mockFinalize).toHaveBeenCalledWith(1));
+      await waitFor(() => expect(onFinalized).toHaveBeenCalled());
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("shows Finalized badge for completed auctions", () => {
@@ -147,88 +163,159 @@ describe("BiddingPanel", () => {
   });
 
   it("disables the 'Place Bid' button if the input is below the minimum increment", async () => {
-    const user = userEvent.setup();
+    try {
+      const user = userEvent.setup();
 
-    // Auction with reserve price of 1 XLM and no existing bids
-    render(
-      <BiddingPanel
-        auction={makeAuction({
-          reserve_price: 10_000_000n, // 1 XLM
-          highest_bid: 0n,
-        })}
-      />,
-    );
+      // Auction with reserve price of 1 XLM and no existing bids
+      render(
+        <BiddingPanel
+          auction={makeAuction({
+            reserve_price: 10_000_000n, // 1 XLM
+            highest_bid: 0n,
+          })}
+        />,
+      );
 
-    const bidInput = screen.getByPlaceholderText(/min/i);
-    const placeBidButton = screen.getByRole("button", { name: /place bid/i });
+      const bidInput = screen.getByPlaceholderText(/min/i);
+      const placeBidButton = screen.getByRole("button", { name: /place bid/i });
 
-    // Button should be disabled initially (no input)
-    expect(placeBidButton).toBeDisabled();
+      // Button should be disabled initially (no input)
+      expect(placeBidButton).toBeDisabled();
 
-    // Enter an amount below the minimum (0.5 XLM < 1 XLM reserve)
-    await user.clear(bidInput);
-    await user.type(bidInput, "0.5");
+      // Enter an amount below the minimum (0.5 XLM < 1 XLM reserve)
+      await user.clear(bidInput);
+      await user.type(bidInput, "0.5");
 
-    // Verify validation message appears
-    await waitFor(() => {
-      expect(screen.getByText(/bid must be at least/i)).toBeInTheDocument();
-    });
+      // Verify validation message appears
+      await waitFor(() => {
+        expect(screen.getByText(/bid must be at least/i)).toBeInTheDocument();
+      });
 
-    // Button should still be disabled
-    expect(placeBidButton).toBeDisabled();
+      // Button should still be disabled
+      expect(placeBidButton).toBeDisabled();
 
-    // Enter a valid amount (2 XLM > 1 XLM reserve)
-    await user.clear(bidInput);
-    await user.type(bidInput, "2");
+      // Enter a valid amount (2 XLM > 1 XLM reserve)
+      await user.clear(bidInput);
+      await user.type(bidInput, "2");
 
-    // Button should now be enabled
-    await waitFor(() => {
-      expect(placeBidButton).not.toBeDisabled();
-    });
+      // Button should now be enabled
+      await waitFor(() => {
+        expect(placeBidButton).not.toBeDisabled();
+      });
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("disables Place Bid when bid is not higher than current highest bid", async () => {
-    const user = userEvent.setup();
+    try {
+      const user = userEvent.setup();
 
-    // Auction with existing bid of 2 XLM
-    render(
-      <BiddingPanel
-        auction={makeAuction({
-          reserve_price: 10_000_000n, // 1 XLM reserve
-          highest_bid: 20_000_000n, // 2 XLM current bid
-          highest_bidder: "GBIDDER",
-        })}
-      />,
-    );
+      // Auction with existing bid of 2 XLM
+      render(
+        <BiddingPanel
+          auction={makeAuction({
+            reserve_price: 10_000_000n, // 1 XLM reserve
+            highest_bid: 20_000_000n, // 2 XLM current bid
+            highest_bidder: "GBIDDER",
+          })}
+        />,
+      );
 
-    const bidInput = screen.getByPlaceholderText(/min/i);
-    const placeBidButton = screen.getByRole("button", { name: /place bid/i });
+      const bidInput = screen.getByPlaceholderText(/min/i);
+      const placeBidButton = screen.getByRole("button", { name: /place bid/i });
 
-    // Enter amount equal to current bid (should be disabled)
-    await user.clear(bidInput);
-    await user.type(bidInput, "2");
+      // Enter amount equal to current bid (should be disabled)
+      await user.clear(bidInput);
+      await user.type(bidInput, "2");
 
-    await waitFor(() => {
-      expect(
-        screen.getByText(/bid must be higher than current bid/i),
-      ).toBeInTheDocument();
-    });
-    expect(placeBidButton).toBeDisabled();
-
-    // Enter amount below current bid (should be disabled)
-    await user.clear(bidInput);
-    await user.type(bidInput, "1.5");
-
-    await waitFor(() => {
+      await waitFor(() => {
+        expect(
+          screen.getByText(/bid must be higher than current bid/i),
+        ).toBeInTheDocument();
+      });
       expect(placeBidButton).toBeDisabled();
-    });
 
-    // Enter amount above current bid (should be enabled)
-    await user.clear(bidInput);
-    await user.type(bidInput, "3");
+      // Enter amount below current bid (should be disabled)
+      await user.clear(bidInput);
+      await user.type(bidInput, "1.5");
 
-    await waitFor(() => {
-      expect(placeBidButton).not.toBeDisabled();
-    });
+      await waitFor(() => {
+        expect(placeBidButton).toBeDisabled();
+      });
+
+      // Enter amount above current bid (should be enabled)
+      await user.clear(bidInput);
+      await user.type(bidInput, "3");
+
+      await waitFor(() => {
+        expect(placeBidButton).not.toBeDisabled();
+      });
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
+  });
+
+  it("displays an error alert and does not crash when placing a bid fails", async () => {
+    try {
+      mockBid.mockRejectedValueOnce(new Error("Network connection lost"));
+      const onBidPlaced = jest.fn();
+      const user = userEvent.setup();
+
+      render(<BiddingPanel auction={makeAuction()} onBidPlaced={onBidPlaced} />);
+      await user.clear(screen.getByPlaceholderText(/min/i));
+      await user.type(screen.getByPlaceholderText(/min/i), "2");
+      await user.click(screen.getByRole("button", { name: /place bid/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toBeInTheDocument();
+        expect(screen.getByText("Network connection lost")).toBeInTheDocument();
+      });
+      expect(onBidPlaced).not.toHaveBeenCalled();
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
+  });
+
+  it("displays an error alert and does not crash when finalize auction fails", async () => {
+    try {
+      mockFinalize.mockRejectedValueOnce(new Error("Finalize transaction rejected"));
+      const onFinalized = jest.fn();
+      const user = userEvent.setup();
+
+      render(
+        <BiddingPanel
+          auction={makeAuction({ end_time: 1, creator: "GBIDDER123" })}
+          onFinalized={onFinalized}
+        />,
+      );
+      await user.click(screen.getByRole("button", { name: /finalize/i }));
+
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toBeInTheDocument();
+        expect(screen.getByText("Finalize transaction rejected")).toBeInTheDocument();
+      });
+      expect(onFinalized).not.toHaveBeenCalled();
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
+  });
+
+  it("displays bidError from usePlaceBid hook when present", () => {
+    mockBidError = "Insufficient funds in wallet";
+    render(<BiddingPanel auction={makeAuction()} />);
+    expect(screen.getByText("Insufficient funds in wallet")).toBeInTheDocument();
+  });
+
+  it("displays finalizeError from useFinalizeAuction hook when present", () => {
+    mockFinalizeError = "Auction is not yet eligible for finalization";
+    render(<BiddingPanel auction={makeAuction()} />);
+    expect(
+      screen.getByText("Auction is not yet eligible for finalization"),
+    ).toBeInTheDocument();
   });
 });

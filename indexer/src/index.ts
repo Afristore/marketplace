@@ -6,6 +6,7 @@ import routes from './api/routes.js';
 import { startPolling } from './poller.js';
 import { rateLimiter } from './api/rate-limit-middleware.js';
 import { metricsMiddleware, handleMetrics } from './metrics.js';
+import { logger } from './logger.js';
 
 dotenv.config();
 
@@ -53,11 +54,11 @@ app.get('/health', (req: express.Request, res: express.Response) => {
 
 // Start the server
 app.listen(PORT, () => {
-    console.log(`Indexer API listening on http://localhost:${PORT}`);
-    
+    logger.info('Indexer API listening', { url: `http://localhost:${PORT}` });
+
     // Start the background polling loop
     startPolling().catch((err) => {
-        console.error('Fatal error in poller:', err);
+        logger.error('Fatal error in poller', { err });
         process.exit(1);
     });
 });

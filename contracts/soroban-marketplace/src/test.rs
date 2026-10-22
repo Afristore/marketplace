@@ -1464,6 +1464,75 @@ fn test_place_bid_refunds_previous_highest_bidder() {
     assert_eq!(auction.highest_bidder, Some(buyer3.clone()));
 }
 
+/// Four consecutive outbids across three bidders, two of whom re-enter after
+/// being refunded. After every bid, each outbid user must get back exactly
+/// their prior bid, and the contract must escrow only the current highest bid.
+#[test]
+fn test_place_bid_refunds_exact_prior_bid_across_successive_outbids() {
+    let (env, client, artist, bidder_a, token_id, contract_id, collection_id) = setup();
+    let sac = StellarAssetClient::new(&env, &token_id);
+    let bidder_b = Address::generate(&env);
+    let bidder_c = Address::generate(&env);
+    sac.mint(&bidder_b, &100_000_000_000_i128);
+    sac.mint(&bidder_c, &100_000_000_000_i128);
+
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let id = client.create_auction(
+        &artist,
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &1_000_000,
+        &3600,
+        &valid_recipients(&env, &artist),
+    );
+
+    let token = TokenClient::new(&env, &token_id);
+    let bidders = [bidder_a, bidder_b, bidder_c];
+    let initial = bidders.each_ref().map(|bidder| token.balance(bidder));
+    let escrow_base = token.balance(&contract_id);
+
+    // (bidder index, amount): an opening bid followed by four outbids, each
+    // clearing the 5% minimum increment.
+    let bids: [(usize, i128); 5] = [
+        (0, 1_000_000),
+        (1, 1_250_000),
+        (2, 1_500_000),
+        (0, 2_000_000),
+        (1, 2_600_000),
+    ];
+
+    let mut expected = initial;
+    let mut leader: Option<(usize, i128)> = None;
+
+    for (bidder, amount) in bids {
+        client.place_bid(&bidders[bidder], &id, &amount);
+
+        if let Some((outbid, prior_bid)) = leader {
+            expected[outbid] += prior_bid;
+        }
+        expected[bidder] -= amount;
+        leader = Some((bidder, amount));
+
+        for (address, balance) in bidders.iter().zip(expected) {
+            assert_eq!(token.balance(address), balance);
+        }
+        assert_eq!(token.balance(&contract_id), escrow_base + amount);
+
+        let auction = client.get_auction(&id);
+        assert_eq!(auction.highest_bid, amount);
+        assert_eq!(auction.highest_bidder, Some(bidders[bidder].clone()));
+    }
+
+    // Net effect: only the final leader is out of pocket, by exactly their bid.
+    assert_eq!(token.balance(&bidders[0]), initial[0]);
+    assert_eq!(token.balance(&bidders[1]), initial[1] - 2_600_000);
+    assert_eq!(token.balance(&bidders[2]), initial[2]);
+}
+
 // ── Offer Tests ─────────────────────────────────────────────
 
 /// Helper to create a listing and return its ID.

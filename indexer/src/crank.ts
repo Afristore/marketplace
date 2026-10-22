@@ -9,8 +9,11 @@ import {
 } from '@stellar/stellar-sdk';
 import prisma from './db.js';
 import dotenv from 'dotenv';
+import { logger } from './logger.js';
 
 dotenv.config();
+
+const log = logger.child({ component: 'crank' });
 
 const RPC_URL = process.env.STELLAR_RPC_URL || 'https://soroban-testnet.stellar.org';
 const NETWORK_PASSPHRASE =
@@ -42,7 +45,7 @@ async function ensureCrankKeypair(): Promise<Keypair> {
 
   const keypair = Keypair.random();
   const pubKey = keypair.publicKey();
-  console.log(`[Crank] No CRANK_SECRET_KEY set. Generated ephemeral keypair: ${pubKey}`);
+  log.info('No CRANK_SECRET_KEY set; generated ephemeral keypair', { publicKey: pubKey });
 
   try {
     await rpcServer.getAccount(pubKey);
@@ -57,10 +60,10 @@ async function ensureCrankKeypair(): Promise<Keypair> {
     });
     const body: any = await res.json();
     if (body?.hash) {
-      console.log(`[Crank] Funded ephemeral keypair via Friendbot (tx: ${body.hash})`);
+      log.info('Funded ephemeral keypair via Friendbot', { txHash: body.hash });
     }
   } catch (err) {
-    console.error(`[Crank] Friendbot funding failed for ${pubKey}:`, err);
+    log.error('Friendbot funding failed', { publicKey: pubKey, err });
     throw err;
   }
 
@@ -107,7 +110,7 @@ async function bumpContractTtl(contractId: string, crankKeypair: Keypair) {
     const simResult = await rpcServer.simulateTransaction(tx);
 
     if (!rpc.Api.isSimulationSuccess(simResult)) {
-      console.error(`[Crank] Simulation failed for ${contractId}`);
+      log.error('Simulation failed', { contractId });
       return;
     }
 
@@ -117,7 +120,7 @@ async function bumpContractTtl(contractId: string, crankKeypair: Keypair) {
     const submitResult = await rpcServer.sendTransaction(assembled);
 
     if (submitResult.status === 'ERROR') {
-      console.error(`[Crank] Submit error for ${contractId}:`, submitResult.errorResult);
+      log.error('Submit error', { contractId, errorResult: submitResult.errorResult });
       return;
     }
 
@@ -129,12 +132,12 @@ async function bumpContractTtl(contractId: string, crankKeypair: Keypair) {
     }
 
     if (txResult.status === rpc.Api.GetTransactionStatus.SUCCESS) {
-      console.log(`[Crank] TTL bumped for ${contractId} to ledger ${extendTo}`);
+      log.info('TTL bumped', { contractId, extendTo });
     } else {
-      console.error(`[Crank] TTL bump failed for ${contractId}:`, txResult);
+      log.error('TTL bump failed', { contractId, txResult });
     }
   } catch (err) {
-    console.error(`[Crank] Failed to bump TTL for ${contractId}:`, err);
+    log.error('Failed to bump TTL', { contractId, err });
   }
 }
 
@@ -145,7 +148,7 @@ async function fetchOraclePrice(token: string): Promise<number | null> {
     const data: any = await res.json();
     return data.price || null;
   } catch (err) {
-    console.error(`[Crank] Failed to fetch oracle price for ${token}:`, err);
+    log.error('Failed to fetch oracle price', { token, err });
     return null;
   }
 }
@@ -157,55 +160,76 @@ function calculateHealthFactor(collateralValue: number, loanAmount: number): num
 
 async function updatePositionHealthFactors() {
   try {
-    const positions = await prisma.lendingPosition.findMany({
-      where: { status: 'Active' },
-    });
-
-    const config = await prisma.lendingConfig.findUnique({
-      where: { id: 1 },
+    // Snapshot active positions + config atomically so the health pass
+    // cannot race with mid-cycle config/position mutations.
+    const { positions, config } = await prisma.$transaction(async (tx) => {
+      const positions = await tx.lendingPosition.findMany({
+        where: { status: 'Active' },
+      });
+      const config = await tx.lendingConfig.findUnique({
+        where: { id: 1 },
+      });
+      return { positions, config };
     });
 
     if (!config) {
-      console.warn('[Crank] LendingConfig not found; skipping health factor update');
+      log.warn('LendingConfig not found; skipping health factor update');
       return;
     }
+
+    const updates: Array<{ positionId: bigint; healthFactor: string; belowThreshold: boolean }> = [];
 
     for (const position of positions) {
       const collateralPrice = await fetchOraclePrice(position.nftContract);
       if (collateralPrice === null) {
-        console.warn(`[Crank] Could not fetch price for ${position.nftContract}`);
+        log.warn('Could not fetch price', { nftContract: position.nftContract });
         continue;
       }
 
       const collateralValue = collateralPrice * Number(position.collateralAmount);
       const healthFactor = calculateHealthFactor(collateralValue, Number(position.declaredPriceUsd));
 
-      await prisma.lendingPosition.update({
-        where: { positionId: position.positionId },
-        data: {
-          healthFactor: healthFactor.toString(),
-        },
+      updates.push({
+        positionId: position.positionId,
+        healthFactor: healthFactor.toString(),
+        belowThreshold: healthFactor < config.minLiqThresholdBps / 10000,
       });
+    }
 
-      if (healthFactor < config.minLiqThresholdBps / 10000) {
-        console.warn(
-          `[Crank] Position ${position.positionId} health factor ${healthFactor} below liquidation threshold`
-        );
+    if (updates.length > 0) {
+      // Apply all health-factor writes atomically so a mid-loop failure
+      // cannot leave only a subset of positions updated.
+      await prisma.$transaction(
+        updates.map((u) =>
+          prisma.lendingPosition.update({
+            where: { positionId: u.positionId },
+            data: { healthFactor: u.healthFactor },
+          }),
+        ),
+      );
+
+      for (const u of updates) {
+        if (u.belowThreshold) {
+          log.warn('Position below liquidation threshold', {
+            positionId: u.positionId,
+            healthFactor: Number(u.healthFactor),
+          });
+        }
       }
     }
   } catch (err) {
-    console.error('[Crank] Error updating health factors:', err);
+    log.error('Error updating health factors', { err });
   }
 }
 
 async function runCrank() {
-  console.log(`[Crank] Starting keep-alive bot. Interval: ${CRANK_INTERVAL_MS}ms`);
+  log.info('Starting keep-alive bot', { intervalMs: CRANK_INTERVAL_MS });
 
   const crankKeypair = await ensureCrankKeypair();
 
   while (true) {
     try {
-      console.log(`[Crank] Running TTL extension cycle...`);
+      log.info('Running TTL extension cycle');
 
       if (MARKETPLACE_CONTRACT_ID) {
         await bumpContractTtl(MARKETPLACE_CONTRACT_ID, crankKeypair);
@@ -226,7 +250,7 @@ async function runCrank() {
 
       await updatePositionHealthFactors();
     } catch (err) {
-      console.error(`[Crank] Error during crank iteration:`, err);
+      log.error('Error during crank iteration', { err });
     }
 
     await new Promise((resolve) => setTimeout(resolve, CRANK_INTERVAL_MS));
@@ -237,7 +261,7 @@ let shuttingDown = false;
 const shutdown = () => {
   if (shuttingDown) return;
   shuttingDown = true;
-  console.log('[Crank] Shutting down');
+  log.info('Shutting down');
   prisma.$disconnect().finally(() => process.exit(0));
 };
 

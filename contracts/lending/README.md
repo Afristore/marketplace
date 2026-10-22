@@ -122,7 +122,7 @@ DataKey::WhitelistedCurrency(Address)  // -> Reflector asset symbol/identifier
 | `cancel_listing(listing_id)` | Lender | Cancel open listing, return NFT to lender |
 | `borrow(listing_id, borrower, currency, amount)` | Borrower | Post collateral, receive NFT (real ownership transfer) |
 | `add_collateral(position_id, amount)` | Borrower | Top up collateral to avoid liquidation |
-| `health_factor(position_id)` | View | Returns current health in bps |
+| `health_factor(position_id)` | View | Returns collateral value divided by outstanding debt, in basis points |
 | `return_nft(position_id)` | Borrower | Return NFT, pay interest+fee, reclaim remaining collateral |
 | `liquidate(position_id)` | Permissionless | Settle under-collateralized or expired positions |
 | `admin_update_bounds(...)` | Admin | Adjust platform-wide min/max buffer & threshold |

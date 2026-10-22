@@ -24,41 +24,56 @@ export async function mockFreighter(
     networkPassphrase?: string;
   },
 ) {
-  const publicKey = overrides?.publicKey ?? TEST_PUBLIC_KEY;
-  const networkPassphrase =
-    overrides?.networkPassphrase ?? TEST_NETWORK_PASSPHRASE;
+  try {
+    const publicKey = overrides?.publicKey ?? TEST_PUBLIC_KEY;
+    const networkPassphrase =
+      overrides?.networkPassphrase ?? TEST_NETWORK_PASSPHRASE;
 
-  await page.addInitScript(
-    ({ pk, passphrase, keyStorage, passphraseStorage, installedStorage }) => {
-      sessionStorage.setItem(installedStorage, "true");
-      sessionStorage.setItem(keyStorage, pk);
-      sessionStorage.setItem(passphraseStorage, passphrase);
-    },
-    {
-      pk: publicKey,
-      passphrase: networkPassphrase,
-      keyStorage: KEY_STORAGE,
-      passphraseStorage: PASSPHRASE_STORAGE,
-      installedStorage: INSTALLED_STORAGE,
-    },
-  );
+    await page.addInitScript(
+      ({ pk, passphrase, keyStorage, passphraseStorage, installedStorage }) => {
+        sessionStorage.setItem(installedStorage, "true");
+        sessionStorage.setItem(keyStorage, pk);
+        sessionStorage.setItem(passphraseStorage, passphrase);
+      },
+      {
+        pk: publicKey,
+        passphrase: networkPassphrase,
+        keyStorage: KEY_STORAGE,
+        passphraseStorage: PASSPHRASE_STORAGE,
+        installedStorage: INSTALLED_STORAGE,
+      },
+    );
+  } catch (error) {
+    console.error("Failed to mock Freighter wallet:", error);
+    throw error;
+  }
 }
 
 export async function mockFreighterNotInstalled(page: Page) {
-  await page.addInitScript(
-    ({ keyStorage, passphraseStorage, installedStorage }) => {
-      sessionStorage.setItem(installedStorage, "false");
-      sessionStorage.removeItem(keyStorage);
-      sessionStorage.removeItem(passphraseStorage);
-    },
-    {
-      keyStorage: KEY_STORAGE,
-      passphraseStorage: PASSPHRASE_STORAGE,
-      installedStorage: INSTALLED_STORAGE,
-    },
-  );
+  try {
+    await page.addInitScript(
+      ({ keyStorage, passphraseStorage, installedStorage }) => {
+        sessionStorage.setItem(installedStorage, "false");
+        sessionStorage.removeItem(keyStorage);
+        sessionStorage.removeItem(passphraseStorage);
+      },
+      {
+        keyStorage: KEY_STORAGE,
+        passphraseStorage: PASSPHRASE_STORAGE,
+        installedStorage: INSTALLED_STORAGE,
+      },
+    );
+  } catch (error) {
+    console.error("Failed to mock Freighter as not installed:", error);
+    throw error;
+  }
 }
 
 export async function mockFreighterWrongNetwork(page: Page) {
-  await mockFreighter(page, { networkPassphrase: WRONG_NETWORK_PASSPHRASE });
+  try {
+    await mockFreighter(page, { networkPassphrase: WRONG_NETWORK_PASSPHRASE });
+  } catch (error) {
+    console.error("Failed to mock Freighter with wrong network:", error);
+    throw error;
+  }
 }

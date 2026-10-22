@@ -10,6 +10,7 @@ import { useWalletContext } from "@/context/WalletContext";
 import { usePlaceBid } from "@/hooks/usePlaceBid";
 import { useFinalizeAuction } from "@/hooks/useAuctions";
 import { GuardButton } from "@/components/WalletGuard";
+import { getReadableErrorMessage } from "@/lib/errors";
 import {
   Gavel,
   Clock,
@@ -76,6 +77,7 @@ export function BiddingPanel({
   const [bidAmount, setBidAmount] = useState("");
   const [bidSuccess, setBidSuccess] = useState(false);
   const [outbidNotice, setOutbidNotice] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const currentBidXlm = parseFloat(stroopsToXlm(auction.highest_bid));
   const reserveXlm = parseFloat(stroopsToXlm(auction.reserve_price));
@@ -107,25 +109,35 @@ export function BiddingPanel({
     if (isNaN(amount) || bidValidation) return;
 
     const previousBidder = auction.highest_bidder;
-    const success = await bid(auction.auction_id, amount);
-    if (success) {
-      setBidSuccess(true);
-      setBidAmount("");
-      if (previousBidder && previousBidder !== publicKey) {
-        setOutbidNotice(
-          `Outbid notification: Outbid previous bidder ${truncateAddress(previousBidder)}`,
-        );
-      } else {
-        setOutbidNotice(null);
+    setActionError(null);
+    try {
+      const success = await bid(auction.auction_id, amount);
+      if (success) {
+        setBidSuccess(true);
+        setBidAmount("");
+        if (previousBidder && previousBidder !== publicKey) {
+          setOutbidNotice(
+            `Outbid notification: Outbid previous bidder ${truncateAddress(previousBidder)}`,
+          );
+        } else {
+          setOutbidNotice(null);
+        }
+        onBidPlaced?.();
       }
-      onBidPlaced?.();
+    } catch (err: unknown) {
+      setActionError(getReadableErrorMessage(err, "Failed to place bid"));
     }
   };
 
   const handleFinalize = async () => {
-    const success = await finalize(auction.auction_id);
-    if (success) {
-      onFinalized?.();
+    setActionError(null);
+    try {
+      const success = await finalize(auction.auction_id);
+      if (success) {
+        onFinalized?.();
+      }
+    } catch (err: unknown) {
+      setActionError(getReadableErrorMessage(err, "Failed to finalize auction"));
     }
   };
 
@@ -253,6 +265,15 @@ export function BiddingPanel({
         <div className="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-500">
           <AlertCircle size={14} />
           {finalizeError}
+        </div>
+      )}
+      {actionError && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-500"
+        >
+          <AlertCircle size={14} />
+          {actionError}
         </div>
       )}
 

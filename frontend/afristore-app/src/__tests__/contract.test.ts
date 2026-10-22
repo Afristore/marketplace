@@ -1,4 +1,9 @@
-import { stroopsToXlm, xlmToStroops, getAllListings } from "../lib/contract";
+import {
+  stroopsToXlm,
+  xlmToStroops,
+  getAllListings,
+  getAllAuctions,
+} from "../lib/contract";
 
 jest.mock("@/lib/e2e-chain-mock", () => ({
   isE2eMockChain: () => false,
@@ -67,38 +72,110 @@ describe("stroopsToXlm", () => {
   });
 });
 
-describe("getAllListings — indexer path", () => {
+describe("getAllListings — indexer path and error handling", () => {
   beforeEach(() => jest.clearAllMocks());
 
   it("returns empty array when indexer responds with { listings: [] }", async () => {
-    const { fetchListings } = jest.requireMock("@/lib/indexer");
-    fetchListings.mockResolvedValueOnce({ listings: [] });
+    try {
+      const { fetchListings } = jest.requireMock("@/lib/indexer");
+      fetchListings.mockResolvedValueOnce({ listings: [] });
 
-    const result = await getAllListings();
+      const result = await getAllListings();
 
-    expect(result).toEqual([]);
-    expect(fetchListings).toHaveBeenCalledTimes(1);
+      expect(result).toEqual([]);
+      expect(fetchListings).toHaveBeenCalledTimes(1);
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("returns listings from indexer without on-chain fallback", async () => {
-    const { fetchListings } = jest.requireMock("@/lib/indexer");
-    const mockListing = { listing_id: 1, artist: "GARTIST", status: "Active" };
-    fetchListings.mockResolvedValueOnce({ listings: [mockListing] });
+    try {
+      const { fetchListings } = jest.requireMock("@/lib/indexer");
+      const mockListing = { listing_id: 1, artist: "GARTIST", status: "Active" };
+      fetchListings.mockResolvedValueOnce({ listings: [mockListing] });
 
-    const result = await getAllListings();
+      const result = await getAllListings();
 
-    expect(result).toEqual([mockListing]);
-    expect(fetchListings).toHaveBeenCalledTimes(1);
+      expect(result).toEqual([mockListing]);
+      expect(fetchListings).toHaveBeenCalledTimes(1);
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
-  it("does not return empty array when indexer response has no listings field", async () => {
-    const { fetchListings } = jest.requireMock("@/lib/indexer");
-    // Returns a non-array for listings — should fall through to on-chain path,
-    // but since we cannot reach Soroban in unit tests, we only assert indexer was called.
-    fetchListings.mockResolvedValueOnce({ listings: null });
+  it("falls back to on-chain and rejects when indexer response has no listings field", async () => {
+    try {
+      const { fetchListings } = jest.requireMock("@/lib/indexer");
+      fetchListings.mockResolvedValueOnce({ listings: null });
 
-    // On-chain path will throw (no real RPC) — catch and assert indexer was attempted.
-    await expect(getAllListings()).rejects.toThrow();
-    expect(fetchListings).toHaveBeenCalledTimes(1);
+      // On-chain path will throw (no real RPC in unit tests)
+      await expect(getAllListings()).rejects.toThrow();
+      expect(fetchListings).toHaveBeenCalledTimes(1);
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
+  });
+
+  it("falls back to on-chain and handles error when indexer call rejects", async () => {
+    try {
+      const { fetchListings } = jest.requireMock("@/lib/indexer");
+      fetchListings.mockRejectedValueOnce(new Error("Indexer service down"));
+
+      await expect(getAllListings()).rejects.toThrow();
+      expect(fetchListings).toHaveBeenCalledTimes(1);
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
+  });
+});
+
+describe("getAllAuctions — indexer path and error handling", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("returns auctions from indexer when valid array returned", async () => {
+    try {
+      const { fetchAuctions } = jest.requireMock("@/lib/indexer");
+      const mockAuction = { auction_id: 1, creator: "GCREATOR", status: "Active" };
+      fetchAuctions.mockResolvedValueOnce([mockAuction]);
+
+      const result = await getAllAuctions();
+
+      expect(result).toEqual([mockAuction]);
+      expect(fetchAuctions).toHaveBeenCalledTimes(1);
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
+  });
+
+  it("falls back to on-chain and rejects when indexer returns empty auctions array", async () => {
+    try {
+      const { fetchAuctions } = jest.requireMock("@/lib/indexer");
+      fetchAuctions.mockResolvedValueOnce([]);
+
+      await expect(getAllAuctions()).rejects.toThrow();
+      expect(fetchAuctions).toHaveBeenCalledTimes(1);
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
+  });
+
+  it("falls back to on-chain and rejects when indexer fetchAuctions fails", async () => {
+    try {
+      const { fetchAuctions } = jest.requireMock("@/lib/indexer");
+      fetchAuctions.mockRejectedValueOnce(new Error("Auction indexer unreachable"));
+
+      await expect(getAllAuctions()).rejects.toThrow();
+      expect(fetchAuctions).toHaveBeenCalledTimes(1);
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 });

@@ -1,12 +1,11 @@
 #![cfg(test)]
 
-use super::*;
 use crate::settlement::settle;
 use crate::storage::{has_listing, set_config, set_currency_symbol, set_listing, set_position};
 use crate::types::{Listing, ListingStatus, PlatformConfig, Position, PositionStatus};
-use soroban_sdk::testutils::{Address as _, Ledger};
+use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as TokenAdminClient};
-use soroban_sdk::{vec, Address, Env, IntoVal, Symbol};
+use soroban_sdk::{symbol_short, vec, Address, Env, IntoVal, Symbol};
 
 fn create_token<'a>(env: &Env, admin: &Address) -> (TokenClient<'a>, TokenAdminClient<'a>) {
     let contract_id = env
@@ -1335,9 +1334,7 @@ fn test_admin_set_fees_boundary_just_below_10000_succeeds() {
 // ─── End-to-End Lifecycle Tests ──────────────────────────────────────────────
 
 use crate::contract::{LendingContract, LendingContractClient};
-use crate::events::{
-    emit_collateral_added, emit_listing_created, emit_position_liquidated, emit_position_returned,
-};
+use crate::events::{emit_listing_created, emit_position_liquidated, emit_position_returned};
 
 /// Scenario A: Voluntary Return
 ///
@@ -1477,14 +1474,7 @@ fn test_e2e_voluntary_return() {
 
     // 6. Borrower calls add_collateral() — verify health factor improved
     usdc_admin.mint(&borrower, &30_000_000); // Mint additional 30 USDC
-    usdc_token.transfer(&borrower, &contract_id, &30_000_000);
-
-    env.as_contract(&contract_id, || {
-        let mut pos = crate::storage::get_position(&env, position_id);
-        pos.collateral_amount += 30_000_000;
-        set_position(&env, position_id, &pos);
-        emit_collateral_added(&env, position_id, borrower.clone(), 30_000_000, 180_000_000);
-    });
+    client.add_collateral(&position_id, &30_000_000);
 
     let health_factor_after_topup = env.as_contract(&contract_id, || {
         let pos = crate::storage::get_position(&env, position_id);
@@ -2052,4 +2042,266 @@ fn test_return_nft_double_return_panics() {
 
     client.return_nft(&1);
     client.return_nft(&1);
+}
+
+// ─── add_collateral tests (issue #668) ───────────────────────────────────────
+
+/// Seeds an Active position whose health factor sits just above the 110%
+/// liquidation threshold (115 USDC backing a 100 USD loan, zero interest).
+fn setup_add_collateral<'a>(
+    env: &'a Env,
+    status: PositionStatus,
+) -> (
+    LendingContractClient<'a>,
+    Address,
+    Address,
+    Address,
+    TokenClient<'a>,
+) {
+    let (
+        client,
+        contract_id,
+        _admin,
+        lender,
+        borrower,
+        liquidator,
+        _fee_receiver,
+        nft_token,
+        col_token,
+    ) = setup_liquidate_test(env);
+
+    env.ledger().with_mut(|l| l.timestamp = 2000);
+    let col_admin = TokenAdminClient::new(env, &col_token.address);
+    col_admin.mint(&borrower, &100_000_000);
+
+    env.as_contract(&contract_id, || {
+        set_position(
+            env,
+            1,
+            &Position {
+                id: 1,
+                listing_id: 1,
+                lender: lender.clone(),
+                borrower: borrower.clone(),
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                collateral_currency: col_token.address.clone(),
+                collateral_amount: 115_000_000,
+                interest_schedule_bps: vec![env, 0],
+                liquidation_threshold_bps: 11000,
+                start_time: 1000,
+                max_duration_secs: 30 * 86400,
+                status,
+            },
+        );
+    });
+
+    (client, contract_id, borrower, liquidator, col_token)
+}
+
+/// Health factor in bps using the same formula as `liquidate()`.
+fn position_health_factor_bps(env: &Env, contract_id: &Address, position_id: u64) -> i128 {
+    env.as_contract(contract_id, || {
+        let pos = crate::storage::get_position(env, position_id);
+        let config = crate::storage::get_config(env);
+        let price = crate::oracle::get_price(env, &config.oracle_address, &pos.collateral_currency);
+        let collateral_usd = pos.collateral_amount * price / 10_000_000;
+        let owed = pos.declared_price_usd
+            + crate::interest::accrued_interest_usd(&pos, env.ledger().timestamp());
+        collateral_usd * 10_000 / owed
+    })
+}
+
+#[test]
+fn test_health_factor_view_returns_current_health_in_bps() {
+    let env = Env::default();
+    let (client, _contract_id, _borrower, _liquidator, _col_token) =
+        setup_add_collateral(&env, PositionStatus::Active);
+
+    assert_eq!(client.health_factor(&1), 11_500);
+}
+
+#[test]
+fn test_add_collateral_increases_amount_and_emits_event() {
+    let env = Env::default();
+    let (client, contract_id, borrower, _liquidator, col_token) =
+        setup_add_collateral(&env, PositionStatus::Active);
+    let contract_balance_before = col_token.balance(&contract_id);
+
+    client.add_collateral(&1, &40_000_000);
+
+    assert_eq!(
+        env.events().all().filter_by_contract(&contract_id),
+        vec![
+            &env,
+            (
+                contract_id.clone(),
+                (symbol_short!("lending"), symbol_short!("col_add")).into_val(&env),
+                crate::events::CollateralAddedData {
+                    position_id: 1,
+                    borrower: borrower.clone(),
+                    amount: 40_000_000,
+                    new_total: 155_000_000,
+                }
+                .into_val(&env),
+            ),
+        ]
+    );
+
+    assert_eq!(col_token.balance(&borrower), 60_000_000);
+    assert_eq!(
+        col_token.balance(&contract_id),
+        contract_balance_before + 40_000_000
+    );
+    env.as_contract(&contract_id, || {
+        let pos = crate::storage::get_position(&env, 1);
+        assert_eq!(pos.collateral_amount, 155_000_000);
+        assert_eq!(pos.status, PositionStatus::Active);
+    });
+}
+
+#[test]
+fn test_add_collateral_multiple_top_ups_accumulate() {
+    let env = Env::default();
+    let (client, contract_id, _borrower, _liquidator, _col_token) =
+        setup_add_collateral(&env, PositionStatus::Active);
+
+    client.add_collateral(&1, &10_000_000);
+    client.add_collateral(&1, &5_000_000);
+
+    env.as_contract(&contract_id, || {
+        assert_eq!(
+            crate::storage::get_position(&env, 1).collateral_amount,
+            130_000_000
+        );
+    });
+}
+
+#[test]
+fn test_add_collateral_improves_health_factor() {
+    let env = Env::default();
+    let (client, contract_id, _borrower, _liquidator, _col_token) =
+        setup_add_collateral(&env, PositionStatus::Active);
+
+    let hf_before = position_health_factor_bps(&env, &contract_id, 1);
+    assert_eq!(hf_before, 11_500);
+
+    client.add_collateral(&1, &35_000_000);
+
+    let hf_after = position_health_factor_bps(&env, &contract_id, 1);
+    assert_eq!(hf_after, 15_000);
+    assert!(hf_after > hf_before);
+}
+
+/// A position that would be liquidated after a price-equivalent drop is
+/// rescued by topping up collateral first.
+#[test]
+#[should_panic(expected = "Position is healthy; cannot liquidate")]
+fn test_add_collateral_rescues_position_from_liquidation() {
+    let env = Env::default();
+    let (client, contract_id, _borrower, liquidator, _col_token) =
+        setup_add_collateral(&env, PositionStatus::Active);
+
+    // Drop collateral to 105% — at/below the 110% threshold.
+    env.as_contract(&contract_id, || {
+        let mut pos = crate::storage::get_position(&env, 1);
+        pos.collateral_amount = 105_000_000;
+        set_position(&env, 1, &pos);
+    });
+    assert!(position_health_factor_bps(&env, &contract_id, 1) <= 11_000);
+
+    client.add_collateral(&1, &20_000_000);
+    assert!(position_health_factor_bps(&env, &contract_id, 1) > 11_000);
+
+    client.liquidate(&1, &liquidator);
+}
+
+#[test]
+#[should_panic(expected = "Position is not Active")]
+fn test_add_collateral_returned_position_panics() {
+    let env = Env::default();
+    let (client, _contract_id, _borrower, _liquidator, _col_token) =
+        setup_add_collateral(&env, PositionStatus::Returned);
+
+    client.add_collateral(&1, &10_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Position is not Active")]
+fn test_add_collateral_liquidated_position_panics() {
+    let env = Env::default();
+    let (client, _contract_id, _borrower, _liquidator, _col_token) =
+        setup_add_collateral(&env, PositionStatus::Liquidated);
+
+    client.add_collateral(&1, &10_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Position is not Active")]
+fn test_add_collateral_expired_position_panics() {
+    let env = Env::default();
+    let (client, _contract_id, _borrower, _liquidator, _col_token) =
+        setup_add_collateral(&env, PositionStatus::Expired);
+
+    client.add_collateral(&1, &10_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Amount must be greater than zero")]
+fn test_add_collateral_negative_amount_panics() {
+    let env = Env::default();
+    let (client, _contract_id, _borrower, _liquidator, _col_token) =
+        setup_add_collateral(&env, PositionStatus::Active);
+
+    client.add_collateral(&1, &-1);
+}
+
+#[test]
+#[should_panic(expected = "Collateral amount overflow")]
+fn test_add_collateral_overflow_panics() {
+    let env = Env::default();
+    let (client, contract_id, _borrower, _liquidator, _col_token) =
+        setup_add_collateral(&env, PositionStatus::Active);
+
+    env.as_contract(&contract_id, || {
+        let mut pos = crate::storage::get_position(&env, 1);
+        pos.collateral_amount = i128::MAX;
+        set_position(&env, 1, &pos);
+    });
+
+    client.add_collateral(&1, &1);
+}
+
+#[test]
+#[should_panic]
+fn test_add_collateral_nonexistent_position_panics() {
+    let env = Env::default();
+    let (client, _contract_id, _borrower, _liquidator, _col_token) =
+        setup_add_collateral(&env, PositionStatus::Active);
+
+    client.add_collateral(&999, &10_000_000);
+}
+
+#[test]
+fn test_add_collateral_requires_borrower_auth() {
+    let env = Env::default();
+    let (client, _contract_id, borrower, _liquidator, _col_token) =
+        setup_add_collateral(&env, PositionStatus::Active);
+
+    client.add_collateral(&1, &10_000_000);
+
+    let auths = env.auths();
+    assert_eq!(auths[0].0, borrower);
+}
+
+#[test]
+#[should_panic]
+fn test_add_collateral_without_auth_panics() {
+    let env = Env::default();
+    let (client, _contract_id, _borrower, _liquidator, _col_token) =
+        setup_add_collateral(&env, PositionStatus::Active);
+
+    env.set_auths(&[]);
+    client.add_collateral(&1, &10_000_000);
 }
