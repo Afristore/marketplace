@@ -760,3 +760,61 @@ fn test_distribute_royalties_invalid_recipient_final_position_fails() {
         &vec![&env, 5_000_u32, 3_000_u32, 2_000_u32],
     );
 }
+
+// ── Issue #1091: Single beneficiary 10,000 BPS edge case ─────────────────────
+
+#[test]
+fn test_single_beneficiary_10000_bps_full_distribution_no_dust() {
+    let (env, client, token, contract_id) = setup();
+    let sole_beneficiary = Address::generate(&env);
+    let caller = Address::generate(&env);
+
+    // Initialize with single beneficiary at exactly 10,000 BPS (100%)
+    client.initialize(
+        &token,
+        &vec![&env, sole_beneficiary.clone()],
+        &vec![&env, 10_000_u32],
+    );
+
+    // Mint exactly 1,000,000 tokens to contract
+    let sac = StellarAssetClient::new(&env, &token);
+    sac.mint(&contract_id, &1_000_000);
+
+    let tc = TokenClient::new(&env, &token);
+    
+    // Verify initial state
+    assert_eq!(tc.balance(&contract_id), 1_000_000);
+    assert_eq!(tc.balance(&sole_beneficiary), 0);
+    assert_eq!(tc.balance(&caller), 0);
+
+    // Distribute tokens
+    client.distribute(&token, &caller);
+
+    // Verify 100% went to sole beneficiary
+    assert_eq!(
+        tc.balance(&sole_beneficiary),
+        1_000_000,
+        "Sole beneficiary must receive exact 100% of contract balance"
+    );
+    
+    // Verify contract balance is strictly zero (no trapped dust)
+    assert_eq!(
+        tc.balance(&contract_id),
+        0,
+        "Contract balance must be exactly zero after distribution"
+    );
+    
+    // Verify caller received NO dust (remainder must be zero for 100% allocation)
+    assert_eq!(
+        tc.balance(&caller),
+        0,
+        "Caller must receive zero tokens when beneficiary has 100% allocation"
+    );
+
+    // Verify share getter returns exact 10,000
+    assert_eq!(
+        client.get_share(&sole_beneficiary),
+        10_000_u32,
+        "Share must be exactly 10,000 BPS"
+    );
+}
