@@ -1291,3 +1291,231 @@ describe('SSE event filtering for wallet-specific broadcasts', () => {
   });
 });
 
+// ── Lending API: Transaction & Error Handling Tests (Issue #1161) ───────────────
+
+describe('GET /lending/listings — transactional consistency', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('executes findMany and count within a single $transaction', async () => {
+    const transactionSpy = vi.spyOn(mockPrisma, '$transaction');
+    mockPrisma.lendingListing.findMany.mockResolvedValue([
+      { listingId: 1n, nftContract: 'CNFT', currency: 'XLM', status: 'Open' },
+    ]);
+    mockPrisma.lendingListing.count.mockResolvedValue(1);
+
+    const res = await request(app).get('/api/lending/listings?limit=10&offset=0');
+
+    expect(res.status).toBe(200);
+    expect(transactionSpy).toHaveBeenCalled();
+    const txArg = transactionSpy.mock.calls[0][0];
+    expect(Array.isArray(txArg)).toBe(true);
+    expect(txArg).toHaveLength(2);
+    // Verify both operations were passed to the transaction
+    expect(mockPrisma.lendingListing.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { status: 'Open' },
+      take: 10,
+    }));
+    expect(mockPrisma.lendingListing.count).toHaveBeenCalledWith(expect.objectContaining({
+      where: { status: 'Open' },
+    }));
+  });
+
+  it('returns 500 when findMany fails inside transaction', async () => {
+    mockPrisma.lendingListing.findMany.mockRejectedValue(new Error('DB connection lost'));
+
+    const res = await request(app).get('/api/lending/listings');
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Failed to fetch lending listings');
+  });
+
+  it('returns 500 when count fails inside transaction', async () => {
+    mockPrisma.lendingListing.findMany.mockResolvedValue([]);
+    mockPrisma.lendingListing.count.mockRejectedValue(new Error('Count query failed'));
+
+    const res = await request(app).get('/api/lending/listings');
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Failed to fetch lending listings');
+  });
+
+  it('filters by collection and currency query params', async () => {
+    mockPrisma.lendingListing.findMany.mockResolvedValue([]);
+    mockPrisma.lendingListing.count.mockResolvedValue(0);
+
+    await request(app).get('/api/lending/listings?collection=CNFT123&currency=USDC');
+
+    expect(mockPrisma.lendingListing.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { status: 'Open', nftContract: 'CNFT123', currency: 'USDC' },
+    }));
+    expect(mockPrisma.lendingListing.count).toHaveBeenCalledWith(expect.objectContaining({
+      where: { status: 'Open', nftContract: 'CNFT123', currency: 'USDC' },
+    }));
+  });
+});
+
+describe('GET /lending/stats — transactional consistency', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('executes TVL aggregate, activeLoans count, and volume aggregate within a single $transaction', async () => {
+    const transactionSpy = vi.spyOn(mockPrisma, '$transaction');
+    mockPrisma.lendingPosition.aggregate
+      .mockResolvedValueOnce({ _sum: { collateralAmount: '1000000' } }) // TVL
+      .mockResolvedValueOnce({ _sum: { collateralAmount: '5000000' } }); // totalVolume
+    mockPrisma.lendingPosition.count.mockResolvedValue(5);
+
+    const res = await request(app).get('/api/lending/stats');
+
+    expect(res.status).toBe(200);
+    expect(transactionSpy).toHaveBeenCalled();
+    const txArg = transactionSpy.mock.calls[0][0];
+    expect(Array.isArray(txArg)).toBe(true);
+    expect(txArg).toHaveLength(3);
+    expect(res.body).toEqual({ tvl: '1000000', activeLoans: 5, totalVolume: '5000000' });
+  });
+
+  it('returns 500 when TVL aggregate fails inside transaction', async () => {
+    mockPrisma.lendingPosition.aggregate.mockRejectedValue(new Error('Aggregate failed'));
+
+    const res = await request(app).get('/api/lending/stats');
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Failed to fetch lending stats');
+  });
+
+  it('returns 500 when activeLoans count fails inside transaction', async () => {
+    mockPrisma.lendingPosition.aggregate
+      .mockResolvedValueOnce({ _sum: { collateralAmount: '1000000' } });
+    mockPrisma.lendingPosition.count.mockRejectedValue(new Error('Count failed'));
+
+    const res = await request(app).get('/api/lending/stats');
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Failed to fetch lending stats');
+  });
+
+  it('returns 500 when volume aggregate fails inside transaction', async () => {
+    mockPrisma.lendingPosition.aggregate
+      .mockResolvedValueOnce({ _sum: { collateralAmount: '1000000' } })
+      .mockResolvedValueOnce({ _sum: { collateralAmount: '5000000' } });
+    mockPrisma.lendingPosition.count.mockResolvedValue(5);
+    // Third call (volume aggregate) - but wait, the order is TVL, count, volume
+    // So the second aggregate call is the volume one
+    mockPrisma.lendingPosition.aggregate.mockRejectedValueOnce(new Error('Volume failed'));
+
+    const res = await request(app).get('/api/lending/stats');
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Failed to fetch lending stats');
+  });
+});
+
+describe('GET /lending/loans/:lender — transactional consistency', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('executes listings and positions findMany within a single $transaction', async () => {
+    const transactionSpy = vi.spyOn(mockPrisma, '$transaction');
+    mockPrisma.lendingListing.findMany.mockResolvedValue([
+      { listingId: 1n, lender: 'GLENDER', status: 'Open' },
+    ]);
+    mockPrisma.lendingPosition.findMany.mockResolvedValue([
+      { positionId: 1n, lender: 'GLENDER', listingId: 1n, status: 'Active' },
+    ]);
+
+    const res = await request(app).get('/api/lending/loans/GLENDER?limit=10&offset=0');
+
+    expect(res.status).toBe(200);
+    expect(transactionSpy).toHaveBeenCalled();
+    const txArg = transactionSpy.mock.calls[0][0];
+    expect(Array.isArray(txArg)).toBe(true);
+    expect(txArg).toHaveLength(2);
+    expect(mockPrisma.lendingListing.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { lender: 'GLENDER' },
+      take: 10,
+    }));
+    expect(mockPrisma.lendingPosition.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { lender: 'GLENDER' },
+      take: 10,
+    }));
+  });
+
+  it('returns 500 when listings query fails inside transaction', async () => {
+    mockPrisma.lendingListing.findMany.mockRejectedValue(new Error('Listings query failed'));
+
+    const res = await request(app).get('/api/lending/loans/GLENDER');
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Failed to fetch loans');
+  });
+
+  it('returns 500 when positions query fails inside transaction', async () => {
+    mockPrisma.lendingListing.findMany.mockResolvedValue([]);
+    mockPrisma.lendingPosition.findMany.mockRejectedValue(new Error('Positions query failed'));
+
+    const res = await request(app).get('/api/lending/loans/GLENDER');
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Failed to fetch loans');
+  });
+});
+
+describe('GET /lending/positions/:borrower — transactional consistency', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('executes positions findMany within a $transaction', async () => {
+    const transactionSpy = vi.spyOn(mockPrisma, '$transaction');
+    mockPrisma.lendingPosition.findMany.mockResolvedValue([
+      { positionId: 1n, borrower: 'GBORROWER', listingId: 1n, status: 'Active' },
+    ]);
+    mockPrisma.lendingListing.findMany.mockResolvedValue([
+      { listingId: 1n, nftContract: 'CNFT', status: 'Open' },
+    ]);
+
+    const res = await request(app).get('/api/lending/positions/GBORROWER');
+
+    expect(res.status).toBe(200);
+    expect(transactionSpy).toHaveBeenCalled();
+    expect(mockPrisma.lendingPosition.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { borrower: 'GBORROWER' },
+      orderBy: { updatedAtLedger: 'desc' },
+    }));
+    // Should fetch listings in a single query using 'in' operator
+    expect(mockPrisma.lendingListing.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { listingId: { in: [1n] } },
+    }));
+  });
+
+  it('filters by status query param', async () => {
+    mockPrisma.lendingPosition.findMany.mockResolvedValue([]);
+    mockPrisma.lendingListing.findMany.mockResolvedValue([]);
+
+    await request(app).get('/api/lending/positions/GBORROWER?status=Active');
+
+    expect(mockPrisma.lendingPosition.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { borrower: 'GBORROWER', status: 'Active' },
+    }));
+  });
+
+  it('returns 500 when positions query fails inside transaction', async () => {
+    mockPrisma.lendingPosition.findMany.mockRejectedValue(new Error('Positions query failed'));
+
+    const res = await request(app).get('/api/lending/positions/GBORROWER');
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Failed to fetch lending positions');
+  });
+
+  it('handles positions without listingId gracefully', async () => {
+    mockPrisma.lendingPosition.findMany.mockResolvedValue([
+      { positionId: 1n, borrower: 'GBORROWER', listingId: null, status: 'Active' },
+    ]);
+    mockPrisma.lendingListing.findMany.mockResolvedValue([]);
+
+    const res = await request(app).get('/api/lending/positions/GBORROWER');
+
+    expect(res.status).toBe(200);
+    expect(res.body[0].position.positionId).toBe('1');
+    expect(res.body[0].listing).toBeNull();
+  });
+});
+
