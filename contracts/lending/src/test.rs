@@ -2503,15 +2503,13 @@ fn test_return_nft_with_excess_collateral() {
     let fee_before = col_token.balance(&fee_receiver);
     let borrower_before = col_token.balance(&borrower);
 
-    // Update position to have 200M collateral (instead of default 150M)
+    // Top up the contract's collateral to 200M (default setup holds 150M)
+    TokenAdminClient::new(&env, &col_token.address).mint(&contract_id, &50_000_000);
+
     env.as_contract(&contract_id, || {
         let mut pos = crate::storage::get_position(&env, 1);
         pos.collateral_amount = 200_000_000;
         set_position(&env, 1, &pos);
-
-        // Add extra collateral to contract
-        let col_admin = TokenAdminClient::new(&env, &col_token.address);
-        col_admin.mint(&contract_id, &50_000_000);
     });
 
     client.return_nft(&1);
