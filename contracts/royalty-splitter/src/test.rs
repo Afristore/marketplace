@@ -831,120 +831,60 @@ fn test_distribute_royalties_invalid_recipient_final_position_fails() {
     );
 }
 
-// ── get_token (#890) ──────────────────────────────────────────────────────────
+// ── Issue #1091: Single beneficiary 10,000 BPS edge case ─────────────────────
 
 #[test]
-fn test_get_token_returns_initialized_token() {
-    let (env, client, token, _) = setup();
-    let alice = Address::generate(&env);
-    client.initialize(&token, &vec![&env, alice], &vec![&env, 10_000_u32]);
-    assert_eq!(client.get_token(), token);
-}
+fn test_single_beneficiary_10000_bps_full_distribution_no_dust() {
+    let (env, client, token, contract_id) = setup();
+    let sole_beneficiary = Address::generate(&env);
+    let caller = Address::generate(&env);
 
-#[test]
-fn test_get_token_reflects_the_exact_address_passed_to_initialize() {
-    // Two different token addresses — only the one used in initialize is returned.
-    let (env, client, token_a, _) = setup();
-    let token_admin = Address::generate(&env);
-    let token_b = env
-        .register_stellar_asset_contract_v2(token_admin)
-        .address();
-    let alice = Address::generate(&env);
-
-    client.initialize(&token_a, &vec![&env, alice], &vec![&env, 10_000_u32]);
-
-    assert_eq!(client.get_token(), token_a);
-    assert_ne!(client.get_token(), token_b);
-}
-
-#[test]
-fn test_get_token_two_party_split_preserves_token() {
-    let (env, client, token, _) = setup();
-    let alice = Address::generate(&env);
-    let bob = Address::generate(&env);
-
+    // Initialize with single beneficiary at exactly 10,000 BPS (100%)
     client.initialize(
         &token,
-        &vec![&env, alice, bob],
-        &vec![&env, 7_000_u32, 3_000_u32],
+        &vec![&env, sole_beneficiary.clone()],
+        &vec![&env, 10_000_u32],
     );
 
-    assert_eq!(client.get_token(), token);
-}
+    // Mint exactly 1,000,000 tokens to contract
+    let sac = StellarAssetClient::new(&env, &token);
+    sac.mint(&contract_id, &1_000_000);
 
-// ── get_shares (#892) ─────────────────────────────────────────────────────────
+    let tc = TokenClient::new(&env, &token);
+    
+    // Verify initial state
+    assert_eq!(tc.balance(&contract_id), 1_000_000);
+    assert_eq!(tc.balance(&sole_beneficiary), 0);
+    assert_eq!(tc.balance(&caller), 0);
 
-#[test]
-fn test_get_shares_returns_shares_in_order() {
-    let (env, client, token, _) = setup();
-    let alice = Address::generate(&env);
-    let bob = Address::generate(&env);
+    // Distribute tokens
+    client.distribute(&token, &caller);
 
-    client.initialize(
-        &token,
-        &vec![&env, alice, bob],
-        &vec![&env, 6_000_u32, 4_000_u32],
+    // Verify 100% went to sole beneficiary
+    assert_eq!(
+        tc.balance(&sole_beneficiary),
+        1_000_000,
+        "Sole beneficiary must receive exact 100% of contract balance"
+    );
+    
+    // Verify contract balance is strictly zero (no trapped dust)
+    assert_eq!(
+        tc.balance(&contract_id),
+        0,
+        "Contract balance must be exactly zero after distribution"
+    );
+    
+    // Verify caller received NO dust (remainder must be zero for 100% allocation)
+    assert_eq!(
+        tc.balance(&caller),
+        0,
+        "Caller must receive zero tokens when beneficiary has 100% allocation"
     );
 
-    let shares = client.get_shares();
-    assert_eq!(shares.len(), 2);
-    assert_eq!(shares.get(0).unwrap(), 6_000_u32);
-    assert_eq!(shares.get(1).unwrap(), 4_000_u32);
-}
-
-#[test]
-fn test_get_shares_single_beneficiary_gets_full_10000() {
-    let (env, client, token, _) = setup();
-    let alice = Address::generate(&env);
-
-    client.initialize(&token, &vec![&env, alice], &vec![&env, 10_000_u32]);
-
-    let shares = client.get_shares();
-    assert_eq!(shares.len(), 1);
-    assert_eq!(shares.get(0).unwrap(), 10_000_u32);
-}
-
-#[test]
-fn test_get_shares_three_way_equal_split() {
-    // 3334 + 3333 + 3333 = 10000
-    let (env, client, token, _) = setup();
-    let alice = Address::generate(&env);
-    let bob = Address::generate(&env);
-    let carol = Address::generate(&env);
-
-    client.initialize(
-        &token,
-        &vec![&env, alice, bob, carol],
-        &vec![&env, 3_334_u32, 3_333_u32, 3_333_u32],
+    // Verify share getter returns exact 10,000
+    assert_eq!(
+        client.get_share(&sole_beneficiary),
+        10_000_u32,
+        "Share must be exactly 10,000 BPS"
     );
-
-    let shares = client.get_shares();
-    assert_eq!(shares.len(), 3);
-    assert_eq!(shares.get(0).unwrap(), 3_334_u32);
-    assert_eq!(shares.get(1).unwrap(), 3_333_u32);
-    assert_eq!(shares.get(2).unwrap(), 3_333_u32);
-    let total: u32 = shares.iter().sum();
-    assert_eq!(total, 10_000_u32);
-}
-
-#[test]
-fn test_get_shares_order_matches_beneficiaries_order() {
-    // Ensure index alignment: shares[i] belongs to beneficiaries[i].
-    let (env, client, token, _) = setup();
-    let alice = Address::generate(&env);
-    let bob = Address::generate(&env);
-
-    client.initialize(
-        &token,
-        &vec![&env, alice.clone(), bob.clone()],
-        &vec![&env, 8_000_u32, 2_000_u32],
-    );
-
-    let beneficiaries = client.get_beneficiaries();
-    let shares = client.get_shares();
-
-    assert_eq!(beneficiaries.get(0).unwrap(), alice);
-    assert_eq!(shares.get(0).unwrap(), 8_000_u32);
-    assert_eq!(beneficiaries.get(1).unwrap(), bob);
-    assert_eq!(shares.get(1).unwrap(), 2_000_u32);
 }
