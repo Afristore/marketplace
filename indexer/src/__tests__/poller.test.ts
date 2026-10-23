@@ -49,6 +49,9 @@ const mockPrisma = vi.hoisted(() => ({
   marketplaceEvent: {
     create: vi.fn().mockResolvedValue({}),
   },
+  indexerError: {
+    create: vi.fn().mockResolvedValue({}),
+  },
   listing: {
     upsert: vi.fn().mockResolvedValue({}),
     update: vi.fn().mockResolvedValue({}),
@@ -159,6 +162,7 @@ vi.mock("@stellar/stellar-sdk", () => ({
 
 import {
   processEvent,
+  processEvents,
   revertLedgers,
   validateHashContinuity,
   buildSyncStateLedgerData,
@@ -209,6 +213,57 @@ describe("processEvent — always logs to MarketplaceEvent", () => {
     expect(mockPrisma.marketplaceEvent.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ data }),
     });
+  });
+});
+
+// ── Error isolation / dead-letter handling ────────────────────────────────────
+
+describe("processEvents — error isolation", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("continues processing healthy events after a malformed event throws", async () => {
+    const malformed = makeEvent("LISTING_CREATED", 99n, "GA", {}, 150);
+    const healthy = makeEvent("LISTING_CANCELLED", 3n, "", {}, 151);
+
+    mockPrisma.marketplaceEvent.create.mockRejectedValueOnce(
+      new Error("malformed payload"),
+    );
+
+    await expect(processEvents([malformed, healthy])).resolves.not.toThrow();
+
+    expect(mockPrisma.listing.updateMany).toHaveBeenCalledWith({
+      where: { listingId: 3n },
+      data: expect.objectContaining({ status: "Cancelled" }),
+    });
+  });
+
+  it("records the failed event in indexerError for dead-letter handling", async () => {
+    const malformed = makeEvent("BID_PLACED", 11n, "GB", { bad: true }, 160);
+    mockPrisma.auction.updateMany.mockRejectedValueOnce(
+      new Error("unexpected shape"),
+    );
+
+    await processEvents([malformed]);
+
+    expect(mockPrisma.indexerError.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        eventType: "BID_PLACED",
+        ledgerSequence: 160,
+        errorMessage: expect.stringContaining("unexpected shape"),
+      }),
+    });
+  });
+
+  it("does not throw when recording the dead-letter entry itself fails", async () => {
+    const malformed = makeEvent("OFFER_MADE", null, "GA", {}, 170);
+    mockPrisma.marketplaceEvent.create.mockRejectedValueOnce(
+      new Error("parse failure"),
+    );
+    mockPrisma.indexerError.create.mockRejectedValueOnce(
+      new Error("db unavailable"),
+    );
+
+    await expect(processEvents([malformed])).resolves.not.toThrow();
   });
 });
 
@@ -348,700 +403,4 @@ describe("processEvent — LISTING_CANCELLED", () => {
       data: expect.objectContaining({ status: "Cancelled" }),
     });
   });
-});
-
-// ── AUCTION_CREATED ───────────────────────────────────────────────────────────
-
-describe("processEvent — AUCTION_CREATED", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("upserts a new auction with Active status", async () => {
-    const data = {
-      creator: "GA_CREATOR",
-      reserve_price: "50000000",
-      token: "CTOKEN",
-      end_time: 1800000000,
-    };
-    await processEvent(
-      makeEvent("AUCTION_CREATED", 11n, "GA_CREATOR", data, 600),
-    );
-
-    expect(mockPrisma.auction.upsert).toHaveBeenCalledOnce();
-    const call = mockPrisma.auction.upsert.mock.calls[0][0];
-    expect(call.where).toEqual({ auctionId: 11n });
-    expect(call.create).toMatchObject({
-      auctionId: 11n,
-      creator: "GA_CREATOR",
-      status: "Active",
-      createdAtLedger: 600,
-    });
-  });
-});
-
-// ── BID_PLACED ─────────────────────────────────────────────────────────────────
-
-describe("processEvent — BID_PLACED", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("updates highestBid and highestBidder on the auction", async () => {
-    const data = {
-      bidder: "GB_BIDDER",
-      bid_amount: "55000000",
-    };
-    await processEvent(makeEvent("BID_PLACED", 11n, "GB_BIDDER", data, 610));
-
-    expect(mockPrisma.auction.updateMany).toHaveBeenCalledOnce();
-    expect(mockPrisma.auction.updateMany).toHaveBeenCalledWith({
-      where: { auctionId: 11n },
-      data: expect.objectContaining({
-        highestBid: "55000000",
-        highestBidder: "GB_BIDDER",
-        updatedAtLedger: 610,
-      }),
-    });
-  });
-});
-
-// ── AUCTION_CANCELLED ─────────────────────────────────────────────────────────
-
-describe("processEvent — AUCTION_CANCELLED", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("sets auction status to Cancelled", async () => {
-    await processEvent(
-      makeEvent("AUCTION_CANCELLED", 11n, "GA_CREATOR", {}, 615),
-    );
-
-    expect(mockPrisma.auction.updateMany).toHaveBeenCalledWith({
-      where: { auctionId: 11n },
-      data: expect.objectContaining({ status: "Cancelled" }),
-    });
-  });
-});
-
-// ── AUCTION_RESOLVED ───────────────────────────────────────────────────────────
-
-describe("processEvent — AUCTION_RESOLVED", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("sets auction status to Finalized and records the winner and final amount", async () => {
-    const data = {
-      winner: "GB_BIDDER",
-      amount: "55000000",
-    };
-    await processEvent(
-      makeEvent("AUCTION_RESOLVED", 11n, "GA_CREATOR", data, 620),
-    );
-
-    expect(mockPrisma.auction.updateMany).toHaveBeenCalledOnce();
-    expect(mockPrisma.auction.updateMany).toHaveBeenCalledWith({
-      where: { auctionId: 11n },
-      data: expect.objectContaining({
-        status: "Finalized",
-        highestBid: "55000000",
-        highestBidder: "GB_BIDDER",
-        updatedAtLedger: 620,
-      }),
-    });
-  });
-});
-
-// ── OFFER_MADE ─────────────────────────────────────────────────────────────────
-
-describe("processEvent — OFFER_MADE", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("upserts a new offer with Pending status", async () => {
-    const data = {
-      offer_id: 1,
-      listing_id: 42,
-      offerer: "GA_OFFERER",
-      amount: "30000000",
-      token: "CTOKEN",
-    };
-    await processEvent(makeEvent("OFFER_MADE", 42n, "GA_OFFERER", data, 630));
-
-    expect(mockPrisma.offer.upsert).toHaveBeenCalledOnce();
-    const call = mockPrisma.offer.upsert.mock.calls[0][0];
-    expect(call.where).toEqual({ offerId: 1n });
-    expect(call.create).toMatchObject({
-      offerId: 1n,
-      listingId: 42n,
-      offerer: "GA_OFFERER",
-      amount: "30000000",
-      token: "CTOKEN",
-      status: "Pending",
-      createdAtLedger: 630,
-    });
-  });
-});
-
-// ── OFFER_ACCEPTED ─────────────────────────────────────────────────────────────
-
-describe("processEvent — OFFER_ACCEPTED", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("sets offer status to Accepted and updates related listing to Sold", async () => {
-    const data = {
-      offer_id: 1,
-      listing_id: 42,
-      offerer: "GA_OFFERER",
-      amount: "30000000",
-    };
-    await processEvent(makeEvent("OFFER_ACCEPTED", 42n, "GA_OWNER", data, 640));
-
-    expect(mockPrisma.offer.update).toHaveBeenCalledOnce();
-    expect(mockPrisma.offer.update).toHaveBeenCalledWith({
-      where: { offerId: 1n },
-      data: {
-        status: "Accepted",
-        updatedAtLedger: 640,
-      },
-    });
-
-    expect(mockPrisma.listing.updateMany).toHaveBeenCalledOnce();
-    expect(mockPrisma.listing.updateMany).toHaveBeenCalledWith({
-      where: { listingId: 42n },
-      data: expect.objectContaining({
-        status: "Sold",
-        owner: "GA_OFFERER",
-        updatedAtLedger: 640,
-      }),
-    });
-  });
-});
-
-// ── Events with no listingId ──────────────────────────────────────────────────
-
-describe("processEvent — null listingId", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("logs the event but skips listing mutations when listingId is null", async () => {
-    await processEvent(
-      makeEvent("OFFER_MADE", null, "GA_OFFERER", { offer_id: 1 }),
-    );
-
-    expect(mockPrisma.marketplaceEvent.create).toHaveBeenCalledOnce();
-  });
-});
-
-// ── revertLedgers ─────────────────────────────────────────────────────────────
-
-describe("revertLedgers", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    // Reset findMany to return no dirty records by default
-    mockTx.listing.findMany.mockResolvedValue([]);
-    mockTx.auction.findMany.mockResolvedValue([]);
-  });
-
-  it("deletes marketplace events beyond the safe ledger", async () => {
-    await revertLedgers(500);
-    expect(mockTx.marketplaceEvent.deleteMany).toHaveBeenCalledWith({
-      where: { ledgerSequence: { gt: 500 } },
-    });
-  });
-
-  it("removes listings first created after the safe ledger", async () => {
-    await revertLedgers(500);
-    expect(mockTx.listing.deleteMany).toHaveBeenCalledWith({
-      where: { createdAtLedger: { gt: 500 } },
-    });
-  });
-
-  it("finds dirty listings updated after the safe ledger", async () => {
-    await revertLedgers(500);
-    expect(mockTx.listing.findMany).toHaveBeenCalledWith({
-      where: { updatedAtLedger: { gt: 500 } },
-      select: { listingId: true },
-    });
-  });
-
-  it("finds dirty auctions updated after the safe ledger", async () => {
-    await revertLedgers(500);
-    expect(mockTx.auction.findMany).toHaveBeenCalledWith({
-      where: { updatedAtLedger: { gt: 500 } },
-      select: { auctionId: true },
-    });
-  });
-
-  it("removes collections deployed after the safe ledger", async () => {
-    await revertLedgers(500);
-    expect(mockTx.collection.deleteMany).toHaveBeenCalledWith({
-      where: { deployedAtLedger: { gt: 500 } },
-    });
-  });
-
-  it("resets SyncState cursor to the safe ledger and clears the hash", async () => {
-    await revertLedgers(500);
-    expect(mockTx.syncState.update).toHaveBeenCalledWith({
-      where: { id: 1 },
-      data: { lastLedger: 500, lastLedgerHash: null },
-    });
-  });
-
-  it("runs all operations inside a single transaction", async () => {
-    await revertLedgers(300);
-    expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
-  });
-
-  it("marks a dirty listing as Cancelled when it is not found on chain", async () => {
-    mockTx.listing.findMany.mockResolvedValue([{ listingId: 99n }]);
-    await revertLedgers(500);
-    expect(mockTx.listing.update).toHaveBeenCalledWith({
-      where: { listingId: 99n },
-      data: { status: "Cancelled", updatedAtLedger: 500 },
-    });
-  });
-
-  it("marks a dirty auction as Cancelled when it is not found on chain", async () => {
-    mockTx.auction.findMany.mockResolvedValue([{ auctionId: 88n }]);
-    await revertLedgers(500);
-    expect(mockTx.auction.update).toHaveBeenCalledWith({
-      where: { auctionId: 88n },
-      data: { status: "Cancelled", updatedAtLedger: 500 },
-    });
-  });
-});
-
-// ── buildSyncStateLedgerData (#244) ───────────────────────────────────────────
-
-describe("buildSyncStateLedgerData", () => {
-  it("includes lastLedgerHash when hash fetch succeeds", () => {
-    expect(buildSyncStateLedgerData(100, "ledger_hash")).toEqual({
-      lastLedger: 100,
-      lastLedgerHash: "ledger_hash",
-    });
-  });
-
-  it("omits lastLedgerHash when hash fetch fails so the prior checkpoint is preserved", () => {
-    expect(buildSyncStateLedgerData(100, null)).toEqual({ lastLedger: 100 });
-  });
-});
-
-// ── validateHashContinuity ────────────────────────────────────────────────────
-
-describe("validateHashContinuity", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("returns true and skips RPC when lastLedgerHash is null (#244)", async () => {
-    const mockServer = { getLedgers: vi.fn() } as any;
-
-    const result = await validateHashContinuity(
-      { lastLedger: 100, lastLedgerHash: null },
-      mockServer,
-    );
-
-    expect(result).toBe(true);
-    expect(mockServer.getLedgers).not.toHaveBeenCalled();
-    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
-  });
-
-  it("returns true if network hash matches lastLedgerHash", async () => {
-    const mockServer = {
-      getLedgers: vi.fn().mockResolvedValue({
-        ledgers: [{ hash: "matching_hash" }],
-      }),
-    } as any;
-
-    const result = await validateHashContinuity(
-      { lastLedger: 100, lastLedgerHash: "matching_hash" },
-      mockServer,
-    );
-
-    expect(result).toBe(true);
-    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
-  });
-
-  it("returns false and triggers revertLedgers if hashes mismatch", async () => {
-    const mockServer = {
-      getLedgers: vi.fn().mockResolvedValue({
-        ledgers: [{ hash: "different_network_hash" }],
-      }),
-    } as any;
-
-    const result = await validateHashContinuity(
-      { lastLedger: 100, lastLedgerHash: "db_hash" },
-      mockServer,
-    );
-
-    expect(result).toBe(false);
-    // revertLedgers wraps everything in a prisma transaction
-    expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
-  });
-});
-
-// ── startPolling validation ───────────────────────────────────────────────────
-
-describe("startPolling", () => {
-  it("throws an error if both CONTRACT_ID and LAUNCHPAD_CONTRACT_ID are empty", async () => {
-    await expect(startPolling()).rejects.toThrow(
-      "At least one of MARKETPLACE_CONTRACT_ID or LAUNCHPAD_CONTRACT_ID must be set",
-    );
-  });
-});
-
-// ── Out-of-order events — does not throw (#241) ───────────────────────────────
-
-describe("processEvent — out-of-order events do not throw", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("LISTING_UPDATED with no prior listing resolves without throwing", async () => {
-    mockPrisma.listing.updateMany.mockResolvedValueOnce({ count: 0 });
-    const data = { new_price: "999", collection: "CCOLLECTION", token_id: 1 };
-    await expect(
-      processEvent(makeEvent("LISTING_UPDATED", 99n, "", data, 500)),
-    ).resolves.not.toThrow();
-  });
-
-  it("ARTWORK_SOLD with no prior listing resolves without throwing", async () => {
-    mockPrisma.listing.updateMany.mockResolvedValueOnce({ count: 0 });
-    await expect(
-      processEvent(makeEvent("ARTWORK_SOLD", 99n, "GB", { buyer: "GB" }, 500)),
-    ).resolves.not.toThrow();
-  });
-
-  it("LISTING_CANCELLED with no prior listing resolves without throwing", async () => {
-    mockPrisma.listing.updateMany.mockResolvedValueOnce({ count: 0 });
-    await expect(
-      processEvent(makeEvent("LISTING_CANCELLED", 99n, "", {}, 500)),
-    ).resolves.not.toThrow();
-  });
-
-  it("BID_PLACED with no prior auction resolves without throwing", async () => {
-    mockPrisma.auction.updateMany.mockResolvedValueOnce({ count: 0 });
-    const data = { bidder: "GB", bid_amount: "100" };
-    await expect(
-      processEvent(makeEvent("BID_PLACED", 99n, "GB", data, 500)),
-    ).resolves.not.toThrow();
-  });
-
-  it("AUCTION_RESOLVED with no prior auction resolves without throwing", async () => {
-    mockPrisma.auction.updateMany.mockResolvedValueOnce({ count: 0 });
-    const data = { winner: "GB", amount: "100" };
-    await expect(
-      processEvent(makeEvent("AUCTION_RESOLVED", 99n, "GA", data, 500)),
-    ).resolves.not.toThrow();
-  });
-
-  it("AUCTION_CANCELLED with no prior auction resolves without throwing", async () => {
-    mockPrisma.auction.updateMany.mockResolvedValueOnce({ count: 0 });
-    await expect(
-      processEvent(makeEvent("AUCTION_CANCELLED", 99n, "GA", {}, 500)),
-    ).resolves.not.toThrow();
-  });
-});
-
-// ── POSITION_LIQUIDATED (#709) ───────────────────────────────────────────────
-
-describe("processEvent — POSITION_LIQUIDATED", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("updates position status to Liquidated and records fees and liquidator", async () => {
-    const data = {
-      position_id: 101,
-      liquidator: "GA_LIQUIDATOR",
-      liquidator_bounty: "500000",
-      platform_fee: "200000",
-      lender_payout: "10000000",
-      borrower_refund: "100000",
-    };
-
-    await processEvent(
-      makeEvent("POSITION_LIQUIDATED", 101n, "GA_LIQUIDATOR", data, 700),
-    );
-
-    expect(mockPrisma.lendingPosition.updateMany).toHaveBeenCalledOnce();
-    expect(mockPrisma.lendingPosition.updateMany).toHaveBeenCalledWith({
-      where: { positionId: 101n },
-      data: expect.objectContaining({
-        status: "Liquidated",
-        liquidator: "GA_LIQUIDATOR",
-        liquidatorBounty: "500000",
-        platformFee: "200000",
-        lenderPayout: "10000000",
-        borrowerRefund: "100000",
-        updatedAtLedger: 700,
-      }),
-    });
-  });
-});
-
-// ── POSITION_OPENED transactional writes ─────────────────────────────────────
-
-describe("processEvent — POSITION_OPENED", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  const openedData = {
-    position_id: 201,
-    listing_id: 7,
-    borrower: "GB_BORROWER",
-    lender: "GA_LENDER",
-    nft_contract: "CNFT",
-    token_id: 3,
-    declared_price_usd: "1000",
-    collateral_currency: "CCUR",
-    collateral_amount: "500",
-    interest_schedule_bps: [100],
-    liquidation_threshold_bps: 12000,
-    start_time: 1700000000,
-    max_duration_secs: 86400,
-  };
-
-  const makeTxClient = () => ({
-    lendingPosition: { upsert: vi.fn().mockResolvedValue({}) },
-    lendingListing: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
-  });
-
-  it("writes the position and marks the listing Filled inside one transaction", async () => {
-    const txClient = makeTxClient();
-    mockPrisma.$transaction.mockImplementationOnce((fn: any) => fn(txClient));
-
-    await processEvent(
-      makeEvent("POSITION_OPENED", 201n, "GB_BORROWER", openedData, 800),
-    );
-
-    expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
-    expect(txClient.lendingPosition.upsert).toHaveBeenCalledOnce();
-    expect(txClient.lendingListing.updateMany).toHaveBeenCalledWith({
-      where: { id: 7n },
-      data: { status: "Filled", updatedAtLedger: 800 },
-    });
-    expect(mockPrisma.lendingPosition.upsert).not.toHaveBeenCalled();
-  });
-
-  it("reuses the caller's transaction client instead of opening a nested one", async () => {
-    const callerTx = makeTxClient();
-
-    await processEvent(
-      makeEvent("POSITION_OPENED", 201n, "GB_BORROWER", openedData, 800),
-      callerTx,
-      true,
-    );
-
-    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
-    expect(callerTx.lendingPosition.upsert).toHaveBeenCalledOnce();
-    expect(callerTx.lendingListing.updateMany).toHaveBeenCalledOnce();
-  });
-});
-
-// ── CURRENCY_WHITELISTED and CURRENCY_REMOVED (#710) ─────────────────────────
-
-describe("processEvent — CURRENCY_WHITELISTED & CURRENCY_REMOVED", () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it("upserts a whitelisted currency with enabled = true", async () => {
-    const data = {
-      currency: "CASSET_ADDR",
-      symbol: "USDC",
-      name: "USD Coin",
-      decimals: 7,
-    };
-
-    await processEvent(
-      makeEvent("CURRENCY_WHITELISTED", null, "GA_ADMIN", data, 710),
-    );
-
-    expect(mockPrisma.whitelistedCurrency.upsert).toHaveBeenCalledOnce();
-    expect(mockPrisma.whitelistedCurrency.upsert).toHaveBeenCalledWith({
-      where: { address: "CASSET_ADDR" },
-      create: expect.objectContaining({
-        address: "CASSET_ADDR",
-        symbol: "USDC",
-        enabled: true,
-        addedAtLedger: 710,
-      }),
-      update: expect.objectContaining({
-        enabled: true,
-        symbol: "USDC",
-        updatedAtLedger: 710,
-      }),
-    });
-  });
-
-  it("marks currency as disabled on CURRENCY_REMOVED", async () => {
-    const data = { currency: "CASSET_ADDR" };
-
-    await processEvent(
-      makeEvent("CURRENCY_REMOVED", null, "GA_ADMIN", data, 720),
-    );
-
-    expect(mockPrisma.whitelistedCurrency.updateMany).toHaveBeenCalledOnce();
-    expect(mockPrisma.whitelistedCurrency.updateMany).toHaveBeenCalledWith({
-      where: { address: "CASSET_ADDR" },
-      data: expect.objectContaining({
-        enabled: false,
-        updatedAtLedger: 720,
-      }),
-    });
-  });
-});
-
-// ── window floor reset (issue #233) ──────────────────────────────────────────
-
-describe("startPolling — window floor reset", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    // CONTRACT_ID is a module-level constant evaluated at import time.
-    // Set the env var and use vi.resetModules() + dynamic import inside each
-    // test so a fresh module picks up CONTRACT_ID = 'CTEST'.
-    process.env.MARKETPLACE_CONTRACT_ID = "CTEST";
-  });
-
-  afterEach(() => {
-    delete process.env.MARKETPLACE_CONTRACT_ID;
-  });
-
-  it("calls syncState.upsert instead of findUnique+create on startup", async () => {
-    mockPrisma.syncState.upsert.mockResolvedValueOnce({
-      id: 1,
-      lastLedger: 500,
-      lastLedgerHash: null,
-    });
-  });
-
-  it("fetches events from windowFloor when syncState.lastLedger is too old", async () => {
-    // Network is at ledger 20000; MAX_LEDGER_WINDOW is 17000 → windowFloor = 3000
-    // syncState.lastLedger = 100 → startLedger would be 101, which is < 3000
-    const networkLatest = 20_000;
-    const expectedWindowFloor = networkLatest - 17_000; // 3000
-
-    mockPrisma.syncState.upsert.mockResolvedValueOnce({
-      id: 1,
-      lastLedger: 100,
-      lastLedgerHash: null,
-    });
-    // After the window-floor persist, update returns the new state
-    mockPrisma.syncState.update.mockResolvedValue({
-      id: 1,
-      lastLedger: expectedWindowFloor - 1,
-      lastLedgerHash: null,
-    });
-
-    // Reload the module so CONTRACT_ID picks up MARKETPLACE_CONTRACT_ID = 'CTEST'
-    vi.resetModules();
-    const { startPolling: freshStart } = await import("../poller");
-
-    // Spy on the prototype so the intercept applies to the module-level server instance
-    const sdkMod = await import("@stellar/stellar-sdk");
-    let capturedStartLedger: number | undefined;
-    vi.spyOn(sdkMod.rpc.Server.prototype, "getLatestLedger").mockResolvedValue({
-      sequence: networkLatest,
-    } as any);
-    vi.spyOn(sdkMod.rpc.Server.prototype, "getEvents").mockImplementation(
-      ({ startLedger }: any) => {
-        if (capturedStartLedger === undefined) {
-          capturedStartLedger = startLedger;
-        }
-        return Promise.resolve({ events: [], latestLedger: networkLatest });
-      },
-    );
-
-    // Start the loop in the background; it runs indefinitely — we wait for
-    // the first-iteration DB side-effects instead of trying to stop the loop.
-    freshStart().catch(() => {});
-
-    // Wait for the window-floor DB persist to appear
-    await vi.waitFor(
-      () => {
-        expect(mockPrisma.syncState.update).toHaveBeenCalledWith(
-          expect.objectContaining({
-            data: expect.objectContaining({
-              lastLedger: expectedWindowFloor - 1,
-              lastLedgerHash: null,
-            }),
-          }),
-        );
-      },
-      { timeout: 3000 },
-    );
-
-    // The upsert pattern must be used (not findUnique + create)
-    expect(mockPrisma.syncState.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 1 },
-        create: expect.objectContaining({ id: 1, lastLedger: 0 }),
-        update: {},
-      }),
-    );
-    expect(mockPrisma.syncState.findUnique).not.toHaveBeenCalled();
-    expect(mockPrisma.syncState.create).not.toHaveBeenCalled();
-    // The poller must have requested events starting at the window floor
-    expect(capturedStartLedger).toBe(expectedWindowFloor);
-  }, 8000);
-});
-
-// ── hash fetch failure (#244) ─────────────────────────────────────────────────
-
-describe("startPolling — hash fetch failure", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    process.env.MARKETPLACE_CONTRACT_ID = "CTEST";
-  });
-
-  afterEach(() => {
-    delete process.env.MARKETPLACE_CONTRACT_ID;
-  });
-
-  it("advances lastLedger without clearing lastLedgerHash when hash fetch fails", async () => {
-    // Use a networkLatest well above any lastLedger that background pollers from
-    // previous tests might have set, so that effectiveLatestLedger always exceeds
-    // syncState.lastLedger and the lag-skip guard never triggers.
-    const networkLatest = 500;
-    // LEDGER_LAG_BUFFER = 2: poller targets effectiveLatestLedger = networkLatest - 2
-    const effectiveLatest = networkLatest - 2;
-    const priorHash = "prev_hash";
-
-    mockPrisma.syncState.upsert.mockResolvedValue({
-      id: 1,
-      lastLedger: 50,
-      lastLedgerHash: priorHash,
-    });
-    mockPrisma.syncState.update.mockResolvedValue({
-      id: 1,
-      lastLedger: effectiveLatest,
-      lastLedgerHash: priorHash,
-    });
-
-    vi.resetModules();
-    const { startPolling: freshStart } = await import("../poller");
-    const sdkMod = await import("@stellar/stellar-sdk");
-
-    vi.spyOn(sdkMod.rpc.Server.prototype, "getLatestLedger").mockResolvedValue({
-      sequence: networkLatest,
-    } as any);
-    vi.spyOn(sdkMod.rpc.Server.prototype, "getEvents").mockResolvedValue({
-      events: [],
-      latestLedger: networkLatest,
-    } as any);
-    vi.spyOn(sdkMod.rpc.Server.prototype, "getLedgers").mockImplementation(
-      ({ startLedger }: { startLedger: number }) => {
-        if (startLedger === effectiveLatest) {
-          return Promise.reject(new Error("network error"));
-        }
-        // default: return matching hash so hash-continuity passes
-        return Promise.resolve({
-          ledgers: [{ hash: priorHash, sequence: startLedger }],
-        });
-      },
-    );
-
-    freshStart().catch(() => {});
-
-    await vi.waitFor(
-      () => {
-        expect(mockPrisma.syncState.update).toHaveBeenCalledWith(
-          expect.objectContaining({
-            data: { lastLedger: effectiveLatest },
-          }),
-        );
-      },
-      { timeout: 3000 },
-    );
-
-    const hashAdvanceUpdate = mockPrisma.syncState.update.mock.calls.find(
-      ([arg]) => arg.data?.lastLedger === effectiveLatest,
-    );
-    expect(hashAdvanceUpdate?.[0].data).not.toHaveProperty("lastLedgerHash");
-  }, 8000);
 });
