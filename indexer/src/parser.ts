@@ -120,18 +120,18 @@ export function parseMarketplaceEvent(
     listingId = BigInt(nativeData.position_id);
   }
 
-  // Identify actor based on event type
   if (nativeData.liquidator) actor = nativeData.liquidator.toString();
   else if (nativeData.borrower) actor = nativeData.borrower.toString();
   else if (nativeData.lender) actor = nativeData.lender.toString();
   else if (nativeData.artist) actor = nativeData.artist.toString();
   else if (nativeData.creator) actor = nativeData.creator.toString();
-  else if (nativeData.borrower) actor = nativeData.borrower.toString();
+  else if (nativeData.owner) actor = nativeData.owner.toString();
   else if (nativeData.offerer) actor = nativeData.offerer.toString();
   else if (nativeData.bidder) actor = nativeData.bidder.toString();
   else if (nativeData.buyer) actor = nativeData.buyer.toString();
   else if (nativeData.user) actor = nativeData.user.toString();
   else if (nativeData.admin) actor = nativeData.admin.toString();
+
 
   // For deploy events the value is a tuple (creator, collection_address)
   // scValToNative returns an array for tuples

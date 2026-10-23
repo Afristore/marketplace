@@ -176,19 +176,25 @@ impl LazyMint721 {
         }
 
         // 3. Supply check
-        let next_id: u64 = env
+        let supply: u64 = env
             .storage()
             .instance()
-            .get(&DataKey::NextTokenId)
+            .get(&DataKey::TotalSupply)
             .unwrap_or(0);
         let max: u64 = env
             .storage()
             .instance()
             .get(&DataKey::MaxSupply)
             .unwrap_or(u64::MAX);
-        if next_id >= max {
+        if supply >= max {
             return Err(Error::MaxSupplyReached);
         }
+
+        let next_id: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::NextTokenId)
+            .unwrap_or(0);
 
         // 4. Signature verification
         //    Panics on invalid signature (caught by try_redeem as host abort).

@@ -7,6 +7,56 @@ import {
 } from "@/config/tokens";
 import { getTokenWhitelist } from "@/lib/contract";
 
+/** Stellar stroops: 1 token = 10^7 base units */
+export const STELLAR_DECIMALS = 7;
+
+/**
+ * Formats a raw stroop amount (integer) to a human-readable decimal string.
+ * e.g. 10_000_000n → "1.0000000"
+ */
+export function formatTokenAmount(
+  rawAmount: bigint | number | string,
+  decimals: number = STELLAR_DECIMALS,
+): string {
+  const amount = BigInt(rawAmount);
+  const scale = BigInt(10 ** decimals);
+  const isNegative = amount < 0n;
+  const abs = isNegative ? -amount : amount;
+  const whole = abs / scale;
+  const frac = abs % scale;
+  const fracStr = frac.toString().padStart(decimals, "0");
+  return `${isNegative ? "-" : ""}${whole}.${fracStr}`;
+}
+
+/**
+ * Parses a human-readable decimal string to a raw stroop amount (bigint).
+ * e.g. "1.0000000" → 10_000_000n
+ * Rounds to `decimals` places; excess fractional digits are truncated.
+ */
+export function parseTokenAmount(
+  value: string,
+  decimals: number = STELLAR_DECIMALS,
+): bigint {
+  const trimmed = value.trim();
+  const isNegative = trimmed.startsWith("-");
+  const abs = isNegative ? trimmed.slice(1) : trimmed;
+  const [wholePart = "0", fracPart = ""] = abs.split(".");
+  const truncatedFrac = fracPart.slice(0, decimals).padEnd(decimals, "0");
+  const raw = BigInt(wholePart) * BigInt(10 ** decimals) + BigInt(truncatedFrac);
+  return isNegative ? -raw : raw;
+}
+
+/**
+ * Resolves the display symbol for a token by its contract address.
+ * Falls back to the provided default if the address is not configured.
+ */
+export function resolveTokenSymbol(
+  address: string,
+  fallback: string = "UNKNOWN",
+): string {
+  return getTokenConfigByAddress(address)?.symbol ?? fallback;
+}
+
 export function resolveSupportedTokens(
   whitelistedAddresses: readonly string[],
 ): TokenConfig[] {

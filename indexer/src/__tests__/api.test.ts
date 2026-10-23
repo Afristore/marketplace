@@ -28,6 +28,13 @@ const mockPrisma = vi.hoisted(() => {
       findUnique: vi.fn(),
       upsert: vi.fn(),
     },
+    lendingListing: {
+      findMany: vi.fn(),
+      count: vi.fn(),
+    },
+    lendingPosition: {
+      findMany: vi.fn(),
+    },
     // Array form: Promise.all(ops). Interactive form: callback(prisma).
     $transaction: vi.fn(async (arg: unknown) => {
       if (typeof arg === 'function') {
@@ -61,6 +68,36 @@ import router, { eventMatchesWallet } from '../api/routes';
 const app = express();
 app.use(express.json());
 app.use(router);
+
+describe('lending endpoints under the production /api mount', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('serves open lending offers at /api/lending/listings rather than the marketplace endpoint', async () => {
+    const mountedApp = express();
+    mountedApp.use('/api', router);
+    mockPrisma.lendingListing.findMany.mockResolvedValue([{ listingId: 3n, status: 'Open' }]);
+    mockPrisma.lendingListing.count.mockResolvedValue(1);
+
+    const response = await request(mountedApp).get('/api/lending/listings?limit=20&offset=0');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ listings: [{ listingId: '3', status: 'Open' }], total: 1 });
+    expect(mockPrisma.lendingListing.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { status: 'Open' }, take: 20 }));
+    expect(mockPrisma.listing.findMany).not.toHaveBeenCalled();
+  });
+
+  it('preserves the borrower position array expected by the dashboard', async () => {
+    const mountedApp = express();
+    mountedApp.use('/api', router);
+    mockPrisma.lendingPosition.findMany.mockResolvedValue([{ positionId: 7n, borrower: 'GBORROWER' }]);
+
+    const response = await request(mountedApp).get('/api/lending/positions/GBORROWER');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual([{ positionId: '7', borrower: 'GBORROWER' }]);
+    expect(mockPrisma.lendingPosition.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { borrower: 'GBORROWER' } }));
+  });
+});
 
 // ── Sample fixtures ───────────────────────────────────────────────────────────
 

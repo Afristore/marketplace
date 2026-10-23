@@ -28,6 +28,7 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
   const [preview, setPreview] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [successId, setSuccessId] = useState<number | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const [form, setForm] = useState({
     title: "",
     description: "",
@@ -71,6 +72,21 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedFile) return;
+    if (!Number.isFinite(form.reservePriceXlm) || form.reservePriceXlm <= 0) {
+      setValidationError("Reserve price must be greater than zero.");
+      return;
+    }
+    if (
+      !Number.isInteger(form.durationHours) ||
+      form.durationHours < 1 ||
+      form.durationHours > 720
+    ) {
+      setValidationError(
+        "Duration must be between 1 and 720 hours (30 days), in whole hours.",
+      );
+      return;
+    }
+    setValidationError(null);
     try {
       const id = await create({ ...form, imageFile: selectedFile });
       if (id !== null) {
@@ -118,7 +134,20 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
           </p>
         </header>
 
-        <form onSubmit={handleSubmit} className="space-y-8">
+        <form
+          onSubmit={handleSubmit}
+          onInvalid={(e) => {
+            const input = e.target as HTMLInputElement;
+            if (input.id === "auction-reserve-price") {
+              setValidationError("Reserve price must be greater than zero.");
+            } else if (input.id === "auction-duration") {
+              setValidationError(
+                "Duration must be between 1 and 720 hours (30 days), in whole hours.",
+              );
+            }
+          }}
+          className="space-y-8"
+        >
           {/* Image upload */}
           <div
             onDrop={handleDrop}
@@ -156,6 +185,7 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
             )}
             <input
               ref={fileRef}
+              aria-label="Artwork image"
               type="file"
               accept="image/*"
               className="hidden"
@@ -169,10 +199,14 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
           {/* Fields */}
           <div className="grid gap-6 sm:grid-cols-2">
             <div className="sm:col-span-2 space-y-2">
-              <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+              <label
+                htmlFor="auction-title"
+                className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter"
+              >
                 Title *
               </label>
               <input
+                id="auction-title"
                 required
                 value={form.title}
                 onChange={(e) => setForm({ ...form, title: e.target.value })}
@@ -182,10 +216,14 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
             </div>
 
             <div className="sm:col-span-2 space-y-2">
-              <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+              <label
+                htmlFor="auction-description"
+                className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter"
+              >
                 Description
               </label>
               <textarea
+                id="auction-description"
                 rows={3}
                 value={form.description}
                 onChange={(e) =>
@@ -197,10 +235,14 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
             </div>
 
             <div className="space-y-2">
-              <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+              <label
+                htmlFor="auction-artist"
+                className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter"
+              >
                 Artist Name *
               </label>
               <input
+                id="auction-artist"
                 required
                 value={form.artistName}
                 onChange={(e) =>
@@ -212,10 +254,14 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
             </div>
 
             <div className="space-y-2">
-              <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+              <label
+                htmlFor="auction-year"
+                className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter"
+              >
                 Creation Year *
               </label>
               <input
+                id="auction-year"
                 required
                 type="number"
                 min={1900}
@@ -227,10 +273,14 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
             </div>
 
             <div className="space-y-2">
-              <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+              <label
+                htmlFor="auction-category"
+                className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter"
+              >
                 Category *
               </label>
               <select
+                id="auction-category"
                 required
                 value={form.category}
                 onChange={(e) => setForm({ ...form, category: e.target.value })}
@@ -246,16 +296,24 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
 
             {/* ── Reserve price + token selector side-by-side ── */}
             <div className="space-y-2">
-              <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+              <label
+                htmlFor="auction-reserve-price"
+                className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter"
+              >
                 Reserve Price ({selectedToken?.symbol ?? "Token"}) *
               </label>
               <div className="relative">
                 <input
+                  id="auction-reserve-price"
                   required
                   type="number"
                   min={0.0000001}
                   step="any"
-                  value={form.reservePriceXlm}
+                  value={
+                    Number.isFinite(form.reservePriceXlm)
+                      ? form.reservePriceXlm
+                      : ""
+                  }
                   onChange={(e) =>
                     setForm({
                       ...form,
@@ -272,7 +330,10 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
 
             {/* Token address selector — the key addition for this issue */}
             <div className="space-y-2">
-              <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+              <label
+                htmlFor="auction-token-address"
+                className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter"
+              >
                 Payment Token *
               </label>
               <select
@@ -298,16 +359,26 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
             </div>
 
             <div className="sm:col-span-2 space-y-2">
-              <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+              <label
+                htmlFor="auction-duration"
+                className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter"
+              >
                 Duration (hours) *
               </label>
               <input
+                id="auction-duration"
                 required
                 type="number"
                 min={1}
-                value={form.durationHours}
+                max={720}
+                value={
+                  Number.isFinite(form.durationHours) ? form.durationHours : ""
+                }
                 onChange={(e) =>
-                  setForm({ ...form, durationHours: parseInt(e.target.value) })
+                  setForm({
+                    ...form,
+                    durationHours: parseFloat(e.target.value),
+                  })
                 }
                 className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
               />
@@ -321,9 +392,12 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
               {progress}
             </div>
           )}
-          {error && (
-            <p className="rounded-2xl bg-red-50 px-6 py-4 text-sm font-bold text-red-600 border border-red-100">
-              {error}
+          {(validationError || error) && (
+            <p
+              role="alert"
+              className="rounded-2xl bg-red-50 px-6 py-4 text-sm font-bold text-red-600 border border-red-100"
+            >
+              {validationError || error}
             </p>
           )}
 

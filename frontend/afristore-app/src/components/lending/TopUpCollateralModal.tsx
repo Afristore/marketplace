@@ -29,6 +29,10 @@ export function TopUpCollateralModal({
   const { addCollateral, isAddingCollateral, error } = useAddCollateral(borrowerPublicKey);
   const [amount, setAmount] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const parsedAmount = Number(amount);
+  const isAmountValid =
+    amount.trim() !== "" && Number.isFinite(parsedAmount) && parsedAmount > 0;
   
   const currentDebtUsd = useMemo(() => {
     if (!debt) return 0n;
@@ -63,8 +67,7 @@ export function TopUpCollateralModal({
     e.preventDefault();
     setSubmitError(null);
 
-    const parsed = Number(amount);
-    if (!amount || !Number.isFinite(parsed) || parsed <= 0) {
+    if (!isAmountValid) {
       setSubmitError("Enter an amount greater than zero");
       return;
     }
@@ -72,7 +75,7 @@ export function TopUpCollateralModal({
     // convert amount to the 7-decimal fixed-point expected by the contract
     let addedAmount: bigint;
     try {
-      addedAmount = BigInt(Math.floor(parsed * 10_000_000));
+      addedAmount = BigInt(Math.floor(parsedAmount * 10_000_000));
     } catch {
       setSubmitError("Enter a valid amount");
       return;
@@ -173,7 +176,7 @@ export function TopUpCollateralModal({
 
             <button
               type="submit"
-              disabled={isAddingCollateral || !amount}
+              disabled={isAddingCollateral || !isAmountValid}
               className="flex w-full items-center justify-center gap-2 rounded-2xl bg-mint-500 py-4 font-bold text-white shadow-lg shadow-mint-500/20 hover:bg-mint-600 transition-all disabled:opacity-50"
             >
               {isAddingCollateral ? (

@@ -30,8 +30,8 @@ describe('Prometheus Metrics API & Middleware', () => {
     expect(res.text).toContain('http_request_duration_seconds');
   });
 
-  it('records metrics for standard HTTP calls', async () => {
-    // Send a request to a standard endpoint to trigger metrics collection
+  it('records response time in histogram buckets with method, route, and status labels', async () => {
+    // Send a request to a 200 route
     await request(app)
       .get('/test')
       .expect(200);
@@ -40,6 +40,13 @@ describe('Prometheus Metrics API & Middleware', () => {
       .get('/metrics')
       .expect(200);
 
+    // Verify Prometheus formatted text containing the histogram buckets
+    expect(res.headers['content-type']).toContain('text/plain');
+    expect(res.text).toContain('http_request_duration_seconds_bucket');
+    expect(res.text).toContain('http_request_duration_seconds_count');
+    expect(res.text).toContain('http_request_duration_seconds_sum');
+    expect(res.text).toContain('le="0.005"');
+    expect(res.text).toContain('le="+Inf"');
     expect(res.text).toContain('method="GET"');
     expect(res.text).toContain('route="/test"');
     expect(res.text).toContain('status="200"');
@@ -59,3 +66,5 @@ describe('Prometheus Metrics API & Middleware', () => {
     expect(res.text).toContain('indexer_sync_latency_ledgers 333');
   });
 });
+
+

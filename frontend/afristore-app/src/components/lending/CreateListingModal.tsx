@@ -24,6 +24,7 @@ import {
 import { z } from "zod";
 import clsx from "clsx";
 import { useCreateListing } from "@/hooks/useMarketplace";
+import { useSafeToast } from "@/hooks/useSafeToast";
 
 // ── Zod schemas ──────────────────────────────────────────────
 
@@ -151,6 +152,7 @@ export function CreateListingModal({
 }: CreateListingModalProps) {
   const { create, isCreating, progress, error: hookError } =
     useCreateListing(lenderPublicKey);
+  const pushToast = useSafeToast();
   const [step, setStep] = useState(1);
   const [values, setValues] = useState<CreateListingFormValues>(INITIAL_VALUES);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -228,8 +230,11 @@ export function CreateListingModal({
       tokenAddress,
     });
     if (listingId !== null) {
+      pushToast(`Listing #${listingId} created successfully`, "success");
       onSuccess?.(listingId);
       onClose();
+    } else if (hookError) {
+      pushToast(hookError, "error");
     }
   };
 
