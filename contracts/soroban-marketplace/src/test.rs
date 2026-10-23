@@ -5286,3 +5286,36 @@ fn test_add_token_to_whitelist_after_admin_transfer_requires_new_admin() {
     );
     client.add_token_to_whitelist(&Address::generate(&env));
 }
+
+/// Issue #1094: Unit tests for soroban-marketplace reentrancy lock failure and release guarantees
+#[test]
+fn test_reentrancy_lock_failure_and_release_guarantees_issue_1094() {
+    let (env, client, artist, _buyer, token_id, contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let listing_id = 999u64;
+
+    // Manually acquire lock inside contract context
+    env.as_contract(&contract_id, || {
+        assert!(crate::storage::acquire_listing_lock(&env, listing_id));
+        // Second acquisition fails immediately (mutual exclusion)
+        assert!(!crate::storage::acquire_listing_lock(&env, listing_id));
+
+        // Release lock
+        crate::storage::release_listing_lock(&env, listing_id);
+        // Can re-acquire after release
+        assert!(crate::storage::acquire_listing_lock(&env, listing_id));
+        crate::storage::release_listing_lock(&env, listing_id);
+    });
+
+    let auction_id = 888u64;
+    env.as_contract(&contract_id, || {
+        assert!(crate::storage::acquire_auction_lock(&env, auction_id));
+        assert!(!crate::storage::acquire_auction_lock(&env, auction_id));
+        crate::storage::release_auction_lock(&env, auction_id);
+        assert!(crate::storage::acquire_auction_lock(&env, auction_id));
+        crate::storage::release_auction_lock(&env, auction_id);
+    });
+}
+
