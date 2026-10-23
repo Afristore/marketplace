@@ -2226,3 +2226,39 @@ fn remove_approved_currency_extends_ttl() {
 
     assert!(!client.is_approved_currency(&currency));
 }
+
+/// Issue #1097: Launchpad deterministic salt isolation across multiple creators
+#[test]
+fn test_deterministic_salt_isolation_across_multiple_creators_issue_1097() {
+    let env = Env::default();
+    let (client, _admin, _fee_receiver, _creator) = setup_launchpad(&env);
+
+    let creator_a = Address::generate(&env);
+    let creator_b = Address::generate(&env);
+    let shared_salt = BytesN::from_array(&env, &[0x42u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+
+    let addr_a = client.deploy_normal_721(
+        &creator_a,
+        &String::from_str(&env, "Coll A"),
+        &String::from_str(&env, "CA"),
+        &1000u64,
+        &500u32,
+        &royalty_receiver,
+        &shared_salt,
+    );
+
+    let addr_b = client.deploy_normal_721(
+        &creator_b,
+        &String::from_str(&env, "Coll B"),
+        &String::from_str(&env, "CB"),
+        &1000u64,
+        &500u32,
+        &royalty_receiver,
+        &shared_salt,
+    );
+
+    // Identical raw salts from different creators must produce distinct addresses
+    assert_ne!(addr_a, addr_b);
+}
+
