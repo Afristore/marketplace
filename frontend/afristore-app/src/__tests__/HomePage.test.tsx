@@ -37,7 +37,10 @@ jest.mock("@/context/WalletContext", () => ({
 // Mock next/image
 jest.mock("next/image", () => ({
   __esModule: true,
-  default: (props: any) => <img {...props} />,
+  default: (props: any) => {
+    const { fill, priority, unoptimized, ...imgProps } = props;
+    return <img {...imgProps} />;
+  },
 }));
 
 // Mock components

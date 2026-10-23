@@ -149,6 +149,31 @@ fn test_distribute_two_parties() {
 }
 
 #[test]
+fn test_distribute_with_invalid_token_address_fails() {
+    let (env, client, token, contract_id) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let caller = Address::generate(&env);
+    let wrong_token = Address::generate(&env);
+
+    client.initialize(
+        &token,
+        &vec![&env, alice.clone(), bob.clone()],
+        &vec![&env, 6_000_u32, 4_000_u32],
+    );
+
+    let sac = StellarAssetClient::new(&env, &token);
+    sac.mint(&contract_id, &10_000);
+
+    let err = client
+        .try_distribute(&wrong_token, &caller)
+        .unwrap_err()
+        .unwrap();
+
+    assert_eq!(err, SplitterError::InvalidToken.into());
+}
+
+#[test]
 fn test_distribute_three_parties() {
     let (env, client, token, contract_id) = setup();
     let a = Address::generate(&env);
