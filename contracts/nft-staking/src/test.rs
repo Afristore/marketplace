@@ -338,7 +338,7 @@ fn test_stake_and_get_position() {
 
 #[test]
 fn test_pause_unpause() {
-    let (_env, staking, _user, _collection, admin) = setup_with_mock();
+    let (_env, staking, _user, _collection, _admin) = setup_with_mock();
 
     assert!(!staking.is_paused());
     staking.set_paused(&true);
