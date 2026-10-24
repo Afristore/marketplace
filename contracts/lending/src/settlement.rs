@@ -15,6 +15,9 @@ const DECIMALS: i128 = 10_000_000; // 1e7
 /// Panics with a clear message if `oracle_price <= 0` or if the arithmetic
 /// overflows, instead of panicking with an opaque divide-by-zero or wrapping.
 fn usd_to_token_amount(usd_amount: i128, oracle_price: i128) -> i128 {
+    if usd_amount < 0 {
+        panic!("InvalidAmount: usd_amount must be >= 0");
+    }
     if oracle_price <= 0 {
         panic!("InvalidOraclePrice: oracle_price must be > 0");
     }
@@ -83,6 +86,9 @@ pub fn settle(
     // ── Oracle price ──────────────────────────────────────────────────────────
     let oracle_price =
         oracle::get_price(env, &config.oracle_address, &position.collateral_currency);
+    if oracle_price <= 0 {
+        panic!("InvalidOraclePrice: oracle_price must be > 0");
+    }
 
     // ── Waterfall math ────────────────────────────────────────────────────────
     let accrued_interest_usd = compute_accrued_interest(
