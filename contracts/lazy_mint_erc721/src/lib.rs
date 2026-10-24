@@ -190,12 +190,6 @@ impl LazyMint721 {
             return Err(Error::MaxSupplyReached);
         }
 
-        let next_id: u64 = env
-            .storage()
-            .instance()
-            .get(&DataKey::NextTokenId)
-            .unwrap_or(0);
-
         // 4. Signature verification
         //    Panics on invalid signature (caught by try_redeem as host abort).
         let pubkey: BytesN<32> = env
@@ -245,20 +239,9 @@ impl LazyMint721 {
             .persistent()
             .extend_ttl(&DataKey::BalanceOf(buyer.clone()), 50_000, 100_000);
 
-        let supply: u64 = env
-            .storage()
-            .instance()
-            .get(&DataKey::TotalSupply)
-            .unwrap_or(0);
         env.storage()
             .instance()
             .set(&DataKey::TotalSupply, &(supply + 1));
-        // NextTokenId tracks highest minted ID + 1 for supply cap enforcement
-        if token_id >= next_id {
-            env.storage()
-                .instance()
-                .set(&DataKey::NextTokenId, &(token_id + 1));
-        }
 
         env.events()
             .publish((symbol_short!("redeem"), buyer), token_id);
