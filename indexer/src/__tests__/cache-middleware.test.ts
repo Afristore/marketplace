@@ -20,6 +20,8 @@ describe('Cache Middleware', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockRedisClient.isReady = true;
+    delete (mockRedisClient as any).status;
     app = express();
     app.get('/test', cacheMiddleware(30), (req, res) => {
       res.json({ message: 'fresh', value: Date.now() });
@@ -85,39 +87,16 @@ describe('Cache Middleware', () => {
   });
 
   // ── isRedisReady — status string branch ──────────────────────────────────
-  // This branch fires when the client does not expose `isReady` as a boolean
-  // (e.g. some Redis client versions use a string `status` property instead).
 
   it('skips caching when client status is not "ready"', async () => {
-    // Remove `isReady` so the status branch is reached
-    const clientWithStatus = {
-      ...mockRedisClient,
-      isReady: undefined as any,
-      status: 'connecting',
-      get: vi.fn(),
-      setEx: vi.fn(),
-    };
-
-    const localApp = express();
-    vi.doMock('../redis.js', () => ({ default: clientWithStatus }));
-    // Re-import with overridden mock is not straightforward; test the guard
-    // function directly by calling middleware with a crafted req/res.
-    const { cacheMiddleware: cm } = await import('../api/cache-middleware');
-
-    const localRouter = express.Router();
-    // Swap the module-level client by crafting a scoped test that validates
-    // the status-based guard separately through the middleware constructor.
-    // Since the middleware closes over the redis import at module level, we
-    // validate the contract by ensuring a "disconnecting" status blocks cache.
     mockRedisClient.isReady = undefined as any;
     (mockRedisClient as any).status = 'disconnecting';
 
     const res = await request(app).get('/test');
-    // With status !== 'ready' and isReady not boolean, should bypass cache.
     expect(res.status).toBe(200);
-    // Restore
-    mockRedisClient.isReady = true;
-    delete (mockRedisClient as any).status;
+    expect(res.body.message).toBe('fresh');
+    expect(mockRedisClient.get).not.toHaveBeenCalled();
+    expect(mockRedisClient.setEx).not.toHaveBeenCalled();
   });
 
   it('treats client with status "ready" as connected', async () => {
@@ -127,16 +106,10 @@ describe('Cache Middleware', () => {
 
     const res = await request(app).get('/test');
     expect(res.status).toBe(200);
-    // The response comes from the mock get() (cache hit)
     expect(res.body.message).toBe('from_status_cache');
-
-    // Restore
-    mockRedisClient.isReady = true;
-    delete (mockRedisClient as any).status;
   });
 
   // ── isRedisReady — isOpen boolean fallback branch ────────────────────────
-  // Fires when neither `isReady` is a boolean nor `status` is a string.
 
   it('falls back to isOpen when neither isReady nor status is set', async () => {
     mockRedisClient.isReady = undefined as any;
@@ -144,12 +117,8 @@ describe('Cache Middleware', () => {
 
     const res = await request(app).get('/test');
     expect(res.status).toBe(200);
-    // isOpen is truthy so cache path should be attempted (get was called or passed through)
-    // The important assertion is that the request succeeds without throwing.
     expect(res.body.message).toBe('fresh');
-
-    // Restore
-    mockRedisClient.isReady = true;
+    expect(mockRedisClient.get).toHaveBeenCalled();
   });
 
   // ── TTL is forwarded correctly ────────────────────────────────────────────
