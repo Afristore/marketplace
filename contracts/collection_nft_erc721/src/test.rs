@@ -5,10 +5,6 @@ use soroban_sdk::{
     testutils::Ledger as _, Address, BytesN, Env, IntoVal, String, Symbol,
 };
 
-use crate::contract::{
-    CollectionKind, CollectionRecord, Error as LaunchpadError, Launchpad, LaunchpadClient,
-    MAX_FEE_BPS,
-};
 use crate::{DataKey, Error, NormalNFT721, NormalNFT721Client};
 
 fn jump_ledger(env: &Env, delta: u32) {
@@ -395,4 +391,254 @@ fn approve_sets_single_token_approval() {
 
 #[test]
 fn approve_by_non_owner_fails() {
-    let (env, client, _, _)
+    let (env, client, _, _) = setup();
+    let alice = Address::generate(&env);
+    let eve = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    let id = client.mint(&alice, &String::from_str(&env, "uri"));
+    let result = client.try_approve(&eve, &bob, &id);
+    assert_eq!(result, Err(Ok(Error::NotApproved)));
+}
+
+#[test]
+fn set_approval_for_all_and_is_approved_for_all() {
+    let (env, client, _, _) = setup();
+    let owner = Address::generate(&env);
+    let operator = Address::generate(&env);
+
+    assert!(!client.is_approved_for_all(&owner, &operator));
+    client.set_approval_for_all(&owner, &operator, &true);
+    assert!(client.is_approved_for_all(&owner, &operator));
+
+    client.set_approval_for_all(&owner, &operator, &false);
+    assert!(!client.is_approved_for_all(&owner, &operator));
+}
+
+#[test]
+fn operator_can_approve_on_behalf_of_owner() {
+    let (env, client, _, _) = setup();
+    let alice = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let charlie = Address::generate(&env);
+
+    let id = client.mint(&alice, &String::from_str(&env, "uri"));
+    client.set_approval_for_all(&alice, &operator, &true);
+
+    // Operator should be able to call approve() for alice's token
+    client.approve(&operator, &charlie, &id);
+    assert_eq!(client.get_approved(&id), Some(charlie));
+}
+
+#[test]
+fn revoked_operator_cannot_transfer_from_until_reapproved() {
+    let (env, client, _, _) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let operator = Address::generate(&env);
+
+    let first = client.mint(&alice, &String::from_str(&env, "uri-0"));
+    let second = client.mint(&alice, &String::from_str(&env, "uri-1"));
+
+    client.set_approval_for_all(&alice, &operator, &true);
+    client.transfer_from(&operator, &alice, &bob, &first);
+    assert_eq!(client.owner_of(&first), bob);
+
+    client.set_approval_for_all(&alice, &operator, &false);
+    assert!(!client.is_approved_for_all(&alice, &operator));
+
+    // Revocation takes effect immediately and the failed call changes nothing.
+    let result = client.try_transfer_from(&operator, &alice, &bob, &second);
+    assert_eq!(result, Err(Ok(Error::NotApproved)));
+    assert_eq!(client.owner_of(&second), alice);
+    assert_eq!(client.balance_of(&alice), 1);
+    assert_eq!(client.balance_of(&bob), 1);
+
+    client.set_approval_for_all(&alice, &operator, &true);
+    client.transfer_from(&operator, &alice, &bob, &second);
+    assert_eq!(client.owner_of(&second), bob);
+}
+
+#[test]
+fn operator_revocation_is_scoped_to_the_revoking_owner() {
+    let (env, client, _, _) = setup();
+    let alice = Address::generate(&env);
+    let carol = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let operator = Address::generate(&env);
+
+    let alice_token = client.mint(&alice, &String::from_str(&env, "uri-0"));
+    let carol_token = client.mint(&carol, &String::from_str(&env, "uri-1"));
+
+    client.set_approval_for_all(&alice, &operator, &true);
+    client.set_approval_for_all(&carol, &operator, &true);
+    client.set_approval_for_all(&alice, &operator, &false);
+
+    assert!(!client.is_approved_for_all(&alice, &operator));
+    assert!(client.is_approved_for_all(&carol, &operator));
+
+    let result = client.try_transfer_from(&operator, &alice, &bob, &alice_token);
+    assert_eq!(result, Err(Ok(Error::NotApproved)));
+    assert_eq!(client.owner_of(&alice_token), alice);
+
+    client.transfer_from(&operator, &carol, &bob, &carol_token);
+    assert_eq!(client.owner_of(&carol_token), bob);
+}
+
+// ── Burns ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn burn_removes_token_and_decrements_supply_and_balance() {
+    let (env, client, _, _) = setup();
+    let alice = Address::generate(&env);
+
+    let id = client.mint(&alice, &String::from_str(&env, "uri"));
+    assert_eq!(client.total_supply(), 1);
+    assert_eq!(client.balance_of(&alice), 1);
+
+    client.approve(&alice, &alice, &id);
+    client.burn(&alice, &id);
+
+    assert_eq!(client.total_supply(), 0);
+    assert_eq!(client.balance_of(&alice), 0);
+
+    // ownerOf should now return TokenNotFound
+    let result = client.try_owner_of(&id);
+    assert_eq!(result, Err(Ok(Error::TokenNotFound)));
+}
+
+#[test]
+fn burn_by_non_owner_without_approval_fails() {
+    let (env, client, _, _) = setup();
+    let alice = Address::generate(&env);
+    let eve = Address::generate(&env);
+
+    let id = client.mint(&alice, &String::from_str(&env, "uri"));
+    let result = client.try_burn(&eve, &id);
+    assert_eq!(result, Err(Ok(Error::NotApproved)));
+}
+
+#[test]
+fn burn_by_approved_spender_succeeds() {
+    let (env, client, _, _) = setup();
+    let alice = Address::generate(&env);
+    let spender = Address::generate(&env);
+
+    let id = client.mint(&alice, &String::from_str(&env, "uri"));
+    client.approve(&alice, &spender, &id);
+    client.burn(&spender, &id);
+
+    let result = client.try_owner_of(&id);
+    assert_eq!(result, Err(Ok(Error::TokenNotFound)));
+}
+
+#[test]
+fn burn_by_operator_succeeds() {
+    let (env, client, _, _) = setup();
+    let alice = Address::generate(&env);
+    let operator = Address::generate(&env);
+
+    let id = client.mint(&alice, &String::from_str(&env, "uri"));
+    client.set_approval_for_all(&alice, &operator, &true);
+    client.burn(&operator, &id);
+
+    let result = client.try_owner_of(&id);
+    assert_eq!(result, Err(Ok(Error::TokenNotFound)));
+}
+
+#[test]
+fn burn_nonexistent_token_fails() {
+    let (_, client, _, _) = setup();
+    let caller = soroban_sdk::Address::generate(&client.env);
+    let result = client.try_burn(&caller, &999u64);
+    assert_eq!(result, Err(Ok(Error::TokenNotFound)));
+}
+
+// ── Ownership management ──────────────────────────────────────────────────────
+
+#[test]
+fn transfer_ownership_updates_creator() {
+    let (env, client, _, creator) = setup();
+    let new_creator = Address::generate(&env);
+
+    // original creator can transfer
+    client.transfer_ownership(&new_creator);
+    assert_eq!(client.creator(), new_creator);
+
+    // new creator can mint
+    let alice = Address::generate(&env);
+    let id = client.mint(&alice, &String::from_str(&env, "new-uri"));
+    assert_eq!(client.owner_of(&id), alice);
+    let _ = creator; // suppress unused variable warning
+}
+
+#[test]
+fn update_royalty_changes_receiver_and_bps() {
+    let (env, client, _, _) = setup();
+    let new_receiver = Address::generate(&env);
+
+    client.update_royalty(&new_receiver, &250u32);
+    let (recv, bps) = client.royalty_info();
+    assert_eq!(recv, new_receiver);
+    assert_eq!(bps, 250u32);
+}
+
+#[test]
+fn update_royalty_fails_if_not_creator() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+
+    let contract_id = env.register(NormalNFT721, ());
+    let client = NormalNFT721Client::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let royalty_receiver = Address::generate(&env);
+
+    client.initialize(
+        &creator,
+        &String::from_str(&env, "Test Collection 721"),
+        &String::from_str(&env, "T721"),
+        &1_000u64,
+        &500u32,
+        &royalty_receiver,
+    );
+
+    let new_receiver = Address::generate(&env);
+    let result = client.try_update_royalty(&new_receiver, &250u32);
+    assert!(result.is_err());
+}
+
+// ── Balance corruption fix test ───────────────────────────────────────────────
+
+#[test]
+fn transfer_from_zero_balance_fails_correctly() {
+    let (env, client, _, _) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+
+    // Alice has no tokens, balance should be 0
+    assert_eq!(client.balance_of(&alice), 0u64);
+
+    // Mint a token to bob
+    client.mint(&bob, &String::from_str(&env, "uri-0"));
+    assert_eq!(client.balance_of(&bob), 1u64);
+
+    // Try to transfer token 0 from alice (who doesn't own it) to bob
+    // This should fail with NotApproved since Alice is not approved to transfer Bob's token
+    let result = client.try_transfer_from(&alice, &alice, &bob, &0u64);
+    assert_eq!(result, Err(Ok(Error::NotApproved)));
+}
+
+// ── next_token_id ─────────────────────────────────────────────────────────────
+
+#[test]
+fn next_token_id_advances_with_each_mint() {
+    let (env, client, _, _) = setup();
+    let alice = Address::generate(&env);
+
+    assert_eq!(client.next_token_id(), 0u64);
+    client.mint(&alice, &String::from_str(&env, "uri-0"));
+    assert_eq!(client.next_token_id(), 1u64);
+    client.mint(&alice, &String::from_str(&env, "uri-1"));
+    assert_eq!(client.next_token_id(), 2u64);
+}

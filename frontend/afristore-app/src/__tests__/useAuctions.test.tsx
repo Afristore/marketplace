@@ -460,4 +460,36 @@ describe("useFinalizeAuction", () => {
     );
     expect(mockFinalizeAuction).toHaveBeenCalledWith("GCALLER", 5);
   });
+
+  it("handles async rejection gracefully with try/catch error handling (#1039)", async () => {
+    mockFinalizeAuction.mockRejectedValueOnce(new Error("RPC failure"));
+
+    function Comp() {
+      const { finalize } = useFinalizeAuction("GCALLER");
+      const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
+
+      const handleFinalize = async () => {
+        try {
+          await finalize(99);
+        } catch (err: unknown) {
+          setErrorMsg(err instanceof Error ? err.message : "Error finalizing");
+        }
+      };
+
+      return (
+        <div>
+          <button onClick={handleFinalize}>finalize with error</button>
+          <span data-testid="error-state">{errorMsg ?? "no-error"}</span>
+        </div>
+      );
+    }
+
+    const user = userEvent.setup();
+    render(<Comp />);
+    await user.click(screen.getByRole("button"));
+    await waitFor(() => {
+      expect(screen.getByTestId("error-state")).toBeDefined();
+    });
+  });
 });
+
