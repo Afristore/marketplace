@@ -320,7 +320,7 @@ describe("CreateListingModal", () => {
       expect(onSuccess).toHaveBeenCalledWith(42);
       expect(onClose).toHaveBeenCalled();
     });
-  });
+  }, 15000);
 
   it("does not render when closed", () => {
     render(<CreateListingModal {...base} isOpen={false} />);

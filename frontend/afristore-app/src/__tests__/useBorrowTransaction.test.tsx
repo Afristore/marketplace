@@ -2,28 +2,21 @@
  * Unit tests for useBorrowTransaction mutation hook
  * Issue #1102: Tests for error states and wallet rejections
  */
-import { renderHook, waitFor } from "@testing-library/react";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { useBorrowTransaction } from "@/hooks/useBorrowTransaction";
 
 // Mock dependencies
-jest.mock("@/context/WalletContext", () => ({
-  useWalletContext: jest.fn(() => ({
-    publicKey: "GTEST...",
-    status: "CONNECTED",
-  })),
+const mockBorrow = jest.fn();
+const mockPushToast = jest.fn();
+
+jest.mock("@/lib/lending", () => ({
+  borrow: (...args: unknown[]) => mockBorrow(...args),
 }));
 
-jest.mock("@/lib/stellar", () => ({
-  submitTransaction: jest.fn(),
-  simulateTransaction: jest.fn(),
-}));
-
-jest.mock("react-hot-toast", () => ({
-  toast: {
-    error: jest.fn(),
-    success: jest.fn(),
-    loading: jest.fn(),
-  },
+jest.mock("@/components/ToastProvider", () => ({
+  useToast: () => ({
+    pushToast: mockPushToast,
+  }),
 }));
 
 describe("useBorrowTransaction", () => {
@@ -33,25 +26,29 @@ describe("useBorrowTransaction", () => {
 
   it("handles user rejection in Freighter wallet", async () => {
     try {
-      const { result } = renderHook(() => useBorrowTransaction());
+      mockBorrow.mockRejectedValueOnce(
+        new Error("User declined to sign transaction")
+      );
 
-      // Simulate user rejection
-      const mockError = new Error("User declined to sign transaction");
-      
-      if (result.current.mutate) {
-        result.current.mutate(
-          { loanId: "1", amount: "1000" },
-          {
-            onError: (error) => {
-              expect(error.message).toContain("declined");
-            },
-          }
-        );
-      }
+      const { result } = renderHook(() =>
+        useBorrowTransaction("GBORROWER_TEST")
+      );
+
+      await act(async () => {
+        const res = await result.current.borrow({
+          listingId: 1,
+          collateralCurrency: "USDC",
+          collateralAmount: "1000",
+        });
+        expect(res).toBeNull();
+      });
 
       await waitFor(() => {
         expect(result.current.isLoading).toBe(false);
-        expect(result.current.error).toBeTruthy();
+        expect(result.current.isBorrowing).toBe(false);
+        expect(result.current.error).toContain(
+          "User declined to sign transaction"
+        );
       });
     } catch (error) {
       console.error("Failed to test user rejection:", error);
@@ -61,25 +58,24 @@ describe("useBorrowTransaction", () => {
 
   it("handles RPC network timeout errors", async () => {
     try {
-      const { result } = renderHook(() => useBorrowTransaction());
+      mockBorrow.mockRejectedValueOnce(new Error("Network request timed out"));
 
-      // Simulate RPC timeout
-      const mockError = new Error("Network request timed out");
+      const { result } = renderHook(() =>
+        useBorrowTransaction("GBORROWER_TEST")
+      );
 
-      if (result.current.mutate) {
-        result.current.mutate(
-          { loanId: "1", amount: "1000" },
-          {
-            onError: (error) => {
-              expect(error.message).toContain("timed out");
-            },
-          }
-        );
-      }
+      await act(async () => {
+        const res = await result.current.borrow({
+          listingId: 1,
+          collateralCurrency: "USDC",
+          collateralAmount: "1000",
+        });
+        expect(res).toBeNull();
+      });
 
       await waitFor(() => {
         expect(result.current.isLoading).toBe(false);
-        expect(result.current.error).toBeTruthy();
+        expect(result.current.error).toContain("Network request timed out");
       });
     } catch (error) {
       console.error("Failed to test RPC timeout:", error);
@@ -89,25 +85,28 @@ describe("useBorrowTransaction", () => {
 
   it("handles simulation failure errors", async () => {
     try {
-      const { result } = renderHook(() => useBorrowTransaction());
+      mockBorrow.mockRejectedValueOnce(
+        new Error("Transaction simulation failed")
+      );
 
-      // Simulate simulation failure
-      const mockError = new Error("Transaction simulation failed");
+      const { result } = renderHook(() =>
+        useBorrowTransaction("GBORROWER_TEST")
+      );
 
-      if (result.current.mutate) {
-        result.current.mutate(
-          { loanId: "1", amount: "1000" },
-          {
-            onError: (error) => {
-              expect(error.message).toContain("simulation failed");
-            },
-          }
-        );
-      }
+      await act(async () => {
+        const res = await result.current.borrow({
+          listingId: 1,
+          collateralCurrency: "USDC",
+          collateralAmount: "1000",
+        });
+        expect(res).toBeNull();
+      });
 
       await waitFor(() => {
         expect(result.current.isLoading).toBe(false);
-        expect(result.current.error).toBeTruthy();
+        expect(result.current.error).toContain(
+          "Transaction simulation failed"
+        );
       });
     } catch (error) {
       console.error("Failed to test simulation failure:", error);
@@ -117,21 +116,23 @@ describe("useBorrowTransaction", () => {
 
   it("clears loading state after error", async () => {
     try {
-      const { result } = renderHook(() => useBorrowTransaction());
+      mockBorrow.mockRejectedValueOnce(new Error("Some unexpected error"));
 
-      if (result.current.mutate) {
-        result.current.mutate(
-          { loanId: "1", amount: "1000" },
-          {
-            onError: () => {
-              // Error occurred
-            },
-          }
-        );
-      }
+      const { result } = renderHook(() =>
+        useBorrowTransaction("GBORROWER_TEST")
+      );
+
+      await act(async () => {
+        await result.current.borrow({
+          listingId: 1,
+          collateralCurrency: "USDC",
+          collateralAmount: "1000",
+        });
+      });
 
       await waitFor(() => {
         expect(result.current.isLoading).toBe(false);
+        expect(result.current.isBorrowing).toBe(false);
       });
     } catch (error) {
       console.error("Failed to test loading state clearing:", error);
@@ -141,22 +142,26 @@ describe("useBorrowTransaction", () => {
 
   it("surfaces error toast on failure", async () => {
     try {
-      const toast = require("react-hot-toast").toast;
-      const { result } = renderHook(() => useBorrowTransaction());
+      mockBorrow.mockRejectedValueOnce(new Error("Contract execution failed"));
 
-      if (result.current.mutate) {
-        result.current.mutate(
-          { loanId: "1", amount: "1000" },
-          {
-            onError: () => {
-              expect(toast.error).toHaveBeenCalled();
-            },
-          }
-        );
-      }
+      const { result } = renderHook(() =>
+        useBorrowTransaction("GBORROWER_TEST")
+      );
+
+      await act(async () => {
+        await result.current.borrow({
+          listingId: 1,
+          collateralCurrency: "USDC",
+          collateralAmount: "1000",
+        });
+      });
 
       await waitFor(() => {
         expect(result.current.error).toBeTruthy();
+        expect(mockPushToast).toHaveBeenCalledWith(
+          expect.stringContaining("Contract execution failed"),
+          "error"
+        );
       });
     } catch (error) {
       console.error("Failed to test error toast:", error);
@@ -166,21 +171,26 @@ describe("useBorrowTransaction", () => {
 
   it("executes successful borrow transaction", async () => {
     try {
-      const { result } = renderHook(() => useBorrowTransaction());
+      mockBorrow.mockResolvedValueOnce(101);
 
-      if (result.current.mutate) {
-        result.current.mutate(
-          { loanId: "1", amount: "1000" },
-          {
-            onSuccess: () => {
-              expect(result.current.error).toBeNull();
-            },
-          }
-        );
-      }
+      const { result } = renderHook(() =>
+        useBorrowTransaction("GBORROWER_TEST")
+      );
+
+      let positionId: number | null = null;
+      await act(async () => {
+        positionId = await result.current.borrow({
+          listingId: 1,
+          collateralCurrency: "USDC",
+          collateralAmount: "1000",
+        });
+      });
 
       await waitFor(() => {
+        expect(positionId).toBe(101);
         expect(result.current.isLoading).toBe(false);
+        expect(result.current.isBorrowing).toBe(false);
+        expect(result.current.error).toBeNull();
       });
     } catch (error) {
       console.error("Failed to test successful transaction:", error);
