@@ -707,10 +707,10 @@ fn test_is_paused_reflects_set_paused() {
     assert!(!staking.is_paused());
 }
 
-/// When paused, stake and unstake entrypoints are gated by `ContractPaused`
-/// and pre-existing state is left untouched.
+/// When paused, stake entrypoint is gated by `ContractPaused`
+/// but stakers can retrieve their NFTs via unstake.
 #[test]
-fn test_is_paused_blocks_stake_and_unstake() {
+fn test_is_paused_blocks_stake_but_allows_unstake() {
     let (env, staking, user, collection, _admin) = setup_with_mock();
 
     mint_token(&env, &collection, &user, 0);
@@ -727,26 +727,19 @@ fn test_is_paused_blocks_stake_and_unstake() {
         .unwrap();
     assert_eq!(stake_err, StakingError::ContractPaused.into());
 
-    // Unstaking the existing position is also rejected while paused.
-    let unstake_err = staking
-        .try_unstake_erc721(&user, &collection, &0)
-        .unwrap_err()
-        .unwrap();
-    assert_eq!(unstake_err, StakingError::ContractPaused.into());
-
-    // State untouched by the rejected calls.
-    assert!(staking
-        .get_staked_position(&user, &collection, &0)
-        .is_some());
-    assert_eq!(staking.total_staked(), 1);
-
-    // Unpausing restores normal operation.
-    staking.set_paused(&false);
-    assert!(!staking.is_paused());
+    // Unstaking the existing position succeeds while paused (user principal is not frozen).
     staking.unstake_erc721(&user, &collection, &0);
     assert!(staking
         .get_staked_position(&user, &collection, &0)
         .is_none());
+    assert_eq!(staking.total_staked(), 0);
+
+    let owner: Address = env.invoke_contract(
+        &collection,
+        &Symbol::new(&env, "owner_of"),
+        soroban_sdk::vec![&env, 0u64.into_val(&env)],
+    );
+    assert_eq!(owner, user);
 }
 
 // ── Issue #832: unstake_erc721 ───────────────────────────────────────────────
@@ -825,31 +818,27 @@ fn test_unstake_erc721_fails_when_not_staked() {
     assert_eq!(owner, user);
 }
 
-/// Paused pool: `unstake_erc721` reverts with `ContractPaused` and keeps state.
+/// Paused pool: `unstake_erc721` succeeds even when paused.
 #[test]
-fn test_unstake_erc721_fails_when_paused() {
+fn test_unstake_erc721_succeeds_when_paused() {
     let (env, staking, user, collection, _admin) = setup_with_mock();
 
     mint_token(&env, &collection, &user, 0);
     staking.stake_erc721(&user, &collection, &0);
 
     staking.set_paused(&true);
-    let err = staking
-        .try_unstake_erc721(&user, &collection, &0)
-        .unwrap_err()
-        .unwrap();
-    assert_eq!(err, StakingError::ContractPaused.into());
+    staking.unstake_erc721(&user, &collection, &0);
 
     assert!(staking
         .get_staked_position(&user, &collection, &0)
-        .is_some());
-    assert_eq!(staking.total_staked(), 1);
+        .is_none());
+    assert_eq!(staking.total_staked(), 0);
     let owner: Address = env.invoke_contract(
         &collection,
         &Symbol::new(&env, "owner_of"),
         soroban_sdk::vec![&env, 0u64.into_val(&env)],
     );
-    assert_eq!(owner, staking.address);
+    assert_eq!(owner, user);
 }
 
 /// Wrong collection: `unstake_erc721` reverts with `InvalidToken`.
@@ -1671,28 +1660,23 @@ fn test_unstake_erc1155_fails_when_not_staked() {
     assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 0);
 }
 
-/// Paused pool: `unstake_erc1155` reverts with `ContractPaused` and keeps the
-/// position plus escrow intact.
+/// Paused pool: `unstake_erc1155` succeeds even when paused and returns escrowed tokens.
 #[test]
-fn test_unstake_erc1155_fails_when_paused() {
+fn test_unstake_erc1155_succeeds_when_paused() {
     let (env, staking, user, collection, _admin) = setup_erc1155();
 
     mint_erc1155(&env, &collection, &user, 0, 10);
     staking.stake_erc1155(&user, &collection, &0, &4);
     staking.set_paused(&true);
 
-    let err = staking
-        .try_unstake_erc1155(&user, &collection, &0, &4)
-        .unwrap_err()
-        .unwrap();
-    assert_eq!(err, StakingError::ContractPaused.into());
+    staking.unstake_erc1155(&user, &collection, &0, &4);
 
     assert!(staking
         .get_staked_position(&user, &collection, &0)
-        .is_some());
-    assert_eq!(staking.total_staked(), 1);
-    assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 4);
-    assert_eq!(erc1155_balance(&env, &collection, &user, 0), 6);
+        .is_none());
+    assert_eq!(staking.total_staked(), 0);
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 0);
+    assert_eq!(erc1155_balance(&env, &collection, &user, 0), 10);
 }
 
 /// Wrong collection: `unstake_erc1155` reverts with `InvalidToken`.
@@ -1954,7 +1938,7 @@ fn test_get_staked_position_returns_none_after_unstake() {
         .is_none());
 }
 
-/// Issue #1093: Unit tests for nft-staking paused contract rejection on all state-mutating functions
+/// Issue #1093: Unit tests for nft-staking paused contract rejection on all state-mutating functions (staking and claiming)
 #[test]
 fn test_paused_contract_rejection_on_all_state_mutating_functions_issue_1093() {
     let (env, staking, user, collection, _admin) = setup_with_mock();
@@ -1962,13 +1946,10 @@ fn test_paused_contract_rejection_on_all_state_mutating_functions_issue_1093() {
     staking.set_paused(&true);
     assert!(staking.is_paused());
 
-    // State mutating functions must be rejected with ContractPaused
+    // State mutating functions like staking must be rejected with ContractPaused
     mint_token(&env, &collection, &user, 100);
     let stake_err = staking.try_stake_erc721(&user, &collection, &100);
     assert_eq!(stake_err, Err(Ok(StakingError::ContractPaused)));
-
-    let unstake_err = staking.try_unstake_erc721(&user, &collection, &100);
-    assert_eq!(unstake_err, Err(Ok(StakingError::ContractPaused)));
 
     // Query functions continue to operate
     assert_eq!(staking.total_staked(), 0);
