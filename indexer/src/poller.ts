@@ -688,6 +688,47 @@ export async function applyDecodedEvents(decodedEvents: any[], tx: any) {
   return toInsert;
 }
 
+/**
+ * Processes a batch of events with per-event error isolation. A malformed or
+ * failing event is recorded in `indexerError` for dead-letter handling and the
+ * remaining healthy events are still processed. Errors raised while writing the
+ * dead-letter entry itself are swallowed so they never escape this function.
+ */
+export async function processEvents(events: any[], tx?: any) {
+  const db = tx ?? prisma;
+  for (const event of events) {
+    try {
+      await processEvent(event, tx);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error("Failed to process event; recording dead-letter entry", {
+        eventType: event?.eventType,
+        listingId: event?.listingId,
+        ledgerSequence: event?.ledgerSequence,
+        err: message,
+      });
+      try {
+        await db.indexerError.create({
+          data: {
+            eventType: event?.eventType ?? "unknown",
+            listingId: event?.listingId ?? null,
+            ledgerSequence: event?.ledgerSequence ?? null,
+            payload: event?.data ?? null,
+            error: message,
+          },
+        });
+      } catch (deadLetterErr) {
+        log.error("Failed to record dead-letter entry", {
+          err:
+            deadLetterErr instanceof Error
+              ? deadLetterErr.message
+              : String(deadLetterErr),
+        });
+      }
+    }
+  }
+}
+
 // Runs `work` atomically. When the caller already holds a transaction client
 // (applyDecodedEvents passes one in), reuse it: Prisma does not allow nesting
 // $transaction on a transaction client.
