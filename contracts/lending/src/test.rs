@@ -5,7 +5,301 @@ use crate::storage::{has_listing, set_config, set_currency_symbol, set_listing, 
 use crate::types::{Listing, ListingStatus, PlatformConfig, Position, PositionStatus};
 use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as TokenAdminClient};
-use soroban_sdk::{symbol_short, vec, Address, Env, IntoVal, Symbol};
+use soroban_sdk::{symbol_short, vec, Address, Env, IntoVal, String, Symbol};
+
+mod normal_nft_721 {
+    use soroban_sdk::{
+        contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
+    };
+
+    const TTL_THRESHOLD: u32 = 50_000;
+    const TTL_BUMP: u32 = 100_000;
+
+    #[contracterror]
+    #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+    #[repr(u32)]
+    pub enum Error {
+        AlreadyInitialized = 1,
+        NotInitialized = 2,
+        NotOwner = 3,
+        NotApproved = 4,
+        TokenNotFound = 5,
+        MaxSupplyReached = 6,
+    }
+
+    #[contracttype]
+    #[derive(Clone)]
+    pub enum DataKey {
+        Initialized,
+        Creator,
+        Name,
+        Symbol,
+        MaxSupply,
+        NextTokenId,
+        TotalSupply,
+        RoyaltyBps,
+        RoyaltyReceiver,
+        Owner(u64),
+        TokenUri(u64),
+        Approved(u64),
+        BalanceOf(Address),
+        ApprovedForAll(Address, Address),
+    }
+
+    #[contract]
+    pub struct NormalNFT721;
+
+    #[contractimpl]
+    #[allow(clippy::too_many_arguments)]
+    impl NormalNFT721 {
+        pub fn initialize(
+            env: Env,
+            creator: Address,
+            name: String,
+            symbol: String,
+            max_supply: u64,
+            royalty_bps: u32,
+            royalty_receiver: Address,
+        ) -> Result<(), Error> {
+            if env.storage().instance().has(&DataKey::Initialized) {
+                return Err(Error::AlreadyInitialized);
+            }
+
+            env.storage().instance().set(&DataKey::Initialized, &true);
+            env.storage().instance().set(&DataKey::Creator, &creator);
+            env.storage().instance().set(&DataKey::Name, &name);
+            env.storage().instance().set(&DataKey::Symbol, &symbol);
+            env.storage()
+                .instance()
+                .set(&DataKey::MaxSupply, &max_supply);
+            env.storage().instance().set(&DataKey::NextTokenId, &0u64);
+            env.storage().instance().set(&DataKey::TotalSupply, &0u64);
+            env.storage()
+                .instance()
+                .set(&DataKey::RoyaltyBps, &royalty_bps);
+            env.storage()
+                .instance()
+                .set(&DataKey::RoyaltyReceiver, &royalty_receiver);
+            env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
+            Ok(())
+        }
+
+        pub fn mint(env: Env, to: Address, uri: String) -> Result<u64, Error> {
+            env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
+            let creator: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::Creator)
+                .ok_or(Error::NotInitialized)?;
+            creator.require_auth();
+
+            let token_id: u64 = env
+                .storage()
+                .instance()
+                .get(&DataKey::NextTokenId)
+                .unwrap_or(0);
+            let max: u64 = env
+                .storage()
+                .instance()
+                .get(&DataKey::MaxSupply)
+                .unwrap_or(u64::MAX);
+
+            if token_id >= max {
+                return Err(Error::MaxSupplyReached);
+            }
+
+            env.storage()
+                .persistent()
+                .set(&DataKey::Owner(token_id), &to);
+            env.storage()
+                .persistent()
+                .set(&DataKey::TokenUri(token_id), &uri);
+            env.storage().persistent().extend_ttl(
+                &DataKey::Owner(token_id),
+                TTL_THRESHOLD,
+                TTL_BUMP,
+            );
+            env.storage().persistent().extend_ttl(
+                &DataKey::TokenUri(token_id),
+                TTL_THRESHOLD,
+                TTL_BUMP,
+            );
+
+            let bal: u64 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::BalanceOf(to.clone()))
+                .unwrap_or(0);
+            env.storage()
+                .persistent()
+                .set(&DataKey::BalanceOf(to.clone()), &(bal + 1));
+            env.storage().persistent().extend_ttl(
+                &DataKey::BalanceOf(to.clone()),
+                TTL_THRESHOLD,
+                TTL_BUMP,
+            );
+
+            env.storage()
+                .instance()
+                .set(&DataKey::NextTokenId, &(token_id + 1));
+            let supply: u64 = env
+                .storage()
+                .instance()
+                .get(&DataKey::TotalSupply)
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&DataKey::TotalSupply, &(supply + 1));
+
+            #[allow(deprecated)]
+            env.events()
+                .publish((symbol_short!("mint"), to), (creator, token_id));
+            Ok(token_id)
+        }
+
+        pub fn transfer(env: Env, from: Address, to: Address, token_id: u64) -> Result<(), Error> {
+            env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
+            from.require_auth();
+
+            env.storage()
+                .persistent()
+                .remove(&DataKey::Approved(token_id));
+
+            let owner: Address = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Owner(token_id))
+                .ok_or(Error::TokenNotFound)?;
+            if owner != from {
+                return Err(Error::NotOwner);
+            }
+
+            let from_bal: u64 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::BalanceOf(from.clone()))
+                .unwrap_or(0);
+            env.storage().persistent().set(
+                &DataKey::BalanceOf(from.clone()),
+                &(from_bal.saturating_sub(1)),
+            );
+            env.storage().persistent().extend_ttl(
+                &DataKey::BalanceOf(from.clone()),
+                TTL_THRESHOLD,
+                TTL_BUMP,
+            );
+
+            let to_bal: u64 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::BalanceOf(to.clone()))
+                .unwrap_or(0);
+            env.storage()
+                .persistent()
+                .set(&DataKey::BalanceOf(to.clone()), &(to_bal + 1));
+            env.storage().persistent().extend_ttl(
+                &DataKey::BalanceOf(to.clone()),
+                TTL_THRESHOLD,
+                TTL_BUMP,
+            );
+
+            env.storage()
+                .persistent()
+                .set(&DataKey::Owner(token_id), &to);
+            env.storage().persistent().extend_ttl(
+                &DataKey::Owner(token_id),
+                TTL_THRESHOLD,
+                TTL_BUMP,
+            );
+
+            #[allow(deprecated)]
+            env.events()
+                .publish((symbol_short!("transfer"), from), (to, token_id));
+            Ok(())
+        }
+
+        pub fn owner_of(env: Env, token_id: u64) -> Result<Address, Error> {
+            env.storage()
+                .persistent()
+                .get(&DataKey::Owner(token_id))
+                .ok_or(Error::TokenNotFound)
+        }
+
+        pub fn balance_of(env: Env, owner: Address) -> u64 {
+            env.storage()
+                .persistent()
+                .get(&DataKey::BalanceOf(owner))
+                .unwrap_or(0)
+        }
+    }
+}
+
+use normal_nft_721::{NormalNFT721, NormalNFT721Client};
+
+struct TestNftClient<'a> {
+    env: &'a Env,
+    pub address: Address,
+}
+
+impl<'a> TestNftClient<'a> {
+    fn new(env: &'a Env, address: &Address) -> Self {
+        Self {
+            env,
+            address: address.clone(),
+        }
+    }
+
+    fn balance(&self, owner: &Address) -> i128 {
+        NormalNFT721Client::new(self.env, &self.address).balance_of(owner) as i128
+    }
+
+    fn transfer(&self, from: &Address, to: &Address, token_id: &i128) {
+        NormalNFT721Client::new(self.env, &self.address).transfer(from, to, &(*token_id as u64));
+    }
+}
+
+struct TestNftAdminClient<'a> {
+    env: &'a Env,
+    pub address: Address,
+}
+
+impl<'a> TestNftAdminClient<'a> {
+    fn new(env: &'a Env, address: &Address) -> Self {
+        Self {
+            env,
+            address: address.clone(),
+        }
+    }
+
+    fn mint(&self, to: &Address, token_id: &i128) {
+        let target_id = *token_id as u64;
+        self.env.as_contract(&self.address, || {
+            self.env
+                .storage()
+                .instance()
+                .set(&normal_nft_721::DataKey::NextTokenId, &target_id);
+        });
+        NormalNFT721Client::new(self.env, &self.address)
+            .mint(to, &String::from_str(self.env, "ipfs://nft"));
+    }
+}
+
+fn create_nft<'a>(env: &'a Env, admin: &Address) -> (TestNftClient<'a>, TestNftAdminClient<'a>) {
+    let contract_id = env.register(NormalNFT721, ());
+    let client = NormalNFT721Client::new(env, &contract_id);
+    client.initialize(
+        admin,
+        &String::from_str(env, "Normal NFT 721"),
+        &String::from_str(env, "N721"),
+        &u64::MAX,
+        &500u32,
+        admin,
+    );
+    (
+        TestNftClient::new(env, &contract_id),
+        TestNftAdminClient::new(env, &contract_id),
+    )
+}
 
 fn create_token<'a>(env: &Env, admin: &Address) -> (TokenClient<'a>, TokenAdminClient<'a>) {
     let contract_id = env
@@ -29,7 +323,7 @@ fn test_cancel_listing_success() {
 
     let lender = Address::generate(&env);
     let token_admin = Address::generate(&env);
-    let (nft_token, nft_admin) = create_token(&env, &token_admin);
+    let (nft_token, nft_admin) = create_nft(&env, &token_admin);
 
     nft_admin.mint(&contract_id, &1);
 
@@ -116,7 +410,7 @@ fn test_borrow_success() {
     let admin = Address::generate(&env);
     let oracle_address = Address::generate(&env);
 
-    let (nft_token, nft_admin) = create_token(&env, &admin);
+    let (nft_token, nft_admin) = create_nft(&env, &admin);
     let (col_token, col_admin) = create_token(&env, &admin);
 
     nft_admin.mint(&contract_id, &1);
@@ -815,14 +1109,14 @@ fn setup_liquidate_test<'a>(
     env: &'a Env,
 ) -> (
     LendingContractClient<'a>,
-    Address,         // contract_id
-    Address,         // admin
-    Address,         // lender
-    Address,         // borrower
-    Address,         // liquidator
-    Address,         // fee_receiver
-    TokenClient<'a>, // nft_token
-    TokenClient<'a>, // col_token
+    Address,           // contract_id
+    Address,           // admin
+    Address,           // lender
+    Address,           // borrower
+    Address,           // liquidator
+    Address,           // fee_receiver
+    TestNftClient<'a>, // nft_token
+    TokenClient<'a>,   // col_token
 ) {
     env.mock_all_auths();
 
@@ -836,7 +1130,7 @@ fn setup_liquidate_test<'a>(
     let fee_receiver = Address::generate(env);
     let oracle_address = Address::generate(env);
 
-    let (nft_token, nft_admin) = create_token(env, &admin);
+    let (nft_token, nft_admin) = create_nft(env, &admin);
     let (col_token, col_admin) = create_token(env, &admin);
 
     nft_admin.mint(&borrower, &1);
@@ -1361,7 +1655,7 @@ fn test_e2e_voluntary_return() {
     let oracle = Address::generate(&env);
 
     // 1. Deploy + initialize contract
-    let (nft_token, nft_admin) = create_token(&env, &admin);
+    let (nft_token, nft_admin) = create_nft(&env, &admin);
     let (usdc_token, usdc_admin) = create_token(&env, &admin);
 
     // Mint NFT to lender
@@ -1503,8 +1797,8 @@ fn test_e2e_voluntary_return() {
         let result = crate::settlement::settle(&env, &pos, None, &config);
 
         // Transfer NFT to lender
-        let nft_client = TokenClient::new(&env, &pos.nft_contract);
-        nft_client.transfer(&contract_id, &pos.lender, &(pos.token_id as i128));
+        let nft_client = crate::contract::NftClient::new(&env, &pos.nft_contract);
+        nft_client.transfer(&contract_id, &pos.lender, &(pos.token_id as u64));
 
         // Mark position as returned
         let mut updated_pos = pos.clone();
@@ -1570,7 +1864,7 @@ fn test_e2e_liquidation() {
     let oracle = Address::generate(&env);
 
     // 1. Deploy + initialize
-    let (nft_token, nft_admin) = create_token(&env, &admin);
+    let (nft_token, nft_admin) = create_nft(&env, &admin);
     let (usdc_token, usdc_admin) = create_token(&env, &admin);
 
     nft_admin.mint(&lender, &1);
@@ -1897,7 +2191,7 @@ fn setup_return_nft<'a>(
     Address,
     Address,
     Address,
-    TokenClient<'a>,
+    TestNftClient<'a>,
     TokenClient<'a>,
 ) {
     env.mock_all_auths();
@@ -1912,7 +2206,7 @@ fn setup_return_nft<'a>(
     let fee_receiver = Address::generate(env);
     let oracle = Address::generate(env);
 
-    let (nft_token, nft_admin) = create_token(env, &admin);
+    let (nft_token, nft_admin) = create_nft(env, &admin);
     let (col_token, col_admin) = create_token(env, &admin);
 
     // Borrower holds the NFT (1 unit); contract holds the collateral.
@@ -2461,12 +2755,12 @@ fn test_return_nft_liquidated_position_panics() {
 #[test]
 fn test_return_nft_exact_repayment() {
     let env = Env::default();
-    let (client, contract_id, lender, borrower, fee_receiver, nft_token, col_token) =
+    let (client, contract_id, lender, borrower, fee_receiver, _nft_token, col_token) =
         setup_return_nft(&env, 1000, 1000, PositionStatus::Active);
 
     let lender_col_before = col_token.balance(&lender);
     let fee_col_before = col_token.balance(&fee_receiver);
-    let borrower_col_before = col_token.balance(&borrower);
+    let _borrower_col_before = col_token.balance(&borrower);
 
     client.return_nft(&1);
 
@@ -2495,7 +2789,7 @@ fn test_return_nft_exact_repayment() {
 #[test]
 fn test_return_nft_with_excess_collateral() {
     let env = Env::default();
-    let (client, contract_id, lender, borrower, fee_receiver, nft_token, col_token) =
+    let (client, contract_id, lender, borrower, fee_receiver, _nft_token, col_token) =
         setup_return_nft(&env, 1000, 1000, PositionStatus::Active);
 
     // Capture starting balances
@@ -2562,5 +2856,225 @@ fn test_return_nft_balance_verification() {
     env.as_contract(&contract_id, || {
         let pos = crate::storage::get_position(&env, 1);
         assert_eq!(pos.status, PositionStatus::Returned);
+    });
+}
+
+// ─── End-to-End NormalNFT721 ERC-721 Custody & Release Tests ──────────────────
+
+/// End-to-end test confirming collateral custody on `borrow()` and collateral + NFT
+/// release on `return_nft()` when interacting directly with `NormalNFT721`.
+#[test]
+fn test_e2e_normal_nft721_collateral_custody_and_voluntary_return() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    // Deploy and initialize NormalNFT721 (standard ERC-721 without SEP-41 .decimals())
+    let nft_address = env.register(NormalNFT721, ());
+    let nft_client = NormalNFT721Client::new(&env, &nft_address);
+    nft_client.initialize(
+        &creator,
+        &String::from_str(&env, "Afristore Art"),
+        &String::from_str(&env, "AFRI"),
+        &1_000u64,
+        &500u32,
+        &creator,
+    );
+
+    // Mint token_id 0 and token_id 1 to lender; borrow against token_id 1
+    let token_0 = nft_client.mint(&lender, &String::from_str(&env, "ipfs://token-0"));
+    let token_1 = nft_client.mint(&lender, &String::from_str(&env, "ipfs://token-1"));
+    assert_eq!(token_0, 0);
+    assert_eq!(token_1, 1);
+    assert_eq!(nft_client.owner_of(&token_1), lender);
+    assert_eq!(nft_client.balance_of(&lender), 2);
+
+    // Deploy and mint collateral token (USDC)
+    let (usdc_token, usdc_admin) = create_token(&env, &admin);
+    usdc_admin.mint(&borrower, &150_000_000);
+
+    // Initialize LendingContract and whitelist USDC
+    client.initialize(
+        &admin,
+        &fee_receiver,
+        &oracle,
+        &100,   // 1% platform fee
+        &500,   // 5% liquidator fee
+        &12000, // 120% min buffer
+        &20000, // 200% max buffer
+        &11000, // 110% min liq threshold
+        &11500, // 115% max liq threshold
+        &3600,
+    );
+    client.whitelist_currency(&usdc_token.address, &Symbol::new(&env, "USDC"));
+
+    // Lender escrows token_1 into LendingContract and opens listing
+    nft_client.transfer(&lender, &contract_id, &token_1);
+    assert_eq!(nft_client.owner_of(&token_1), contract_id);
+    assert_eq!(nft_client.balance_of(&contract_id), 1);
+    assert_eq!(nft_client.balance_of(&lender), 1);
+
+    let listing_id = 1u64;
+    env.as_contract(&contract_id, || {
+        set_listing(
+            &env,
+            listing_id,
+            &Listing {
+                id: listing_id,
+                lender: lender.clone(),
+                nft_contract: nft_address.clone(),
+                token_id: token_1 as u128,
+                declared_price_usd: 100_000_000,         // 100 USD
+                interest_schedule_bps: vec![&env, 1000], // 10% over 30-day term
+                max_duration_days: 30,
+                min_collateral_buffer_bps: 15000, // 150%
+                liquidation_threshold_bps: 11000, // 110%
+                status: ListingStatus::Open,
+                created_at: 1_000,
+            },
+        );
+    });
+
+    // Borrower calls borrow() — collateral is locked in contract, NormalNFT721 transferred to borrower
+    let position_id = client.borrow(&listing_id, &borrower, &usdc_token.address, &150_000_000);
+
+    assert_eq!(position_id, 1);
+    assert_eq!(nft_client.owner_of(&token_1), borrower);
+    assert_eq!(nft_client.balance_of(&borrower), 1);
+    assert_eq!(nft_client.balance_of(&contract_id), 0);
+    assert_eq!(usdc_token.balance(&contract_id), 150_000_000);
+    assert_eq!(usdc_token.balance(&borrower), 0);
+
+    // Advance ledger by full 30-day loan term and call return_nft()
+    env.ledger().with_mut(|l| l.timestamp = 1_000 + 30 * 86400);
+    client.return_nft(&position_id);
+
+    // Confirm NormalNFT721 is returned to lender
+    assert_eq!(nft_client.owner_of(&token_1), lender);
+    assert_eq!(nft_client.balance_of(&lender), 2);
+    assert_eq!(nft_client.balance_of(&borrower), 0);
+    assert_eq!(nft_client.balance_of(&contract_id), 0);
+
+    // Confirm collateral release waterfall:
+    // Principal (100M) + 10% interest (10M) = 110M to lender
+    // Platform fee (1% of 110M) = 1.1M to fee_receiver
+    // Borrower refund = 150M - 111.1M = 38.9M
+    assert_eq!(usdc_token.balance(&lender), 110_000_000);
+    assert_eq!(usdc_token.balance(&fee_receiver), 1_100_000);
+    assert_eq!(usdc_token.balance(&borrower), 38_900_000);
+    assert_eq!(usdc_token.balance(&contract_id), 0);
+
+    env.as_contract(&contract_id, || {
+        let pos = crate::storage::get_position(&env, position_id);
+        assert_eq!(pos.status, PositionStatus::Returned);
+    });
+}
+
+/// End-to-end test with `NormalNFT721` token_id = 0 (first minted token) and
+/// liquidation settlement, confirming collateral custody and release.
+#[test]
+fn test_e2e_normal_nft721_token_zero_and_liquidation_release() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let liquidator = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    // Deploy NormalNFT721 and mint the very first token (token_id == 0)
+    let nft_address = env.register(NormalNFT721, ());
+    let nft_client = NormalNFT721Client::new(&env, &nft_address);
+    nft_client.initialize(
+        &creator,
+        &String::from_str(&env, "Zero Token NFT"),
+        &String::from_str(&env, "ZNFT"),
+        &100u64,
+        &250u32,
+        &creator,
+    );
+    let token_id = nft_client.mint(&lender, &String::from_str(&env, "ipfs://token-0"));
+    assert_eq!(token_id, 0);
+
+    let (usdc_token, usdc_admin) = create_token(&env, &admin);
+    usdc_admin.mint(&borrower, &150_000_000);
+
+    client.initialize(
+        &admin,
+        &fee_receiver,
+        &oracle,
+        &100,
+        &500,
+        &12000,
+        &20000,
+        &11000,
+        &11500,
+        &3600,
+    );
+    client.whitelist_currency(&usdc_token.address, &Symbol::new(&env, "USDC"));
+
+    // Escrow token 0 in LendingContract
+    nft_client.transfer(&lender, &contract_id, &token_id);
+    assert_eq!(nft_client.owner_of(&token_id), contract_id);
+
+    let listing_id = 1u64;
+    env.as_contract(&contract_id, || {
+        set_listing(
+            &env,
+            listing_id,
+            &Listing {
+                id: listing_id,
+                lender: lender.clone(),
+                nft_contract: nft_address.clone(),
+                token_id: token_id as u128,
+                declared_price_usd: 100_000_000,
+                interest_schedule_bps: vec![&env, 1000],
+                max_duration_days: 30,
+                min_collateral_buffer_bps: 15000,
+                liquidation_threshold_bps: 11000,
+                status: ListingStatus::Open,
+                created_at: 1_000,
+            },
+        );
+    });
+
+    // Borrow token 0
+    let position_id = client.borrow(&listing_id, &borrower, &usdc_token.address, &150_000_000);
+    assert_eq!(nft_client.owner_of(&token_id), borrower);
+    assert_eq!(usdc_token.balance(&contract_id), 150_000_000);
+
+    // Advance past loan expiry and liquidate
+    env.ledger()
+        .with_mut(|l| l.timestamp = 1_000 + 30 * 86400 + 1);
+    client.liquidate(&position_id, &liquidator);
+
+    // Borrower keeps the NFT on liquidation; collateral is released to all parties
+    assert_eq!(nft_client.owner_of(&token_id), borrower);
+    assert_eq!(usdc_token.balance(&lender), 110_000_000);
+    assert_eq!(usdc_token.balance(&fee_receiver), 1_100_000);
+    assert_eq!(usdc_token.balance(&liquidator), 5_500_000);
+    assert_eq!(usdc_token.balance(&borrower), 33_400_000);
+    assert_eq!(usdc_token.balance(&contract_id), 0);
+
+    env.as_contract(&contract_id, || {
+        let pos = crate::storage::get_position(&env, position_id);
+        assert_eq!(pos.status, PositionStatus::Expired);
     });
 }
