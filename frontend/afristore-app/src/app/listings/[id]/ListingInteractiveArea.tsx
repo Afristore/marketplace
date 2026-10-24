@@ -15,10 +15,12 @@ import {
 } from "@/lib/contract";
 import { ArtworkMetadata } from "@/lib/ipfs";
 import { useWalletContext } from "@/context/WalletContext";
-import { useBuyArtwork } from "@/hooks/useMarketplace";
+import { useBuyArtwork, useCancelListing } from "@/hooks/useMarketplace";
 import { usePlaceBid } from "@/hooks/usePlaceBid";
 import { useListingOffers, useMakeOffer } from "@/hooks/useOffers";
 import { useListingActivity } from "@/hooks/useUserActivity";
+import { useSafeToast } from "@/hooks/useSafeToast";
+import { getReadableErrorMessage } from "@/lib/errors";
 import { GuardButton } from "@/components/WalletGuard";
 import {
   ExternalLink,
@@ -35,6 +37,7 @@ import {
   TrendingUp,
   Landmark,
   Share2,
+  XCircle,
 } from "lucide-react";
 
 interface ListingInteractiveAreaProps {
@@ -51,6 +54,7 @@ export default function ListingInteractiveArea({
   metadata,
 }: ListingInteractiveAreaProps) {
   const { publicKey } = useWalletContext();
+  const pushToast = useSafeToast();
 
   const [listing, setListing] = useState<Listing | null>(initialListing);
   const [auction, setAuction] = useState<Auction | null>(initialAuction);
@@ -60,6 +64,11 @@ export default function ListingInteractiveArea({
 
   // Action hooks
   const { buy, isBuying, error: buyError } = useBuyArtwork(publicKey);
+  const {
+    cancel,
+    isCancelling,
+    error: cancelError,
+  } = useCancelListing(publicKey);
   const { bid, isBidding, error: bidError } = usePlaceBid(publicKey);
   const {
     offers,
@@ -78,6 +87,7 @@ export default function ListingInteractiveArea({
   const [bidAmount, setBidAmount] = useState("");
   const [offerAmount, setOfferAmount] = useState("");
   const [offerSuccess, setOfferSuccess] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const artist = listing?.artist || auction?.creator;
   const isOwn = publicKey === artist;
@@ -101,35 +111,93 @@ export default function ListingInteractiveArea({
 
   const handleBuy = async () => {
     if (!listing) return;
-    const success = await buy(listing.listing_id);
-    if (success) {
-      const updated = await getListing(listing.listing_id);
-      setListing(updated);
+    setActionError(null);
+    try {
+      const success = await buy(listing.listing_id);
+      if (success) {
+        pushToast("Artwork purchased successfully!", "success");
+        try {
+          const updated = await getListing(listing.listing_id);
+          setListing(updated);
+        } catch {
+          // Non-critical refresh failure; state will update on next load.
+        }
+      }
+    } catch (err: unknown) {
+      const msg = getReadableErrorMessage(err, "Purchase failed");
+      setActionError(msg);
+      pushToast(msg, "error");
+    }
+  };
+
+  const handleCancel = async () => {
+    if (!listing) return;
+    setActionError(null);
+    try {
+      const success = await cancel(listing.listing_id);
+      if (success) {
+        try {
+          const updated = await getListing(listing.listing_id);
+          setListing(updated);
+        } catch {
+          setListing((prev) =>
+            prev ? { ...prev, status: "Cancelled" } : null
+          );
+        }
+      }
+    } catch (err: unknown) {
+      const msg = getReadableErrorMessage(err, "Failed to cancel listing");
+      setActionError(msg);
+      pushToast(msg, "error");
     }
   };
 
   const handleBid = async () => {
     if (!auction || !bidAmount) return;
-    const success = await bid(auction.auction_id, Number(bidAmount));
-    if (success) {
-      const updated = await getAuction(auction.auction_id);
-      setAuction(updated);
-      setBidAmount("");
+    setActionError(null);
+    try {
+      const success = await bid(auction.auction_id, Number(bidAmount));
+      if (success) {
+        pushToast("Bid placed successfully!", "success");
+        setBidAmount("");
+        try {
+          const updated = await getAuction(auction.auction_id);
+          setAuction(updated);
+        } catch {
+          // Non-critical refresh failure.
+        }
+      }
+    } catch (err: unknown) {
+      const msg = getReadableErrorMessage(err, "Failed to place bid");
+      setActionError(msg);
+      pushToast(msg, "error");
     }
   };
 
   const handleMakeOffer = async () => {
     if (!listing || !offerAmount) return;
-    const success = await makeOffer(
-      listing.listing_id,
-      Number(offerAmount),
-      listing.token
-    );
-    if (success) {
-      setOfferSuccess(true);
-      setOfferAmount("");
-      refreshOffers();
-      setTimeout(() => setOfferSuccess(false), 3000);
+    setActionError(null);
+    try {
+      const success = await makeOffer(
+        listing.listing_id,
+        Number(offerAmount),
+        listing.token
+      );
+      if (success) {
+        setOfferSuccess(true);
+        setOfferAmount("");
+        pushToast("Offer placed successfully!", "success");
+        try {
+          await refreshOffers();
+        } catch {
+          // Non-critical refresh failure.
+        }
+        setTimeout(() => setOfferSuccess(false), 3000);
+      }
+    } catch (err: unknown) {
+      const msg = getReadableErrorMessage(err, "Failed to make offer");
+      setActionError(msg);
+      pushToast(msg, "error");
     }
   };
 
@@ -394,7 +462,10 @@ export default function ListingInteractiveArea({
               </div>
             )}
             {offerError && (
-              <div className="p-3 rounded-xl bg-terracotta-500/10 border border-terracotta-500/20 text-terracotta-400 text-xs flex items-center gap-2">
+              <div
+                role="alert"
+                className="p-3 rounded-xl bg-terracotta-500/10 border border-terracotta-500/20 text-terracotta-400 text-xs flex items-center gap-2"
+              >
                 <AlertCircle size={16} />
                 {offerError}
               </div>
@@ -403,11 +474,24 @@ export default function ListingInteractiveArea({
         )}
 
         {isOwn && (
-          <div className="p-6 rounded-2xl bg-brand-500/20 border border-brand-500/30 text-center">
-            <p className="text-brand-400 font-bold flex items-center justify-center gap-2">
-              <CheckCircle2 size={18} />
-              You own this listing
-            </p>
+          <div className="space-y-4">
+            <div className="p-6 rounded-2xl bg-brand-500/20 border border-brand-500/30 text-center">
+              <p className="text-brand-400 font-bold flex items-center justify-center gap-2">
+                <CheckCircle2 size={18} />
+                You own this listing
+              </p>
+            </div>
+            {listing && isActive && (
+              <GuardButton
+                onAction={handleCancel}
+                disabled={isCancelling}
+                actionName="To cancel this listing"
+                className="w-full flex items-center justify-center gap-2 rounded-2xl bg-white/5 hover:bg-terracotta-500/20 py-4 text-sm font-bold text-terracotta-400 border border-white/10 hover:border-terracotta-500/30 transition-all disabled:opacity-50"
+              >
+                <XCircle size={18} />
+                {isCancelling ? "Cancelling Listing..." : "Cancel Listing"}
+              </GuardButton>
+            )}
           </div>
         )}
 
@@ -419,10 +503,13 @@ export default function ListingInteractiveArea({
           </div>
         )}
 
-        {(buyError || bidError) && (
-          <div className="p-4 rounded-xl bg-terracotta-500/10 border border-terracotta-500/20 text-terracotta-400 text-xs flex items-center gap-3">
+        {(actionError || buyError || bidError || cancelError) && (
+          <div
+            role="alert"
+            className="p-4 rounded-xl bg-terracotta-500/10 border border-terracotta-500/20 text-terracotta-400 text-xs flex items-center gap-3"
+          >
             <AlertCircle size={16} />
-            {buyError || bidError}
+            {actionError || buyError || bidError || cancelError}
           </div>
         )}
 
