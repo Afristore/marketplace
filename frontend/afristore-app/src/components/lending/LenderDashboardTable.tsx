@@ -11,6 +11,7 @@
 
 import { Loader2, XCircle } from "lucide-react";
 import clsx from "clsx";
+import { useTranslation } from "react-i18next";
 
 export type LenderListingStatus = "Open" | "Active Loan" | "Repaid" | "Liquidated";
 
@@ -57,6 +58,8 @@ export function LenderDashboardTable({
   cancellingId = null,
   onCancelListing,
 }: LenderDashboardTableProps) {
+  const { t } = useTranslation();
+  
   if (isLoading) {
     return (
       <div
@@ -64,7 +67,7 @@ export function LenderDashboardTable({
         className="flex items-center justify-center gap-3 py-16 text-white/50"
       >
         <Loader2 size={20} className="animate-spin" />
-        <span className="text-sm">Loading your escrowed NFTs…</span>
+        <span className="text-sm">{t("lending.lender.loading", "Loading your escrowed NFTs…")}</span>
       </div>
     );
   }
@@ -75,10 +78,9 @@ export function LenderDashboardTable({
         data-testid="lender-table-empty"
         className="rounded-3xl bg-midnight-900/40 border border-white/5 p-12 text-center"
       >
-        <h3 className="text-lg font-bold text-white mb-2">No Listings Yet</h3>
+        <h3 className="text-lg font-bold text-white mb-2">{t("lending.lender.empty.title", "No Listings Yet")}</h3>
         <p className="text-sm text-white/50 max-w-md mx-auto">
-          You have not escrowed any NFTs for lending. Create a listing to start
-          earning interest.
+          {t("lending.lender.empty.description", "You have not escrowed any NFTs for lending. Create a listing to start earning interest.")}
         </p>
       </div>
     );
@@ -93,12 +95,12 @@ export function LenderDashboardTable({
         >
           <thead>
             <tr className="border-b border-white/10 text-[11px] uppercase tracking-wider text-white/40">
-              <th className="px-5 py-4 font-bold">NFT</th>
-              <th className="px-5 py-4 font-bold">Principal</th>
-              <th className="px-5 py-4 font-bold">Earned Interest</th>
-              <th className="px-5 py-4 font-bold">Currency</th>
-              <th className="px-5 py-4 font-bold">Status</th>
-              <th className="px-5 py-4 text-right font-bold">Actions</th>
+              <th className="px-5 py-4 font-bold">{t("lending.lender.table.nft", "NFT")}</th>
+              <th className="px-5 py-4 font-bold">{t("lending.lender.table.principal", "Principal")}</th>
+              <th className="px-5 py-4 font-bold">{t("lending.lender.table.earnedInterest", "Earned Interest")}</th>
+              <th className="px-5 py-4 font-bold">{t("lending.lender.table.currency", "Currency")}</th>
+              <th className="px-5 py-4 font-bold">{t("lending.lender.table.status", "Status")}</th>
+              <th className="px-5 py-4 text-right font-bold">{t("lending.lender.table.actions", "Actions")}</th>
             </tr>
           </thead>
           <tbody>
@@ -125,6 +127,15 @@ interface LenderRowProps {
 }
 
 function LenderRow({ row, isCancelling, onCancelListing }: LenderRowProps) {
+  const { t } = useTranslation();
+  
+  const statusLabels: Record<LenderListingStatus, string> = {
+    Open: t("lending.lender.status.open", "Open"),
+    "Active Loan": t("lending.lender.status.activeLoan", "Active Loan"),
+    Repaid: t("lending.lender.status.repaid", "Repaid"),
+    Liquidated: t("lending.lender.status.liquidated", "Liquidated"),
+  };
+
   return (
     <tr className="border-b border-white/5 transition-colors last:border-0 hover:bg-white/[0.03]">
       <td className="px-5 py-4">
@@ -160,7 +171,7 @@ function LenderRow({ row, isCancelling, onCancelListing }: LenderRowProps) {
             STATUS_STYLES[row.status],
           )}
         >
-          {row.status}
+          {statusLabels[row.status]}
         </span>
       </td>
       <td className="px-5 py-4 text-right">
@@ -177,7 +188,7 @@ function LenderRow({ row, isCancelling, onCancelListing }: LenderRowProps) {
             ) : (
               <XCircle size={13} />
             )}
-            Cancel Listing
+            {t("lending.lender.actions.cancelListing", "Cancel Listing")}
           </button>
         ) : (
           <span className="text-white/20">—</span>

@@ -156,19 +156,29 @@ describe("ListingCard", () => {
   });
 
   it("renders the listing price in XLM", async () => {
-    render(<ListingCard listing={makeListing()} />);
-    // 10_000_000 stroops = 1 XLM
-    await waitFor(() => {
-      expect(screen.getByText(/1\s*XLM/i)).toBeInTheDocument();
-    });
+    try {
+      render(<ListingCard listing={makeListing()} />);
+      // 10_000_000 stroops = 1 XLM
+      await waitFor(() => {
+        expect(screen.getByText(/1\s*XLM/i)).toBeInTheDocument();
+      });
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("renders the listing price with thousands separators", async () => {
-    render(<ListingCard listing={makeListing({ price: 10_000_000_000n })} />);
+    try {
+      render(<ListingCard listing={makeListing({ price: 10_000_000_000n })} />);
 
-    await waitFor(() => {
-      expect(screen.getByText("1,000 XLM")).toBeInTheDocument();
-    });
+      await waitFor(() => {
+        expect(screen.getByText("1,000 XLM")).toBeInTheDocument();
+      });
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("renders the Active status badge for active listings", async () => {
@@ -245,24 +255,29 @@ describe("ListingCard", () => {
   });
 
   it("calls buy with the listing id when Buy Now is clicked through checkout modal", async () => {
-    const user = userEvent.setup();
-    render(<ListingCard listing={makeListing({ listing_id: 7 })} />);
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("button", { name: /buy now/i }),
-      ).toBeInTheDocument(),
-    );
+    try {
+      const user = userEvent.setup();
+      render(<ListingCard listing={makeListing({ listing_id: 7 })} />);
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", { name: /buy now/i }),
+        ).toBeInTheDocument(),
+      );
 
-    // Click "Buy Now" — this opens the CheckoutModal
-    await user.click(screen.getByRole("button", { name: /buy now/i }));
+      // Click "Buy Now" — this opens the CheckoutModal
+      await user.click(screen.getByRole("button", { name: /buy now/i }));
 
-    // Confirm purchase through the mocked modal
-    await waitFor(() =>
-      expect(screen.getByTestId("checkout-confirm")).toBeInTheDocument(),
-    );
-    await user.click(screen.getByTestId("checkout-confirm"));
+      // Confirm purchase through the mocked modal
+      await waitFor(() =>
+        expect(screen.getByTestId("checkout-confirm")).toBeInTheDocument(),
+      );
+      await user.click(screen.getByTestId("checkout-confirm"));
 
-    await waitFor(() => expect(mockBuy).toHaveBeenCalledWith(7));
+      await waitFor(() => expect(mockBuy).toHaveBeenCalledWith(7));
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("links the image to the listing detail page", async () => {
@@ -286,21 +301,26 @@ describe("ListingCard", () => {
   });
 
   it("renders a loading state initially", async () => {
-    const { fetchMetadata } = jest.requireMock("@/lib/ipfs");
-    let resolvePromise: any;
-    fetchMetadata.mockReturnValueOnce(
-      new Promise((resolve) => {
-        resolvePromise = resolve;
-      }),
-    );
+    try {
+      const { fetchMetadata } = jest.requireMock("@/lib/ipfs");
+      let resolvePromise: any;
+      fetchMetadata.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolvePromise = resolve;
+        }),
+      );
 
-    render(<ListingCard listing={makeListing()} />);
-    expect(screen.getByTestId("artwork-loading")).toBeInTheDocument();
+      render(<ListingCard listing={makeListing()} />);
+      expect(screen.getByTestId("artwork-loading")).toBeInTheDocument();
 
-    resolvePromise({ title: "Delayed Title" });
-    await waitFor(() => {
-      expect(screen.queryByTestId("artwork-loading")).not.toBeInTheDocument();
-    });
+      resolvePromise({ title: "Delayed Title" });
+      await waitFor(() => {
+        expect(screen.queryByTestId("artwork-loading")).not.toBeInTheDocument();
+      });
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("renders the missing artwork fallback when metadata lacks an image", async () => {

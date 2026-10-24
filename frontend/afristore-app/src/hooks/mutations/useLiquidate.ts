@@ -1,14 +1,25 @@
 // ─────────────────────────────────────────────────────────────
 // hooks/mutations/useLiquidate.ts — Liquidate position hook
 // ─────────────────────────────────────────────────────────────
+//
+// Feedback mirrors the other `hooks/mutations/*` hooks:
+//   • failures surface through `useTransientErrorToast(error)`;
+//   • success raises a `pushToast(…, "success")` showing the bounty.
+//
+// The toast accessor is the "safe" variant, so the hook keeps working
+// when it is rendered outside a `ToastProvider` (unit tests, isolated
+// widgets) instead of throwing and unmounting the tree. Every await
+// sits inside a try/catch, so a rejected contract call can never escape
+// as an unhandled promise rejection.
+// ─────────────────────────────────────────────────────────────
 
 "use client";
 
 import { useState, useCallback } from "react";
 import { liquidate } from "@/lib/lending";
 import { getReadableErrorMessage } from "@/lib/errors";
-import { useToast } from "@/components/ToastProvider";
 import { useTransientErrorToast } from "../useTransientErrorToast";
+import { useSafeToast } from "../useSafeToast";
 
 export interface LiquidateParams {
   positionId: number | bigint;
@@ -20,16 +31,7 @@ export function useLiquidate(liquidatorPublicKey?: string | null) {
   const [bountyEarned, setBountyEarned] = useState<bigint | null>(null);
   const [error, setError] = useState<string | null>(null);
   useTransientErrorToast(error);
-
-  let pushToast:
-    | ((message: string, type?: "error" | "success" | "info") => void)
-    | null = null;
-  try {
-    const toastContext = useToast();
-    pushToast = toastContext.pushToast;
-  } catch {
-    // Fallback when executed outside ToastProvider (e.g., in unit tests)
-  }
+  const pushToast = useSafeToast();
 
   const executeLiquidate = useCallback(
     async (
@@ -56,6 +58,12 @@ export function useLiquidate(liquidatorPublicKey?: string | null) {
         return null;
       }
 
+      if (positionId === undefined || positionId === null) {
+        const msg = "Position ID is required";
+        setError(msg);
+        return null;
+      }
+
       setIsLiquidating(true);
       setError(null);
       try {
@@ -63,10 +71,10 @@ export function useLiquidate(liquidatorPublicKey?: string | null) {
         setBountyEarned(result.bountyEarned);
 
         const bountyDisplay = (Number(result.bountyEarned) / 1e7).toFixed(2);
-        const successMsg = `Position #${positionId} liquidated successfully! Bounty earned: ${bountyDisplay} USDC`;
-        if (pushToast) {
-          pushToast(successMsg, "success");
-        }
+        pushToast(
+          `Position #${positionId} liquidated successfully! Bounty earned: ${bountyDisplay} USDC`,
+          "success"
+        );
         return result.bountyEarned;
       } catch (err: unknown) {
         const msg = getReadableErrorMessage(err, "Failed to liquidate position");

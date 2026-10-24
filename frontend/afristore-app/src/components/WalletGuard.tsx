@@ -8,6 +8,7 @@ import { useWalletContext } from "@/context/WalletContext";
 import { ConnectWalletModal } from "./ConnectWalletModal";
 import { useState, ReactNode } from "react";
 import { Wallet, AlertTriangle } from "lucide-react";
+import { getReadableErrorMessage } from "@/lib/errors";
 
 interface WalletGuardProps {
   children: ReactNode;
@@ -100,7 +101,7 @@ export function WalletGuard({
 interface GuardButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;
   actionName?: string;
-  onAction?: (e: React.MouseEvent) => void;
+  onAction?: (e: React.MouseEvent) => void | Promise<unknown>;
 }
 
 export function GuardButton({
@@ -112,15 +113,26 @@ export function GuardButton({
 }: GuardButtonProps) {
   const { isConnected, isWrongNetwork } = useWalletContext();
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+  const handleActionError = (err: unknown) => {
+    console.error("GuardButton action failed:", err);
+    setActionError(getReadableErrorMessage(err));
+  };
+
+  const handleClick = async (e: React.MouseEvent<HTMLButtonElement>) => {
     if (!isConnected || isWrongNetwork) {
       e.preventDefault();
       e.stopPropagation();
       setIsModalOpen(true);
       return;
     }
-    onAction?.(e);
+    setActionError(null);
+    try {
+      await onAction?.(e);
+    } catch (err) {
+      handleActionError(err);
+    }
   };
 
   return (
@@ -128,6 +140,11 @@ export function GuardButton({
       <button {...props} onClick={handleClick} className={className}>
         {children}
       </button>
+      {actionError && (
+        <p role="alert" className="mt-2 text-xs text-red-500">
+          {actionError}
+        </p>
+      )}
       <ConnectWalletModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}

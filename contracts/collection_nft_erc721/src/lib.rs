@@ -596,10 +596,5 @@ impl NormalNFT721 {
     }
 }
 
-// The Launchpad factory in `contract.rs` exports the same entry points as
-// `NormalNFT721` (e.g. `initialize`), so it can only be linked into test builds.
-#[cfg(test)]
-mod contract;
-
 #[cfg(test)]
 mod test;

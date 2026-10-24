@@ -34,8 +34,15 @@ export function useFreighterWallet(): WalletState {
           ? "WRONG_NETWORK"
           : "CONNECTED";
 
+  // Runs fire-and-forget from the mount effect and polling interval, so it
+  // must never reject: a failed detection is treated as "not installed".
   const refresh = useCallback(async () => {
-    const installed = await isFreighterInstalled();
+    let installed = false;
+    try {
+      installed = await isFreighterInstalled();
+    } catch (err) {
+      console.error("Wallet detection error:", err);
+    }
     setIsInstalled(installed);
     if (installed) {
       try {

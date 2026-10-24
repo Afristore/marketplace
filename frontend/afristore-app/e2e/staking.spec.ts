@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { mockFreighter, TEST_PUBLIC_KEY } from "./freighter-mock";
+import { safeGoto, guardRoute } from "./helpers/error-handling";
 
 test.describe("Staking Page", () => {
   test.beforeEach(async ({ page }) => {
@@ -44,24 +45,24 @@ test.describe("Staking Page", () => {
     };
 
     // Setup route handlers
-    await page.route("**/wallets/**/nfts**", async (route) => {
+    await page.route("**/wallets/**/nfts**", guardRoute(async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify(mockOwnedNFTs),
       });
-    });
+    }));
 
-    await page.route("**/wallets/**/staked**", async (route) => {
+    await page.route("**/wallets/**/staked**", guardRoute(async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify(mockStakedNFTs),
       });
-    });
+    }));
 
     // Mock the launchpad API for staking pool lookup
-    await page.route("**/launchpad/**", async (route) => {
+    await page.route("**/launchpad/**", guardRoute(async (route) => {
       const url = new URL(route.request().url());
       if (url.pathname.includes("staking-pool")) {
         await route.fulfill({
@@ -72,19 +73,19 @@ test.describe("Staking Page", () => {
       } else {
         await route.continue();
       }
-    });
+    }));
 
     // Mock Soroban contract calls for staking pool config
-    await page.route("**/staking/**", async (route) => {
+    await page.route("**/staking/**", guardRoute(async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify(mockPoolConfig),
       });
-    });
+    }));
 
     // Navigate to staking page
-    await page.goto("/staking");
+    await safeGoto(page, "/staking");
 
     // Wait for page to load and wallet to connect
     const shortKey = `${TEST_PUBLIC_KEY.slice(0, 4)}…${TEST_PUBLIC_KEY.slice(-4)}`;
@@ -142,23 +143,23 @@ test.describe("Staking Page", () => {
 
   test("staking page shows empty state when no NFTs owned", async ({ page }) => {
     // Mock empty owned NFTs
-    await page.route("**/wallets/**/nfts**", async (route) => {
+    await page.route("**/wallets/**/nfts**", guardRoute(async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([]),
       });
-    });
+    }));
 
-    await page.route("**/wallets/**/staked**", async (route) => {
+    await page.route("**/wallets/**/staked**", guardRoute(async (route) => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
         body: JSON.stringify([]),
       });
-    });
+    }));
 
-    await page.goto("/staking");
+    await safeGoto(page, "/staking");
 
     const shortKey = `${TEST_PUBLIC_KEY.slice(0, 4)}…${TEST_PUBLIC_KEY.slice(-4)}`;
     await expect(page.getByText(shortKey)).toBeVisible({ timeout: 10_000 });
@@ -176,7 +177,7 @@ test.describe("Staking Page", () => {
       sessionStorage.removeItem("e2e_network_passphrase");
     });
 
-    await page.goto("/staking");
+    await safeGoto(page, "/staking");
 
     // Verify connect wallet prompt
     await expect(page.getByText(/connect your wallet/i)).toBeVisible();
@@ -188,15 +189,15 @@ test.describe("Staking Page", () => {
   test("staking page handles pool not found gracefully", async ({ page }) => {
     const TEST_COLLECTION_ADDRESS = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
 
-    await page.route("**/launchpad/**", async (route) => {
+    await page.route("**/launchpad/**", guardRoute(async (route) => {
       await route.fulfill({
         status: 404,
         contentType: "application/json",
         body: JSON.stringify({ error: "No staking pool found" }),
       });
-    });
+    }));
 
-    await page.goto("/staking");
+    await safeGoto(page, "/staking");
 
     const shortKey = `${TEST_PUBLIC_KEY.slice(0, 4)}…${TEST_PUBLIC_KEY.slice(-4)}`;
     await expect(page.getByText(shortKey)).toBeVisible({ timeout: 10_000 });

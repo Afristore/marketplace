@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol};
 
 use crate::events;
@@ -46,6 +48,7 @@ fn validate_bounds(
 /// Invariants enforced (all panic with descriptive messages on violation):
 ///   1. Each fee must not exceed 10_000 bps (100%).
 ///   2. Combined fees must be strictly less than 10_000 bps.
+///
 /// Uses `checked_add` so `u32` overflow panics instead of silently saturating.
 fn validate_fees(platform_fee_bps: u32, liquidator_fee_bps: u32) {
     let total = platform_fee_bps
@@ -176,7 +179,7 @@ impl LendingContract {
 
     pub fn cancel_listing(env: Env, listing_id: u64) {
         extend_instance_ttl(&env);
-        let mut listing = get_listing(&env, listing_id);
+        let listing = get_listing(&env, listing_id);
 
         listing.lender.require_auth();
 
@@ -192,8 +195,7 @@ impl LendingContract {
             &(listing.token_id as i128),
         );
 
-        listing.status = ListingStatus::Cancelled;
-        set_listing(&env, listing_id, &listing);
+        remove_listing(&env, listing_id);
 
         events::emit_listing_cancelled(&env, listing_id, listing.lender.clone());
     }
@@ -336,7 +338,10 @@ impl LendingContract {
         );
     }
 
+    /// Borrower tops up the collateral on an Active position to improve its
+    /// health factor and avoid liquidation without closing the position.
     pub fn add_collateral(env: Env, position_id: u64, amount: i128) {
+        extend_instance_ttl(&env);
         let mut position = get_position(&env, position_id);
         position.borrower.require_auth();
 
@@ -348,10 +353,15 @@ impl LendingContract {
             panic!("Amount must be greater than zero");
         }
 
+        let new_total = position
+            .collateral_amount
+            .checked_add(amount)
+            .unwrap_or_else(|| panic!("Collateral amount overflow"));
+
         let contract_address = env.current_contract_address();
         let collateral_client = token::Client::new(&env, &position.collateral_currency);
         collateral_client.transfer(&position.borrower, &contract_address, &amount);
-        position.collateral_amount += amount;
+        position.collateral_amount = new_total;
         set_position(&env, position_id, &position);
 
         events::emit_collateral_added(
@@ -418,5 +428,23 @@ impl LendingContract {
             result.liquidator_payout,
             result.borrower_rem,
         );
+    }
+
+    /// Return the current collateral health factor for a position, in basis points.
+    pub fn health_factor(env: Env, position_id: u64) -> i128 {
+        extend_instance_ttl(&env);
+        let position = get_position(&env, position_id);
+        let config = get_config(&env);
+        let oracle_price =
+            oracle::get_price(&env, &config.oracle_address, &position.collateral_currency);
+        let collateral_value_usd = (position.collateral_amount * oracle_price) / 10_000_000;
+        let owed_usd =
+            position.declared_price_usd + accrued_interest_usd(&position, env.ledger().timestamp());
+
+        if owed_usd > 0 {
+            collateral_value_usd * 10_000 / owed_usd
+        } else {
+            10_000
+        }
     }
 }

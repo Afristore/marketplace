@@ -119,6 +119,46 @@ fn test_redeem_fails_unregistered_edition() {
 }
 
 #[test]
+fn redeem_rejects_zero_amount() {
+    let (env, client, _contract_id, _creator, _) = setup_env();
+    let buyer = Address::generate(&env);
+    let voucher = MintVoucher1155 {
+        token_id: 1,
+        buyer_quota: 10,
+        price_per_unit: 0,
+        currency: Address::generate(&env),
+        uri: String::from_str(&env, "ipfs://..."),
+        uri_hash: BytesN::from_array(&env, &[0u8; 32]),
+        valid_until: 0,
+    };
+    let signature = BytesN::from_array(&env, &[0u8; 64]);
+
+    env.mock_all_auths();
+    let result = client.try_redeem(&buyer, &voucher, &0, &signature);
+    assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+}
+
+#[test]
+fn redeem_rejects_amount_that_does_not_fit_in_i128() {
+    let (env, client, _contract_id, _creator, _) = setup_env();
+    let buyer = Address::generate(&env);
+    let voucher = MintVoucher1155 {
+        token_id: 1,
+        buyer_quota: u128::MAX,
+        price_per_unit: 1,
+        currency: Address::generate(&env),
+        uri: String::from_str(&env, "ipfs://..."),
+        uri_hash: BytesN::from_array(&env, &[0u8; 32]),
+        valid_until: 0,
+    };
+    let signature = BytesN::from_array(&env, &[0u8; 64]);
+
+    env.mock_all_auths();
+    let result = client.try_redeem(&buyer, &voucher, &u128::MAX, &signature);
+    assert_eq!(result, Err(Ok(Error::AmountTooLarge)));
+}
+
+#[test]
 fn test_redeem_enforces_max_supply() {
     let (env, client, _contract_id, _creator, _) = setup_env();
     let token_id = 1u64;
@@ -656,3 +696,35 @@ fn update_royalty_fails_if_not_creator() {
     let result = client.try_update_royalty(&new_receiver, &250u32);
     assert!(result.is_err());
 }
+
+#[test]
+fn test_multi_step_redemption_up_to_buyer_quota_boundary_issue_1099() {
+    let (env, client, contract_id, _, _) = setup_env();
+    env.mock_all_auths();
+
+    let buyer = Address::generate(&env);
+    let token_id = 99u128;
+    let voucher = MintVoucher1155 {
+        token_id,
+        buyer_quota: 10,
+        price_per_unit: 0,
+        currency: Address::generate(&env),
+        uri: String::from_str(&env, "ipfs://uri"),
+        uri_hash: BytesN::from_array(&env, &[1u8; 32]),
+        valid_until: 0,
+    };
+    let sig = sign_voucher(&env, &contract_id, &voucher);
+
+    // Step 1: Partial redemption (4 of 10)
+    client.redeem(&buyer, &voucher, &4u128, &sig);
+    assert_eq!(client.balance(&buyer, &token_id), 4u128);
+
+    // Step 2: Second partial redemption up to quota (6 of 10, total 10)
+    client.redeem(&buyer, &voucher, &6u128, &sig);
+    assert_eq!(client.balance(&buyer, &token_id), 10u128);
+
+    // Step 3: Attempt 1 more, exceeding buyer quota, must fail with ExceedsVoucherMax
+    let res = client.try_redeem(&buyer, &voucher, &1u128, &sig);
+    assert_eq!(res, Err(Ok(Error::ExceedsVoucherMax)));
+}
+

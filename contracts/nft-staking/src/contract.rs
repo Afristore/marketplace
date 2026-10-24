@@ -41,32 +41,55 @@ impl NftStaking {
                 rewards_per_second: reward_rate,
             },
         );
+        extend_instance_ttl(&env);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Admin,
+            LEDGER_TTL_THRESHOLD,
+            LEDGER_TTL_BUMP,
+        );
     }
 
     pub fn set_admin(env: Env, admin: Address) {
+        extend_instance_ttl(&env);
         Self::require_admin(&env);
         admin.require_auth();
         let key = DataKey::Admin;
         env.storage().persistent().set(&key, &admin);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
     }
 
     pub fn get_admin(env: Env) -> Option<Address> {
-        env.storage()
+        extend_instance_ttl(&env);
+        let admin = env
+            .storage()
             .persistent()
-            .get::<_, Address>(&DataKey::Admin)
+            .get::<_, Address>(&DataKey::Admin);
+        if admin.is_some() {
+            env.storage().persistent().extend_ttl(
+                &DataKey::Admin,
+                LEDGER_TTL_THRESHOLD,
+                LEDGER_TTL_BUMP,
+            );
+        }
+        admin
     }
 
     pub fn get_nft_address(env: Env) -> Address {
+        extend_instance_ttl(&env);
         get_nft_address(&env)
             .unwrap_or_else(|| panic_with_error!(&env, StakingError::NotInitialized))
     }
 
     pub fn get_reward_token(env: Env) -> Address {
+        extend_instance_ttl(&env);
         get_reward_token(&env)
             .unwrap_or_else(|| panic_with_error!(&env, StakingError::NotInitialized))
     }
 
     pub fn get_reward_rate(env: Env) -> i128 {
+        extend_instance_ttl(&env);
         get_reward_config(&env)
             .map(|c| c.rewards_per_second)
             .unwrap_or_else(|| panic_with_error!(&env, StakingError::NotInitialized))
@@ -93,15 +116,29 @@ impl NftStaking {
     }
 
     pub fn set_paused(env: Env, paused: bool) {
+        extend_instance_ttl(&env);
         Self::require_admin(&env);
-        env.storage().persistent().set(&DataKey::IsPaused, &paused);
+        let key = DataKey::IsPaused;
+        env.storage().persistent().set(&key, &paused);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
     }
 
     pub fn is_paused(env: Env) -> bool {
-        env.storage()
+        extend_instance_ttl(&env);
+        let paused = env
+            .storage()
             .persistent()
-            .get::<DataKey, bool>(&DataKey::IsPaused)
-            .unwrap_or(false)
+            .get::<DataKey, bool>(&DataKey::IsPaused);
+        if paused.is_some() {
+            env.storage().persistent().extend_ttl(
+                &DataKey::IsPaused,
+                LEDGER_TTL_THRESHOLD,
+                LEDGER_TTL_BUMP,
+            );
+        }
+        paused.unwrap_or(false)
     }
 
     pub fn stake(env: Env, user: Address, token_address: Address, token_id: u64) {
@@ -109,6 +146,7 @@ impl NftStaking {
     }
 
     pub fn stake_erc721(env: Env, user: Address, token_address: Address, token_id: u64) {
+        extend_instance_ttl(&env);
         if Self::is_paused(env.clone()) {
             panic_with_error!(&env, StakingError::ContractPaused);
         }
@@ -165,6 +203,7 @@ impl NftStaking {
         token_id: u64,
         amount: u64,
     ) {
+        extend_instance_ttl(&env);
         if Self::is_paused(env.clone()) {
             panic_with_error!(&env, StakingError::ContractPaused);
         }
@@ -220,6 +259,7 @@ impl NftStaking {
     }
 
     pub fn unstake_erc721(env: Env, user: Address, token_address: Address, token_id: u64) {
+        extend_instance_ttl(&env);
         if Self::is_paused(env.clone()) {
             panic_with_error!(&env, StakingError::ContractPaused);
         }
@@ -284,6 +324,7 @@ impl NftStaking {
         token_id: u64,
         amount: u64,
     ) {
+        extend_instance_ttl(&env);
         if Self::is_paused(env.clone()) {
             panic_with_error!(&env, StakingError::ContractPaused);
         }
@@ -291,7 +332,7 @@ impl NftStaking {
         Self::require_pool_nft(&env, &token_address);
 
         let position_key = DataKey::StakedPosition(user.clone(), token_address.clone(), token_id);
-        let mut position = load_staked_position(&env, &position_key)
+        let position = load_staked_position(&env, &position_key)
             .unwrap_or_else(|| panic_with_error!(&env, StakingError::NotStaked));
 
         if position.owner != user {
@@ -300,8 +341,18 @@ impl NftStaking {
 
         let rate = Self::rewards_per_second(&env);
         let elapsed = env.ledger().timestamp() - position.staked_at;
-        let rewards = (elapsed as i128) * rate;
-        position.rewards_earned += rewards;
+        let pending = position.rewards_earned + (elapsed as i128) * rate;
+
+        if pending > 0 {
+            let reward_token_addr = get_reward_token(&env)
+                .unwrap_or_else(|| panic_with_error!(&env, StakingError::NotInitialized));
+            let token_client = soroban_sdk::token::TokenClient::new(&env, &reward_token_addr);
+            let balance = token_client.balance(&env.current_contract_address());
+            if balance < pending {
+                panic_with_error!(&env, StakingError::InsufficientRewardBalance);
+            }
+            token_client.transfer(&env.current_contract_address(), &user, &pending);
+        }
 
         env.invoke_contract::<()>(
             &token_address,
@@ -324,13 +375,14 @@ impl NftStaking {
             user,
             token_address,
             token_id,
-            rewards_paid: position.rewards_earned,
+            rewards_paid: pending,
             timestamp: env.ledger().timestamp(),
         }
         .publish(&env);
     }
 
     pub fn claim_rewards(env: Env, user: Address) -> i128 {
+        extend_instance_ttl(&env);
         if Self::is_paused(env.clone()) {
             panic_with_error!(&env, StakingError::ContractPaused);
         }
@@ -382,11 +434,13 @@ impl NftStaking {
         token_address: Address,
         token_id: u64,
     ) -> Option<StakedPosition> {
+        extend_instance_ttl(&env);
         let key = DataKey::StakedPosition(user, token_address, token_id);
         load_staked_position(&env, &key)
     }
 
     pub fn get_user_stakes(env: Env, user: Address) -> soroban_sdk::Vec<StakedPosition> {
+        extend_instance_ttl(&env);
         let keys = get_user_stakes(&env, &user);
         let mut positions = soroban_sdk::Vec::new(&env);
         for key in keys.iter() {
@@ -398,10 +452,12 @@ impl NftStaking {
     }
 
     pub fn total_staked(env: Env) -> u64 {
+        extend_instance_ttl(&env);
         get_total_staked(&env)
     }
 
     pub fn calculate_rewards(env: Env, user: Address) -> i128 {
+        extend_instance_ttl(&env);
         let rate = Self::rewards_per_second(&env);
         let stake_keys = get_user_stakes(&env, &user);
         let mut total: i128 = 0;

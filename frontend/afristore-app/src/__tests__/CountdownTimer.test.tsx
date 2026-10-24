@@ -6,6 +6,7 @@
  */
 import React from "react";
 import { render, screen, waitFor, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
@@ -239,6 +240,91 @@ describe("CountdownTimer", () => {
 
       // Should show bid input for active auction
       expect(screen.getByPlaceholderText(/min/i)).toBeInTheDocument();
+    });
+  });
+
+  describe("async error handling", () => {
+    it("shows an error and keeps the countdown when placing a bid rejects", async () => {
+      mockBid.mockRejectedValue(new Error("RPC timeout"));
+      const user = userEvent.setup();
+      const onBidPlaced = jest.fn();
+
+      render(
+        <BiddingPanel
+          auction={makeAuction({ creator: "GCREATOR" })}
+          onBidPlaced={onBidPlaced}
+        />,
+      );
+
+      await user.type(screen.getByPlaceholderText(/min/i), "2");
+      await user.click(screen.getByRole("button", { name: /place bid/i }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("RPC timeout");
+      expect(mockBid).toHaveBeenCalledWith(1, 2);
+      expect(onBidPlaced).not.toHaveBeenCalled();
+      // The countdown and bid form stay rendered after the failure.
+      expect(screen.getByText("Secs")).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/min/i)).toHaveValue(2);
+    });
+
+    it("uses a fallback message for non-Error bid rejections", async () => {
+      mockBid.mockRejectedValue(undefined);
+      const user = userEvent.setup();
+
+      render(<BiddingPanel auction={makeAuction({ creator: "GCREATOR" })} />);
+
+      await user.type(screen.getByPlaceholderText(/min/i), "2");
+      await user.click(screen.getByRole("button", { name: /place bid/i }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Failed to place bid",
+      );
+    });
+
+    it("clears the error once a retried bid succeeds", async () => {
+      mockBid
+        .mockRejectedValueOnce(new Error("RPC timeout"))
+        .mockResolvedValueOnce(true);
+      const user = userEvent.setup();
+      const onBidPlaced = jest.fn();
+
+      render(
+        <BiddingPanel
+          auction={makeAuction({ creator: "GCREATOR" })}
+          onBidPlaced={onBidPlaced}
+        />,
+      );
+
+      await user.type(screen.getByPlaceholderText(/min/i), "2");
+      const bidButton = screen.getByRole("button", { name: /place bid/i });
+      await user.click(bidButton);
+      expect(await screen.findByRole("alert")).toHaveTextContent("RPC timeout");
+
+      await user.click(bidButton);
+      await waitFor(() => expect(onBidPlaced).toHaveBeenCalledTimes(1));
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
+
+    it("shows an error when finalizing an expired auction rejects", async () => {
+      mockFinalize.mockRejectedValue(new Error("HostError: Error(Contract, #13)"));
+      const user = userEvent.setup();
+      const onFinalized = jest.fn();
+
+      render(
+        <BiddingPanel
+          auction={makeAuction({ end_time: Math.floor(Date.now() / 1000) - 10 })}
+          onFinalized={onFinalized}
+        />,
+      );
+
+      await user.click(screen.getByRole("button", { name: /finalize/i }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "This auction has not expired yet. (code 13)",
+      );
+      expect(onFinalized).not.toHaveBeenCalled();
+      // The finalize action stays available so the user can retry.
+      expect(screen.getByRole("button", { name: /finalize/i })).toBeEnabled();
     });
   });
 });

@@ -6,6 +6,9 @@ import { useDeploySplitter } from "@/hooks/useSplitter";
 import { SplitterRecipient } from "@/lib/splitter";
 import { WalletGuard } from "@/components/WalletGuard";
 import { RoyaltiesDistributor } from "@/components/RoyaltiesDistributor";
+import { useToast } from "@/components/ToastProvider";
+import { useTransientErrorToast } from "@/hooks/useTransientErrorToast";
+import { getReadableErrorMessage } from "@/lib/errors";
 import {
   Plus,
   Trash2,
@@ -56,11 +59,16 @@ function validatePercentages(
 export default function SplitterPage() {
   const { publicKey } = useWalletContext();
   const { deploy, isDeploying, error } = useDeploySplitter(publicKey);
+  const { pushToast } = useToast();
+  // Surfaces failures raised by the deploy hook as a toast instead of only
+  // rendering them inline, so the user notices the error wherever they are.
+  useTransientErrorToast(error);
   const [beneficiaries, setBeneficiaries] = useState<Beneficiary[]>([
     createEmptyBeneficiary(0),
   ]);
   const [nextId, setNextId] = useState(1);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [deployError, setDeployError] = useState<string | null>(null);
   const [deployedAddress, setDeployedAddress] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -68,6 +76,7 @@ export default function SplitterPage() {
     setBeneficiaries((prev) => [...prev, createEmptyBeneficiary(nextId)]);
     setNextId((n) => n + 1);
     setValidationError(null);
+    setDeployError(null);
   };
 
   const removeBeneficiary = (id: number) => {
@@ -76,6 +85,7 @@ export default function SplitterPage() {
       return prev.filter((b) => b.id !== id);
     });
     setValidationError(null);
+    setDeployError(null);
   };
 
   const updateBeneficiary = (
@@ -87,6 +97,7 @@ export default function SplitterPage() {
       prev.map((b) => (b.id === id ? { ...b, [field]: value } : b)),
     );
     setValidationError(null);
+    setDeployError(null);
   };
 
   const handleSubmit = async () => {
@@ -97,6 +108,7 @@ export default function SplitterPage() {
     }
 
     setValidationError(null);
+    setDeployError(null);
 
     const recipients: SplitterRecipient[] = beneficiaries
       .filter((b) => b.address.trim() !== "" || b.percentage.trim() !== "")
@@ -105,9 +117,20 @@ export default function SplitterPage() {
         percentage: parseInt(b.percentage.trim(), 10),
       }));
 
-    const address = await deploy(recipients);
-    if (address) {
-      setDeployedAddress(address);
+    try {
+      const address = await deploy(recipients);
+      if (address) {
+        setDeployedAddress(address);
+      }
+    } catch (err: unknown) {
+      // `deploy` reports its own failures, but a rejection can still escape
+      // (e.g. wallet signing errors) and would otherwise be unhandled.
+      const message = getReadableErrorMessage(
+        err,
+        "Failed to deploy the royalty splitter. Please try again.",
+      );
+      setDeployError(message);
+      pushToast(message, "error");
     }
   };
 
@@ -117,9 +140,20 @@ export default function SplitterPage() {
 
   const copyAddress = async () => {
     if (!deployedAddress) return;
-    await navigator.clipboard.writeText(deployedAddress);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(deployedAddress);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err: unknown) {
+      // Clipboard access can reject (permissions, insecure context).
+      pushToast(
+        getReadableErrorMessage(
+          err,
+          "Couldn't copy the contract address. Please copy it manually.",
+        ),
+        "error",
+      );
+    }
   };
 
   const resetForm = () => {
@@ -127,6 +161,7 @@ export default function SplitterPage() {
     setNextId(1);
     setDeployedAddress(null);
     setValidationError(null);
+    setDeployError(null);
   };
 
   return (
@@ -314,9 +349,12 @@ export default function SplitterPage() {
                 </div>
               </div>
 
-              {(validationError || error) && (
-                <div className="p-4 rounded-xl bg-terracotta-500/10 border border-terracotta-500/20 text-sm font-bold text-terracotta-400">
-                  {validationError || error}
+              {(validationError || deployError || error) && (
+                <div
+                  role="alert"
+                  className="p-4 rounded-xl bg-terracotta-500/10 border border-terracotta-500/20 text-sm font-bold text-terracotta-400"
+                >
+                  {validationError || deployError || error}
                 </div>
               )}
 

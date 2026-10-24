@@ -75,73 +75,143 @@ describe("MagicWalletModal", () => {
   });
 
   it("calls onClose when the close button is clicked", async () => {
-    const onClose = jest.fn();
-    const user = userEvent.setup();
-    render(<MagicWalletModal isOpen={true} onClose={onClose} />);
-    // The X close button is the first button
-    const buttons = screen.getAllByRole("button");
-    await user.click(buttons[0]);
-    expect(onClose).toHaveBeenCalled();
+    try {
+      const onClose = jest.fn();
+      const user = userEvent.setup();
+      render(<MagicWalletModal isOpen={true} onClose={onClose} />);
+      // The X close button is the first button
+      const buttons = screen.getAllByRole("button");
+      await user.click(buttons[0]);
+      expect(onClose).toHaveBeenCalled();
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("shows email input form when Email Magic Link is clicked", async () => {
-    const user = userEvent.setup();
-    render(<MagicWalletModal isOpen={true} onClose={jest.fn()} />);
-    // "Email Magic Link" button triggers setShowEmailForm(true)
-    await user.click(screen.getByRole("button", { name: /email magic link/i }));
-    await waitFor(() =>
-      expect(
-        screen.getByPlaceholderText(/you@example\.com/i),
-      ).toBeInTheDocument(),
-    );
+    try {
+      const user = userEvent.setup();
+      render(<MagicWalletModal isOpen={true} onClose={jest.fn()} />);
+      // "Email Magic Link" button triggers setShowEmailForm(true)
+      await user.click(screen.getByRole("button", { name: /email magic link/i }));
+      await waitFor(() =>
+        expect(
+          screen.getByPlaceholderText(/you@example\.com/i),
+        ).toBeInTheDocument(),
+      );
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("calls loginWithEmail when email form is submitted", async () => {
-    mockLoginWithEmail.mockResolvedValueOnce(undefined);
-    const user = userEvent.setup();
-    render(<MagicWalletModal isOpen={true} onClose={jest.fn()} />);
+    try {
+      mockLoginWithEmail.mockResolvedValueOnce(undefined);
+      const user = userEvent.setup();
+      render(<MagicWalletModal isOpen={true} onClose={jest.fn()} />);
 
-    await user.click(screen.getByRole("button", { name: /email magic link/i }));
-    const input = await screen.findByPlaceholderText(/you@example\.com/i);
-    await user.type(input, "user@test.com");
-    // Submit button text is "Send Magic Link" or similar
-    const submitBtn = screen.getByRole("button", {
-      name: /send magic link|continue/i,
-    });
-    await user.click(submitBtn);
+      await user.click(screen.getByRole("button", { name: /email magic link/i }));
+      const input = await screen.findByPlaceholderText(/you@example\.com/i);
+      await user.type(input, "user@test.com");
+      // Submit button text is "Send Magic Link" or similar
+      const submitBtn = screen.getByRole("button", {
+        name: /send magic link|continue/i,
+      });
+      await user.click(submitBtn);
 
-    await waitFor(() =>
-      expect(mockLoginWithEmail).toHaveBeenCalledWith("user@test.com"),
-    );
+      await waitFor(() =>
+        expect(mockLoginWithEmail).toHaveBeenCalledWith("user@test.com"),
+      );
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("calls loginWithPasskey when Passkey Login is clicked", async () => {
-    mockLoginWithPasskey.mockResolvedValueOnce(undefined);
-    const user = userEvent.setup();
-    render(<MagicWalletModal isOpen={true} onClose={jest.fn()} />);
+    try {
+      mockLoginWithPasskey.mockResolvedValueOnce(undefined);
+      const user = userEvent.setup();
+      render(<MagicWalletModal isOpen={true} onClose={jest.fn()} />);
 
-    const passkeyBtn = screen.getByRole("button", { name: /passkey login/i });
-    await user.click(passkeyBtn);
-    await waitFor(() => expect(mockLoginWithPasskey).toHaveBeenCalled());
+      const passkeyBtn = screen.getByRole("button", { name: /passkey login/i });
+      await user.click(passkeyBtn);
+      await waitFor(() => expect(mockLoginWithPasskey).toHaveBeenCalled());
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
-  it("displays error message when login fails", async () => {
+  it("displays error message when login fails in context", () => {
     mockError = "Login failed";
     render(<MagicWalletModal isOpen={true} onClose={jest.fn()} />);
-    expect(screen.getByText(/login failed/i)).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/login failed/i);
+  });
+
+  it("handles rejection and displays error message when loginWithEmail rejects", async () => {
+    try {
+      mockLoginWithEmail.mockRejectedValueOnce(new Error("Email delivery failed"));
+      const user = userEvent.setup();
+      render(<MagicWalletModal isOpen={true} onClose={jest.fn()} />);
+
+      await user.click(screen.getByRole("button", { name: /email magic link/i }));
+      const input = await screen.findByPlaceholderText(/you@example\.com/i);
+      await user.type(input, "error@test.com");
+      const submitBtn = screen.getByRole("button", {
+        name: /send magic link|continue/i,
+      });
+      await user.click(submitBtn);
+
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          /Email delivery failed/i,
+        );
+      });
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
+  });
+
+  it("handles rejection and displays error message when loginWithPasskey rejects", async () => {
+    try {
+      mockLoginWithPasskey.mockRejectedValueOnce(new Error("Passkey biometric cancelled"));
+      const user = userEvent.setup();
+      render(<MagicWalletModal isOpen={true} onClose={jest.fn()} />);
+
+      const passkeyBtn = screen.getByRole("button", { name: /passkey login/i });
+      await user.click(passkeyBtn);
+
+      await waitFor(() => {
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          /Passkey biometric cancelled/i,
+        );
+      });
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 
   it("calls onClose when backdrop is clicked", async () => {
-    const onClose = jest.fn();
-    const user = userEvent.setup();
-    const { container } = render(
-      <MagicWalletModal isOpen={true} onClose={onClose} />,
-    );
-    // The backdrop is the first absolutely-positioned overlay div
-    const backdrop = container.querySelector(".absolute.inset-0");
-    if (backdrop) {
-      await user.click(backdrop);
-      expect(onClose).toHaveBeenCalled();
+    try {
+      const onClose = jest.fn();
+      const user = userEvent.setup();
+      const { container } = render(
+        <MagicWalletModal isOpen={true} onClose={onClose} />,
+      );
+      // The backdrop is the first absolutely-positioned overlay div
+      const backdrop = container.querySelector(".absolute.inset-0");
+      if (backdrop) {
+        await user.click(backdrop);
+        expect(onClose).toHaveBeenCalled();
+      }
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
     }
   });
 });

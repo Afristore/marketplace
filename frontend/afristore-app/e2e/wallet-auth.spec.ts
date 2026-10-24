@@ -1,5 +1,6 @@
 import { test, expect, Page } from "@playwright/test";
 import { mockFreighter, TEST_PUBLIC_KEY } from "./freighter-mock";
+import { safeGoto } from "./helpers/error-handling";
 
 const MAGIC_PUBLIC_KEY =
   "GBVFEOFMZAUI7WVPDMGTQZ3BO63BKGKVFKFKMLMDAZDCIYB2MZZXKVW";
@@ -8,7 +9,7 @@ const FREIGHTER_SHORT_KEY = `${TEST_PUBLIC_KEY.slice(0, 4)}…${TEST_PUBLIC_KEY.
 
 test.describe("Magic Wallet — Passkey Login", () => {
   test("connects via passkey and shows success state", async ({ page }) => {
-    await page.goto("/");
+    await safeGoto(page, "/");
     await page
       .getByRole("button", { name: /connect wallet/i })
       .first()
@@ -40,7 +41,7 @@ test.describe("Magic Wallet — Passkey Login", () => {
 
 test.describe("Magic Wallet — Email Login", () => {
   test("connects via email and shows success state", async ({ page }) => {
-    await page.goto("/");
+    await safeGoto(page, "/");
     await page
       .getByRole("button", { name: /connect wallet/i })
       .first()
@@ -80,7 +81,7 @@ test.describe("Disconnect Wallet", () => {
     page,
   }) => {
     await mockFreighter(page);
-    await page.goto("/");
+    await safeGoto(page, "/");
 
     await expect(page.getByText(FREIGHTER_SHORT_KEY).first()).toBeVisible({
       timeout: 10000,
@@ -106,7 +107,7 @@ test.describe("Reconnect Different Wallet", () => {
     page,
   }) => {
     await mockFreighter(page);
-    await page.goto("/");
+    await safeGoto(page, "/");
 
     await expect(page.getByText(FREIGHTER_SHORT_KEY).first()).toBeVisible({
       timeout: 10000,

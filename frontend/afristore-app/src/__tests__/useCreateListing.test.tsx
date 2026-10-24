@@ -41,9 +41,14 @@ async function runCreate(
   input: CreateListingInput = INPUT,
 ): Promise<number | null> {
   let result: number | null = null;
-  await act(async () => {
-    result = await hook.create(input);
-  });
+  try {
+    await act(async () => {
+      result = await hook.create(input);
+    });
+  } catch (error) {
+    console.error("runCreate failed:", error);
+    throw error;
+  }
   return result;
 }
 

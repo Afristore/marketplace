@@ -1,0 +1,42 @@
+{
+  "myCollections": {
+    "badge": "My Collections",
+    "title": "Your Created Collections",
+    "subtitle": "Manage and monitor the NFT collections you've deployed on the Afristore Launchpad.",
+    "createNew": "Create New",
+    "disconnected": {
+      "heading": "My Collections",
+      "description": "Connect your wallet to view and manage the NFT collections you've created on the Afristore Launchpad.",
+      "hint": "Please connect your wallet to continue"
+    },
+    "stats": {
+      "total": "Total Collections",
+      "erc721": "ERC-721 Collections",
+      "erc1155": "ERC-1155 Collections"
+    },
+    "filters": {
+      "searchPlaceholder": "Search by collection address…",
+      "filterByType": "Filter by collection type",
+      "allTypes": "All Types",
+      "normal721": "Normal 721",
+      "normal1155": "Normal 1155",
+      "lazy721": "Lazy 721",
+      "lazy1155": "Lazy 1155"
+    },
+    "loading": "Loading your collections from the ledger…",
+    "retry": "Try Again",
+    "empty": {
+      "noCollectionsTitle": "No Collections Yet",
+      "noMatchesTitle": "No Matching Collections",
+      "noCollectionsDescription": "You haven't created any collections yet. Start by creating your first NFT collection!",
+      "noMatchesDescription": "Try adjusting your search or filter criteria.",
+      "createFirst": "Create Your First Collection"
+    },
+    "card": {
+      "type": "Type",
+      "status": "Status",
+      "active": "Active",
+      "viewDetails": "View Details"
+    }
+  }
+}

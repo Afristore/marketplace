@@ -588,7 +588,8 @@ impl Launchpad {
     /// Add a token address to the approved currency whitelist.
     pub fn add_approved_currency(env: Env, currency: Address) -> Result<(), Error> {
         storage::extend_instance_ttl(&env);
-        storage::require_admin(&env)?;
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
         storage::set_approved_currency(&env, &currency, true);
         Ok(())
     }
@@ -596,7 +597,8 @@ impl Launchpad {
     /// Remove a token address from the approved currency whitelist.
     pub fn remove_approved_currency(env: Env, currency: Address) -> Result<(), Error> {
         storage::extend_instance_ttl(&env);
-        storage::require_admin(&env)?;
+        let admin = storage::get_admin(&env).ok_or(Error::NotInitialized)?;
+        admin.require_auth();
         storage::set_approved_currency(&env, &currency, false);
         Ok(())
     }

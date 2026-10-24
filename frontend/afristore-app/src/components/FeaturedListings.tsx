@@ -10,7 +10,15 @@ import Link from "next/link";
 import { useMarketplace } from "@/hooks/useMarketplace";
 import { Listing, stroopsToXlm } from "@/lib/contract";
 import { fetchMetadata, cidToGatewayUrl, ArtworkMetadata } from "@/lib/ipfs";
-import { ArrowRight, ChevronLeft, ChevronRight, Tag, Eye } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowRight,
+  ChevronLeft,
+  ChevronRight,
+  Tag,
+  Eye,
+  X,
+} from "lucide-react";
 
 interface EnrichedItem {
   listing: Listing;
@@ -31,13 +39,20 @@ function getDesktopCardWidthClass(itemCount: number): string {
 }
 
 export function FeaturedListings() {
-  const { listings, isLoading } = useMarketplace();
+  const { listings, isLoading, error: marketplaceError } = useMarketplace();
   const [enriched, setEnriched] = useState<EnrichedItem[]>([]);
   const [scrollIdx, setScrollIdx] = useState(0);
+  const [error, setError] = useState<string | null>(null);
 
   const activeListings = listings
     .filter((listing: Listing) => listing.status === "Active")
     .slice(0, 6);
+
+  useEffect(() => {
+    if (marketplaceError) {
+      setError(marketplaceError);
+    }
+  }, [marketplaceError]);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,35 +69,51 @@ export function FeaturedListings() {
       };
     }
 
-    Promise.all(
-      active.map(async (listing) => {
-        try {
-          const meta = await fetchMetadata(listing.metadata_cid);
-          return {
-            listing,
-            metadata: meta,
-            imageUrl: meta?.image
-              ? cidToGatewayUrl(meta.image)
-              : "/placeholder-art.svg",
-          };
-        } catch {
-          return {
-            listing,
-            metadata: null,
-            imageUrl: "/placeholder-art.svg",
-          };
+    const enrichListings = async () => {
+      try {
+        const items = await Promise.all(
+          active.map(async (listing) => {
+            try {
+              const meta = await fetchMetadata(listing.metadata_cid);
+              return {
+                listing,
+                metadata: meta,
+                imageUrl: meta?.image
+                  ? cidToGatewayUrl(meta.image)
+                  : "/placeholder-art.svg",
+              };
+            } catch {
+              return {
+                listing,
+                metadata: null,
+                imageUrl: "/placeholder-art.svg",
+              };
+            }
+          }),
+        );
+        if (!cancelled) {
+          setEnriched(items);
+          // Clear enrichment-only errors once listings resolve successfully.
+          if (!marketplaceError) setError(null);
         }
-      }),
-    ).then((items) => {
-      if (!cancelled) {
-        setEnriched(items);
+      } catch (err: unknown) {
+        console.error("Featured listings enrichment failed:", err);
+        if (!cancelled) {
+          const message =
+            err instanceof Error
+              ? err.message
+              : "Failed to load featured artworks. Please try again.";
+          setError(message);
+        }
       }
-    });
+    };
+
+    void enrichListings();
 
     return () => {
       cancelled = true;
     };
-  }, [listings]);
+  }, [listings, marketplaceError]);
 
   const liveFallbackItems: EnrichedItem[] = activeListings.map((listing) => ({
     listing,
@@ -97,11 +128,29 @@ export function FeaturedListings() {
   const showEmptyState = !isLoading && !hasListings;
 
   const scrollNext = useCallback(() => {
-    setScrollIdx((prev) => Math.min(prev + 1, maxScroll));
+    try {
+      setScrollIdx((prev) => Math.min(prev + 1, maxScroll));
+    } catch (err: unknown) {
+      console.error("Featured listings scroll next failed:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to navigate featured artworks.",
+      );
+    }
   }, [maxScroll]);
 
   const scrollPrev = useCallback(() => {
-    setScrollIdx((prev) => Math.max(prev - 1, 0));
+    try {
+      setScrollIdx((prev) => Math.max(prev - 1, 0));
+    } catch (err: unknown) {
+      console.error("Featured listings scroll prev failed:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to navigate featured artworks.",
+      );
+    }
   }, []);
 
   return (
@@ -140,6 +189,26 @@ export function FeaturedListings() {
             </button>
           </div>
         </div>
+
+        {error && (
+          <div
+            role="alert"
+            className="mb-6 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          >
+            <div className="flex items-center gap-2">
+              <AlertCircle size={16} className="flex-shrink-0 text-red-500" />
+              <span>{error}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="ml-2 text-red-500 transition-colors hover:text-red-700"
+              aria-label="Dismiss error"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
 
         {showEmptyState ? (
           <div className="rounded-3xl border border-brand-100 bg-white px-6 py-12 text-center shadow-sm">

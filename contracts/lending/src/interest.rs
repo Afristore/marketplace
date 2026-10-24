@@ -30,7 +30,7 @@ pub fn accrued_interest_usd(position: &Position, now: u64) -> i128 {
     let len = schedule.len() as u64;
     let price = position.declared_price_usd;
 
-    let elapsed_secs = now - position.start_time;
+    let elapsed_secs = (now - position.start_time).min(position.max_duration_secs);
     let elapsed_days = elapsed_secs / 86400;
     let full_months = elapsed_days / 30;
     let partial_days = elapsed_days % 30;
@@ -165,5 +165,21 @@ mod tests {
         let env = Env::default();
         let pos = make_position(&env, vec![&env], 0);
         accrued_interest_usd(&pos, 86400);
+    }
+
+    /// Interest stops accruing at max_duration_secs.
+    /// max_duration_secs = 90 days. Calling with now = 120 days must return the
+    /// same value as calling with now = 90 days.
+    #[test]
+    fn test_interest_capped_at_max_duration() {
+        let env = Env::default();
+        // schedule = [500 bps/month] (5%), max_duration = 90 days (3 full months)
+        let pos = make_position(&env, vec![&env, 500u32], 0);
+        let at_expiry = accrued_interest_usd(&pos, 86400 * 90);
+        let past_expiry = accrued_interest_usd(&pos, 86400 * 120);
+        assert_eq!(
+            at_expiry, past_expiry,
+            "interest must not grow past max_duration_secs"
+        );
     }
 }

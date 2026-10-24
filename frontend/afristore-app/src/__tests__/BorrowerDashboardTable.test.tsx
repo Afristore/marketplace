@@ -1,6 +1,8 @@
 import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import "@testing-library/jest-dom";
+import "@/i18n";
+import i18n from "i18next";
 import {
   BorrowerDashboardTable,
   BorrowerDebt,
@@ -155,5 +157,28 @@ describe("BorrowerDashboardTable", () => {
     const badge = screen.getByText("95.23%");
     expect(badge.className).toContain("text-red-300");
     expect(container).not.toBeNull();
+  });
+
+  it("supports language switching via i18n", async () => {
+    try {
+      await act(async () => {
+        await i18n.changeLanguage("es");
+      });
+      const { unmount } = render(<BorrowerDashboardTable debts={[debtA]} />);
+
+      expect(screen.getByText("Deuda Actual")).toBeInTheDocument();
+      expect(screen.getByText("Factor de Salud")).toBeInTheDocument();
+      expect(screen.getByText("Recargar")).toBeInTheDocument();
+      expect(screen.getByText("Pagar")).toBeInTheDocument();
+      expect(screen.getByText("Administrar")).toBeInTheDocument();
+      unmount();
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    } finally {
+      await act(async () => {
+        await i18n.changeLanguage("en");
+      });
+    }
   });
 });

@@ -205,3 +205,150 @@ describe("useWallet (Freighter)", () => {
     );
   });
 });
+
+describe("useWallet (Freighter) — async error handling", () => {
+  let consoleErrorSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    jest.useFakeTimers();
+    consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+    jest.useRealTimers();
+  });
+
+  it("treats a rejected install check as NOT_INSTALLED instead of crashing", async () => {
+    mockIsFreighterInstalled.mockRejectedValue(new Error("extension crashed"));
+    render(<WalletComp />);
+
+    // Run the mount refresh plus every polling tick.
+    await act(async () => {
+      jest.advanceTimersByTime(4000);
+    });
+
+    expect(screen.getByTestId("status").textContent).toBe("NOT_INSTALLED");
+    expect(screen.getByTestId("installed").textContent).toBe("false");
+    expect(mockGetConnectedPublicKey).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "Wallet detection error:",
+      expect.any(Error),
+    );
+  });
+
+  it("recovers on the next poll after a transient install-check failure", async () => {
+    mockIsFreighterInstalled
+      .mockRejectedValueOnce(new Error("not ready"))
+      .mockResolvedValue(true);
+    mockGetConnectedPublicKey.mockResolvedValue("GLATE");
+    render(<WalletComp />);
+
+    await act(async () => {
+      jest.advanceTimersByTime(800);
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("key").textContent).toBe("GLATE"),
+    );
+    expect(screen.getByTestId("status").textContent).toBe("CONNECTED");
+  });
+
+  it("stays DISCONNECTED when auto-detecting the public key rejects", async () => {
+    mockIsFreighterInstalled.mockResolvedValue(true);
+    mockGetConnectedPublicKey.mockRejectedValue(new Error("locked"));
+    render(<WalletComp />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("status").textContent).toBe("DISCONNECTED"),
+    );
+    expect(screen.getByTestId("key").textContent).toBe("null");
+    expect(screen.getByTestId("error").textContent).toBe("none");
+  });
+
+  it("manual refresh does not reject when the install check fails", async () => {
+    mockIsFreighterInstalled.mockResolvedValue(true);
+    mockGetConnectedPublicKey.mockResolvedValue(null);
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    render(<WalletComp />);
+    await waitFor(() =>
+      expect(screen.getByTestId("status").textContent).toBe("DISCONNECTED"),
+    );
+
+    mockIsFreighterInstalled.mockRejectedValue(new Error("gone"));
+    await user.click(screen.getByTestId("refresh"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("status").textContent).toBe("NOT_INSTALLED"),
+    );
+  });
+
+  it("shows the friendly rejection message when the user denies access", async () => {
+    mockIsFreighterInstalled.mockResolvedValue(true);
+    mockGetConnectedPublicKey.mockResolvedValue(null);
+    mockConnectFreighter.mockRejectedValue(
+      new Error("Freighter access was denied by the user."),
+    );
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    render(<WalletComp />);
+    await waitFor(() =>
+      expect(screen.getByTestId("status").textContent).toBe("DISCONNECTED"),
+    );
+
+    await user.click(screen.getByTestId("connect"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("error").textContent).toBe(
+        "Connection request was rejected.",
+      ),
+    );
+    expect(screen.getByTestId("status").textContent).toBe("DISCONNECTED");
+  });
+
+  it("falls back to a generic message for non-Error rejections and resets CONNECTING", async () => {
+    mockIsFreighterInstalled.mockResolvedValue(true);
+    mockGetConnectedPublicKey.mockResolvedValue(null);
+    mockConnectFreighter.mockRejectedValue("bridge exploded");
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    render(<WalletComp />);
+    await waitFor(() =>
+      expect(screen.getByTestId("status").textContent).toBe("DISCONNECTED"),
+    );
+
+    await user.click(screen.getByTestId("connect"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("error").textContent).toBe(
+        "Failed to connect wallet",
+      ),
+    );
+    expect(screen.getByTestId("status").textContent).toBe("DISCONNECTED");
+  });
+
+  it("clears a previous connect error on a successful retry", async () => {
+    mockIsFreighterInstalled.mockResolvedValue(true);
+    mockGetConnectedPublicKey.mockResolvedValue(null);
+    mockConnectFreighter
+      .mockRejectedValueOnce(new Error("timeout"))
+      .mockResolvedValueOnce({
+        publicKey: "GRETRY",
+        networkPassphrase: "Test SDF Network ; September 2015",
+      });
+    const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
+    render(<WalletComp />);
+    await waitFor(() =>
+      expect(screen.getByTestId("status").textContent).toBe("DISCONNECTED"),
+    );
+
+    await user.click(screen.getByTestId("connect"));
+    await waitFor(() =>
+      expect(screen.getByTestId("error").textContent).toBe("timeout"),
+    );
+
+    await user.click(screen.getByTestId("connect"));
+    await waitFor(() =>
+      expect(screen.getByTestId("status").textContent).toBe("CONNECTED"),
+    );
+    expect(screen.getByTestId("error").textContent).toBe("none");
+  });
+});

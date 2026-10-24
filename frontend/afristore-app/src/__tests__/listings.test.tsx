@@ -41,18 +41,23 @@ jest.mock("@/hooks/useUserActivity", () => ({
 
 describe("Regression Test: Invalid Listing IDs", () => {
   it("renders empty interactive area for null listing and auction", async () => {
-    render(
-      <ListingInteractiveArea
-        id="9999"
-        listing={null}
-        auction={null}
-        metadata={null}
-      />,
-    );
+    try {
+      render(
+        <ListingInteractiveArea
+          id="9999"
+          listing={null}
+          auction={null}
+          metadata={null}
+        />,
+      );
 
-    // With no listing/auction the interactive area renders without crashing
-    await waitFor(() => {
-      expect(screen.getByText(/details/i)).toBeInTheDocument();
-    });
+      // With no listing/auction the interactive area renders without crashing
+      await waitFor(() => {
+        expect(screen.getByText(/details/i)).toBeInTheDocument();
+      });
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   });
 });

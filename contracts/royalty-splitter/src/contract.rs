@@ -52,7 +52,7 @@ impl RoyaltySplitter {
     /// Drain the contract's full token balance to all beneficiaries
     /// proportionally. Callable by anyone; no auth required.
     /// The caller receives any rounding remainder (dust) as a gas incentive.
-    pub fn distribute(env: Env, _token_address: Address, caller: Address) {
+    pub fn distribute(env: Env, token_address: Address, caller: Address) {
         if !is_initialized(&env) {
             panic_with_error!(&env, SplitterError::NotInitialized);
         }
@@ -62,6 +62,11 @@ impl RoyaltySplitter {
             .extend_ttl(LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
 
         let token = load_token(&env);
+        // Validate that the provided token address matches the configured token
+        if token_address != token {
+            panic_with_error!(&env, SplitterError::InvalidToken);
+        }
+
         let token_client = TokenClient::new(&env, &token);
         let contract_addr = env.current_contract_address();
 
