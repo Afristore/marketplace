@@ -447,7 +447,7 @@ fn revoked_operator_cannot_transfer_from_until_reapproved() {
     client.set_approval_for_all(&alice, &operator, &false);
     assert!(!client.is_approved_for_all(&alice, &operator));
 
-    // Revocation takes effect immediately and the failed call changes nothing;
+    // Revocation takes effect immediately and the failed call changes nothing.
     let result = client.try_transfer_from(&operator, &alice, &bob, &second);
     assert_eq!(result, Err(Ok(Error::NotApproved)));
     assert_eq!(client.owner_of(&second), alice);
