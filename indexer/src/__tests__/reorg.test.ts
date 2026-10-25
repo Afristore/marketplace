@@ -39,6 +39,9 @@ const mockPrisma: any = vi.hoisted(() => {
     collection: {
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
+    lendingListing: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+    },
     lendingPosition: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
