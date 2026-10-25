@@ -88,6 +88,19 @@ model MarketplaceEvent {
   @@unique([listingId, eventType, ledgerSequence])
 }
 
+// Dead-letter table for events the poller failed to process (#1174).
+model IndexerError {
+  id             Int      @id @default(autoincrement())
+  eventType      String
+  listingId      BigInt?
+  ledgerSequence Int?
+  payload        Json?
+  error          String
+  createdAt      DateTime @default(now())
+  @@index([eventType])
+  @@index([ledgerSequence])
+}
+
 model Collection {
   id              Int      @id @default(autoincrement())
   contractAddress String   @unique
