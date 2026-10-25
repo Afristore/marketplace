@@ -1964,14 +1964,21 @@ fn test_paused_contract_rejection_on_all_state_mutating_functions_issue_1093() {
 
     // State mutating functions must be rejected with ContractPaused
     mint_token(&env, &collection, &user, 100);
-    let stake_err = staking.try_stake_erc721(&user, &collection, &100);
-    assert_eq!(stake_err, Err(Ok(StakingError::ContractPaused)));
+    let stake_err = staking
+        .try_stake_erc721(&user, &collection, &100)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(stake_err, StakingError::ContractPaused.into());
 
-    let unstake_err = staking.try_unstake_erc721(&user, &collection, &100);
-    assert_eq!(unstake_err, Err(Ok(StakingError::ContractPaused)));
+    let unstake_err = staking
+        .try_unstake_erc721(&user, &collection, &100)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(unstake_err, StakingError::ContractPaused.into());
 
     // Query functions continue to operate
     assert_eq!(staking.total_staked(), 0);
-    assert!(staking.get_staked_position(&user, &collection, &100).is_none());
+    assert!(staking
+        .get_staked_position(&user, &collection, &100)
+        .is_none());
 }
-

@@ -87,6 +87,13 @@ export interface CollateralAddedData {
   new_total: string;
 }
 
+export interface CollateralToppedUpData {
+  position_id: string;
+  borrower: string;
+  amount: string;
+  new_total: string;
+}
+
 export interface PositionReturnedData {
   position_id: string;
   interest_paid: string;

@@ -9,11 +9,6 @@ import {
   MagicAccount,
 } from "@/lib/magic";
 
-jest.mock("magic-sdk");
-jest.mock("@/lib/e2e-chain-mock", () => ({
-  isE2eMockChain: jest.fn(() => false),
-}));
-
 const mockMagicUser = {
   isLoggedIn: jest.fn(),
   getInfo: jest.fn(),
@@ -30,12 +25,28 @@ const mockMagicInstance = {
   auth: mockMagicAuth,
 };
 
+jest.mock("magic-sdk", () => ({
+  Magic: jest.fn().mockImplementation(() => mockMagicInstance),
+}));
+jest.mock("@/lib/e2e-chain-mock", () => ({
+  isE2eMockChain: jest.fn(() => false),
+}));
+
 describe("magic.ts", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    jest.resetModules();
     sessionStorage.clear();
     process.env.NEXT_PUBLIC_MAGIC_API_KEY = "pk_test_123456";
+    const { isE2eMockChain } = require("@/lib/e2e-chain-mock");
+    isE2eMockChain.mockReturnValue(false);
+    mockMagicUser.isLoggedIn.mockReset().mockResolvedValue(true);
+    mockMagicUser.getInfo.mockReset().mockResolvedValue({
+      email: "user@example.com",
+      publicAddress: "GABC123",
+    });
+    mockMagicUser.logout.mockReset().mockResolvedValue(undefined);
+    mockMagicAuth.loginWithMagicLink.mockReset().mockResolvedValue(undefined);
+    mockMagicAuth.loginWithPasskey = jest.fn().mockResolvedValue("did_token");
   });
 
   afterEach(() => {
@@ -194,7 +205,7 @@ describe("magic.ts", () => {
     });
 
     it("should throw error if passkey login not available", async () => {
-      mockMagicAuth.loginWithPasskey = undefined;
+      mockMagicAuth.loginWithPasskey = undefined as any;
 
       await expect(loginWithPasskey()).rejects.toThrow(
         "Passkey login is not available or failed"

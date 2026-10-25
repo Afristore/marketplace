@@ -49,8 +49,8 @@ fn instance_ttl_is_extended_on_mint() {
 
     let alice = Address::generate(&env);
 
-    // After init, instance TTL is bumped by the initializer.
-    // Move past the threshold so missing "extend_instance_ttl" on mint would expire it.
+    // After init, instance TTL is bumped by the initializer;
+    // Move past the threshold so missing "extend_instance_ttl" on mint would expire it;
     jump_ledger(&env, 60_000);
     let token_id_0 = client.mint(&alice, &String::from_str(&env, "uri-0"));
 
@@ -73,7 +73,7 @@ fn persistent_ttl_is_extended_on_transfer_keys() {
     client.transfer(&alice, &bob, &token_id);
 
     // Jump beyond TTL_THRESHOLD. If transfer() didn't extend TTL for the
-    // updated keys, they'd disappear.
+    // updated keys, they'd disappear;
     jump_ledger(&env, 60_000);
 
     let (owner_has, alice_balance_has) = env.as_contract(&contract_id, || {
@@ -98,7 +98,7 @@ fn persistent_ttl_is_extended_on_burn_balance_key() {
 
     let token_id = client.mint(&alice, &String::from_str(&env, "uri"));
     // NormalNFT721's burn() path checks explicit approval (via Approved(token_id)),
-    // so set a self-approval first to keep this test focused on TTL behavior.
+    // so set a self-approval first to keep this test focused on TTL behavior;
     client.approve(&alice, &alice, &token_id);
     client.burn(&alice, &token_id);
 
@@ -115,7 +115,7 @@ fn persistent_ttl_is_extended_on_burn_balance_key() {
 
     // burn() intentionally removes the token ownership key
     assert!(!owner_has);
-    // but BalanceOf must still be kept alive.
+    // but BalanceOf must still be kept alive;
     assert!(alice_balance_has);
 }
 
