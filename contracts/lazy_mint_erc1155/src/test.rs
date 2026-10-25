@@ -696,3 +696,36 @@ fn update_royalty_fails_if_not_creator() {
     let result = client.try_update_royalty(&new_receiver, &250u32);
     assert!(result.is_err());
 }
+
+#[test]
+fn test_multi_step_redemption_up_to_buyer_quota_boundary_issue_1099() {
+    let (env, client, contract_id, _, _) = setup_env();
+    env.mock_all_auths();
+
+    let buyer = Address::generate(&env);
+    let token_id = 99u64;
+    client.register_edition(&token_id, &100u128);
+
+    let voucher = MintVoucher1155 {
+        token_id,
+        buyer_quota: 10,
+        price_per_unit: 0,
+        currency: Address::generate(&env),
+        uri: String::from_str(&env, "ipfs://uri"),
+        uri_hash: BytesN::from_array(&env, &[1u8; 32]),
+        valid_until: 0,
+    };
+    let sig = sign_voucher(&env, &contract_id, &voucher);
+
+    // Step 1: Partial redemption (4 of 10)
+    client.redeem(&buyer, &voucher, &4u128, &sig);
+    assert_eq!(client.balance_of(&buyer, &token_id), 4u128);
+
+    // Step 2: Second partial redemption up to quota (6 of 10, total 10)
+    client.redeem(&buyer, &voucher, &6u128, &sig);
+    assert_eq!(client.balance_of(&buyer, &token_id), 10u128);
+
+    // Step 3: Attempt 1 more, exceeding buyer quota, must fail with ExceedsVoucherMax
+    let res = client.try_redeem(&buyer, &voucher, &1u128, &sig);
+    assert_eq!(res, Err(Ok(Error::ExceedsVoucherMax)));
+}

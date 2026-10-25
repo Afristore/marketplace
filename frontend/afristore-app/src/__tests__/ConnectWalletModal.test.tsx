@@ -80,27 +80,37 @@ describe("ConnectWalletModal", () => {
   });
 
   it("calls onClose when the backdrop is clicked", async () => {
-    const onClose = jest.fn();
-    const user = userEvent.setup();
-    const { container } = render(
-      <ConnectWalletModal isOpen={true} onClose={onClose} />,
-    );
-    const backdrop = container.querySelector(".absolute.inset-0");
-    if (backdrop) {
-      await user.click(backdrop);
-      expect(onClose).toHaveBeenCalled();
+    try {
+      const onClose = jest.fn();
+      const user = userEvent.setup();
+      const { container } = render(
+        <ConnectWalletModal isOpen={true} onClose={onClose} />,
+      );
+      const backdrop = container.querySelector(".absolute.inset-0");
+      if (backdrop) {
+        await user.click(backdrop);
+        expect(onClose).toHaveBeenCalled();
+      }
+    } catch (error) {
+      console.error("Failed to test backdrop click:", error);
+      throw error;
     }
   });
 
   it("calls connect when the Freighter Wallet button is clicked", async () => {
-    const user = userEvent.setup();
-    render(<ConnectWalletModal isOpen={true} onClose={jest.fn()} />);
-    // The Freighter button contains "Freighter Wallet" text
-    const connectBtn = screen.getByRole("button", {
-      name: /freighter wallet/i,
-    });
-    await user.click(connectBtn);
-    expect(mockConnect).toHaveBeenCalled();
+    try {
+      const user = userEvent.setup();
+      render(<ConnectWalletModal isOpen={true} onClose={jest.fn()} />);
+      // The Freighter button contains "Freighter Wallet" text
+      const connectBtn = screen.getByRole("button", {
+        name: /freighter wallet/i,
+      });
+      await user.click(connectBtn);
+      expect(mockConnect).toHaveBeenCalled();
+    } catch (error) {
+      console.error("Failed to test Freighter wallet connection:", error);
+      throw error;
+    }
   });
 
   it("shows error message when error is set", () => {

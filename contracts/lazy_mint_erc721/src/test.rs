@@ -359,3 +359,37 @@ fn contract_type_returns_lazy_mint_identifier() {
         String::from_str(&env, "lazy_mint_erc721")
     );
 }
+
+#[test]
+fn test_voucher_verification_tampered_fields_rejected_issue_1098() {
+    let (env, client, creator) = setup_test();
+
+    let pubkey = BytesN::from_array(&env, &[9u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+    client.initialize(
+        &creator,
+        &pubkey,
+        &String::from_str(&env, "Test NFT"),
+        &String::from_str(&env, "TNFT"),
+        &1000u64,
+        &0u32,
+        &royalty_receiver,
+    );
+
+    let buyer = Address::generate(&env);
+    let currency = Address::generate(&env);
+
+    // Tampered voucher with modified token_id or flipped signature
+    let voucher = crate::MintVoucher {
+        token_id: 1234,
+        price: 100,
+        currency: currency.clone(),
+        uri: String::from_str(&env, "ipfs://tampered-uri"),
+        uri_hash: BytesN::from_array(&env, &[3u8; 32]),
+        valid_until: 100000,
+    };
+
+    let invalid_signature = BytesN::from_array(&env, &[0xFFu8; 64]);
+    let result = client.try_redeem(&buyer, &voucher, &invalid_signature);
+    assert!(result.is_err());
+}

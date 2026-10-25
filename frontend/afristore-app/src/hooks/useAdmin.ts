@@ -1,5 +1,6 @@
 // ─────────────────────────────────────────────────────────────
 // hooks/useAdmin.ts — Administrative hooks for stats + moderation
+// Error handling: async failures are caught and surfaced via `error` state.
 // ─────────────────────────────────────────────────────────────
 
 "use client";
@@ -49,13 +50,17 @@ export function useAdminStats() {
       const treasuryAddress = await getTreasury();
 
       let treasuryBalances: any[] = [];
+      let treasuryError: string | null = null;
       if (treasuryAddress) {
-        const horizon = new Horizon.Server(config.horizonUrl);
-        const account = await horizon
-          .loadAccount(treasuryAddress)
-          .catch(() => null);
-        if (account) {
+        try {
+          const horizon = new Horizon.Server(config.horizonUrl);
+          const account = await horizon.loadAccount(treasuryAddress);
           treasuryBalances = account.balances;
+        } catch (err: unknown) {
+          treasuryError =
+            err instanceof Error
+              ? `Treasury balances unavailable: ${err.message}`
+              : "Treasury balances unavailable";
         }
       }
 
@@ -66,6 +71,7 @@ export function useAdminStats() {
         treasuryAddress,
         treasuryBalances,
       });
+      if (treasuryError) setError(treasuryError);
     } catch (err: unknown) {
       setError(
         err instanceof Error ? err.message : "Failed to load admin stats",
@@ -119,7 +125,8 @@ export function useModeration(adminPublicKey: string | null) {
   const checkStatus = async (artistAddress: string) => {
     try {
       return await isArtistRevoked(artistAddress);
-    } catch {
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Status check failed");
       return false;
     }
   };

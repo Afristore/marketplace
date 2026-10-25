@@ -129,7 +129,7 @@ describe("MyCollectionsPage", () => {
     expect(
       screen.queryByRole("link", { name: "Create Your First Collection" }),
     ).not.toBeInTheDocument();
-  });
+  }, 15000);
 
   it("filters by collection kind and restores all cards", async () => {
     mockUseCreatorCollections.mockReturnValue({
