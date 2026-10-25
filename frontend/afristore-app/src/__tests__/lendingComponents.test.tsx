@@ -350,9 +350,23 @@ describe("CreateListingModal", () => {
         screen.getByLabelText(/Min Collateral Buffer/i),
         "12000",
       );
-      expect(onSuccess).toHaveBeenCalledWith(42);
-      expect(onClose).toHaveBeenCalled();
-    });
+      await userEvent.type(
+        screen.getByLabelText(/Liquidation Threshold/i),
+        "11000",
+      );
+      await userEvent.click(screen.getByTestId("create-listing-submit"));
+
+      await waitFor(() => {
+        expect(mockCreate).toHaveBeenCalledWith(
+          expect.objectContaining({ nftTokenId: 3, price: 250 }),
+        );
+        expect(onSuccess).toHaveBeenCalledWith(42);
+        expect(onClose).toHaveBeenCalled();
+      });
+    } catch (error) {
+      console.error("Test failed:", error);
+      throw error;
+    }
   }, 15000);
 
   it("does not render when closed", () => {

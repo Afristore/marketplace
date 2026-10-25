@@ -393,4 +393,3 @@ fn test_voucher_verification_tampered_fields_rejected_issue_1098() {
     let result = client.try_redeem(&buyer, &voucher, &invalid_signature);
     assert!(result.is_err());
 }
-

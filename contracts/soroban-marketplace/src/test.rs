@@ -5317,4 +5317,3 @@ fn test_reentrancy_lock_failure_and_release_guarantees_issue_1094() {
         crate::storage::release_auction_lock(&env, auction_id);
     });
 }
-
