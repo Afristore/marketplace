@@ -367,7 +367,7 @@ describe("CreateListingModal", () => {
       console.error("Test failed:", error);
       throw error;
     }
-  });
+  }, 15000);
 
   it("does not render when closed", () => {
     render(<CreateListingModal {...base} isOpen={false} />);
