@@ -90,6 +90,7 @@ const mockPrisma = vi.hoisted(() => ({
       .mockResolvedValue({ id: 1, lastLedger: 0, lastLedgerHash: null }),
   },
   $transaction: vi.fn((fn: (tx: typeof mockTx) => Promise<void>) => fn(mockTx)),
+  $executeRawUnsafe: vi.fn().mockResolvedValue(0),
 }));
 
 vi.mock("../db", () => ({ default: mockPrisma }));
@@ -163,6 +164,7 @@ vi.mock("@stellar/stellar-sdk", () => ({
 import {
   processEvent,
   processEvents,
+  isDataError,
   revertLedgers,
   validateHashContinuity,
   buildSyncStateLedgerData,
@@ -219,6 +221,9 @@ describe("processEvent — always logs to MarketplaceEvent", () => {
 // ── Error isolation / dead-letter handling ────────────────────────────────────
 
 describe("processEvents — error isolation", () => {
+  // processEvents(events, tx) isolates each event in a savepoint on `tx`.
+  const tx = mockPrisma as any;
+
   beforeEach(() => vi.clearAllMocks());
 
   it("continues processing healthy events after a malformed event throws", async () => {
@@ -226,29 +231,38 @@ describe("processEvents — error isolation", () => {
     const healthy = makeEvent("LISTING_CANCELLED", 3n, "", {}, 151);
 
     mockPrisma.marketplaceEvent.create.mockRejectedValueOnce(
-      new Error("malformed payload"),
+      new TypeError("malformed payload"),
     );
 
-    await expect(processEvents([malformed, healthy])).resolves.not.toThrow();
+    const applied = await processEvents([malformed, healthy], tx);
 
+    expect(applied).toEqual([healthy]);
     expect(mockPrisma.listing.updateMany).toHaveBeenCalledWith({
       where: { listingId: 3n },
       data: expect.objectContaining({ status: "Cancelled" }),
     });
+    expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledWith(
+      "ROLLBACK TO SAVEPOINT ev_0",
+    );
+    expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledWith(
+      "RELEASE SAVEPOINT ev_1",
+    );
   });
 
   it("records the failed event in indexerError for dead-letter handling", async () => {
     const malformed = makeEvent("BID_PLACED", 11n, "GB", { bad: true }, 160);
     mockPrisma.auction.updateMany.mockRejectedValueOnce(
-      new Error("unexpected shape"),
+      new TypeError("unexpected shape"),
     );
 
-    await processEvents([malformed]);
+    await processEvents([malformed], tx);
 
     expect(mockPrisma.indexerError.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         eventType: "BID_PLACED",
+        listingId: 11n,
         ledgerSequence: 160,
+        payload: { bad: true },
         error: expect.stringContaining("unexpected shape"),
       }),
     });
@@ -257,13 +271,56 @@ describe("processEvents — error isolation", () => {
   it("does not throw when recording the dead-letter entry itself fails", async () => {
     const malformed = makeEvent("OFFER_MADE", null, "GA", {}, 170);
     mockPrisma.marketplaceEvent.create.mockRejectedValueOnce(
-      new Error("parse failure"),
+      new TypeError("parse failure"),
     );
     mockPrisma.indexerError.create.mockRejectedValueOnce(
       new Error("db unavailable"),
     );
 
-    await expect(processEvents([malformed])).resolves.not.toThrow();
+    await expect(processEvents([malformed], tx)).resolves.toEqual([]);
+    expect(mockPrisma.$executeRawUnsafe).toHaveBeenCalledWith(
+      "ROLLBACK TO SAVEPOINT ev_0_dl",
+    );
+  });
+
+  it("rethrows infrastructure errors instead of skipping the event", async () => {
+    const event = makeEvent("LISTING_CANCELLED", 3n, "", {}, 180);
+    mockPrisma.listing.updateMany.mockRejectedValueOnce(
+      new Error("Connection terminated unexpectedly"),
+    );
+
+    await expect(processEvents([event], tx)).rejects.toThrow(
+      "Connection terminated unexpectedly",
+    );
+    expect(mockPrisma.indexerError.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("isDataError — data vs infrastructure classification", () => {
+  const prismaErr = (name: string, code?: string) =>
+    Object.assign(new Error(name), { name, code });
+
+  it("treats decode/shape errors as data errors", () => {
+    expect(isDataError(new TypeError("x"))).toBe(true);
+    expect(isDataError(new SyntaxError("Cannot convert abc to a BigInt"))).toBe(true);
+    expect(isDataError(new RangeError("x"))).toBe(true);
+  });
+
+  it("treats Prisma known-request (P2xxx) and validation errors as data errors", () => {
+    expect(isDataError(prismaErr("PrismaClientKnownRequestError", "P2002"))).toBe(true);
+    expect(isDataError(prismaErr("PrismaClientKnownRequestError", "P2025"))).toBe(true);
+    expect(isDataError(prismaErr("PrismaClientValidationError"))).toBe(true);
+  });
+
+  it("treats connection, pool, tx and unknown errors as infrastructure", () => {
+    expect(isDataError(prismaErr("PrismaClientKnownRequestError", "P1001"))).toBe(false);
+    expect(isDataError(prismaErr("PrismaClientKnownRequestError", "P2024"))).toBe(false);
+    expect(isDataError(prismaErr("PrismaClientKnownRequestError", "P2028"))).toBe(false);
+    expect(isDataError(prismaErr("PrismaClientKnownRequestError", "P2034"))).toBe(false);
+    expect(isDataError(prismaErr("PrismaClientInitializationError"))).toBe(false);
+    expect(isDataError(prismaErr("PrismaClientUnknownRequestError"))).toBe(false);
+    expect(isDataError(new Error("ECONNRESET"))).toBe(false);
+    expect(isDataError("boom")).toBe(false);
   });
 });
 

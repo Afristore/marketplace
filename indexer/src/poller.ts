@@ -444,16 +444,10 @@ skippedRange,
           log.error("Failed to fetch hash for ledger", { ledger: maxLedger, err });
         }
 
-        const { updatedState, newEvents } = await prisma.$transaction(
-          async (tx) => {
-            const toInsert = await applyDecodedEvents(decodedEvents, tx);
-            const updated = await tx.syncState.update({
-              where: { id: 1 },
-              data: buildSyncStateLedgerData(maxLedger, latestHash),
-            });
-
-            return { updatedState: updated, newEvents: toInsert };
-          },
+        const { updatedState, newEvents } = await indexEventBatch(
+          decodedEvents,
+          maxLedger,
+          latestHash,
         );
 
         updateSyncMetrics(updatedState.lastLedger, networkLatestLedger);
@@ -668,65 +662,241 @@ export async function applyDecodedEvents(decodedEvents: any[], tx: any) {
       ),
   );
 
-  if (toInsert.length > 0) {
-    await tx.marketplaceEvent.createMany({
-      data: toInsert.map((event) => ({
-        listingId: event.listingId,
-        eventType: event.eventType,
-        actor: event.actor,
-        data: event.data,
-        ledgerSequence: event.ledgerSequence,
-      })),
-      skipDuplicates: true,
-    });
-
-    for (const event of toInsert) {
+  // Each event is applied inside its own SAVEPOINT (#1174): a data error in one
+  // event rolls back only that event's writes, is dead-lettered, and the rest
+  // of the batch still commits together with the cursor advance.
+  const applied: any[] = [];
+  for (let i = 0; i < toInsert.length; i++) {
+    const event = toInsert[i];
+    const ok = await applyEventIsolated(event, tx, `ev_${i}`, async () => {
+      // Per-event insert keeps the audit row atomic with the event's side
+      // effects. skipDuplicates preserves the previous createMany semantics for
+      // events that share (listingId, eventType, ledgerSequence) in one batch.
+      await tx.marketplaceEvent.createMany({
+        data: [
+          {
+            listingId: event.listingId,
+            eventType: event.eventType,
+            actor: event.actor,
+            data: event.data,
+            ledgerSequence: event.ledgerSequence,
+          },
+        ],
+        skipDuplicates: true,
+      });
       await processEvent(event, tx, true);
-    }
+    });
+    if (ok) applied.push(event);
   }
 
-  return toInsert;
+  return applied;
+}
+
+// Prisma error codes that are raised as PrismaClientKnownRequestError but are
+// really infrastructure / transient conditions, so the batch must retry.
+// P1xxx: connection/database availability; P2024: connection pool timeout;
+// P2028: transaction API error (e.g. interactive tx expired); P2034: write
+// conflict or deadlock.
+const INFRA_PRISMA_CODES = new Set(["P2024", "P2028", "P2034"]);
+
+// JS error types thrown by decoding/shape handling of a malformed event payload
+// (e.g. BigInt(undefined), reading a field of a missing struct, Number range).
+const DATA_JS_ERROR_NAMES = new Set([
+  "TypeError",
+  "SyntaxError",
+  "RangeError",
+  "EventDecodeError",
+]);
+
+/**
+ * Classifies an error raised while applying a single event (#1174).
+ *
+ * The codebase has no explicit data-vs-infrastructure error taxonomy, so this
+ * is a deliberately conservative heuristic (duck-typed on `name`/`code` so it
+ * does not depend on the generated Prisma client being importable):
+ *  - data error (skip + dead-letter): PrismaClientKnownRequestError with a
+ *    P2xxx code other than the transient ones above (constraint, missing
+ *    record, value too long, ...), PrismaClientValidationError (the payload
+ *    produced an invalid query), and decode/shape errors (TypeError,
+ *    SyntaxError, RangeError, EventDecodeError).
+ *  - anything else (PrismaClientInitializationError, RustPanic,
+ *    UnknownRequestError, network/RPC errors, plain Error) is treated as
+ *    infrastructure: it is rethrown so the whole batch rolls back, the cursor
+ *    does not move, and the poll loop retries with back-off.
+ */
+export function isDataError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const name = (err as { name?: unknown }).name;
+  const code = (err as { code?: unknown }).code;
+  if (name === "PrismaClientKnownRequestError") {
+    return (
+      typeof code === "string" &&
+      code.startsWith("P2") &&
+      !INFRA_PRISMA_CODES.has(code)
+    );
+  }
+  if (name === "PrismaClientValidationError") return true;
+  return typeof name === "string" && DATA_JS_ERROR_NAMES.has(name);
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// Json columns cannot hold BigInt; normalise the payload so the dead-letter
+// write does not fail on exactly the kind of event it is meant to capture.
+function toJsonSafe(value: unknown): unknown {
+  if (value === undefined) return null;
+  try {
+    return JSON.parse(
+      JSON.stringify(value, (_k, v) => (typeof v === "bigint" ? v.toString() : v)),
+    );
+  } catch {
+    return { unserializable: String(value) };
+  }
+}
+
+function toBigIntOrNull(value: unknown): bigint | null {
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number" && Number.isSafeInteger(value)) return BigInt(value);
+  if (typeof value === "string" && /^-?\d+$/.test(value)) return BigInt(value);
+  return null;
 }
 
 /**
- * Processes a batch of events with per-event error isolation. A malformed or
- * failing event is recorded in `indexerError` for dead-letter handling and the
- * remaining healthy events are still processed. Errors raised while writing the
- * dead-letter entry itself are swallowed so they never escape this function.
+ * Persists a dead-letter row for a failed event. Never throws: a failure here
+ * (missing table, DB hiccup) is logged and swallowed so it cannot crash the
+ * poll loop. When running inside a transaction the write is wrapped in its own
+ * savepoint so a failed INSERT does not abort the surrounding transaction.
  */
-export async function processEvents(events: any[], tx?: any) {
-  const db = tx ?? prisma;
-  for (const event of events) {
-    try {
-      await processEvent(event, tx);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      log.error("Failed to process event; recording dead-letter entry", {
-        eventType: event?.eventType,
-        listingId: event?.listingId,
-        ledgerSequence: event?.ledgerSequence,
-        err: message,
-      });
+export async function recordIndexerError(
+  event: any,
+  err: unknown,
+  db: any,
+  savepoint?: string,
+): Promise<void> {
+  const data = {
+    eventType:
+      typeof event?.eventType === "string" ? event.eventType : "unknown",
+    listingId: toBigIntOrNull(event?.listingId),
+    ledgerSequence: Number.isSafeInteger(event?.ledgerSequence)
+      ? event.ledgerSequence
+      : null,
+    payload: toJsonSafe(event?.data) as any,
+    error: errorMessage(err).slice(0, 10_000),
+  };
+  try {
+    if (savepoint) await db.$executeRawUnsafe(`SAVEPOINT ${savepoint}`);
+    await db.indexerError.create({ data });
+    if (savepoint) await db.$executeRawUnsafe(`RELEASE SAVEPOINT ${savepoint}`);
+  } catch (deadLetterErr) {
+    if (savepoint) {
       try {
-        await db.indexerError.create({
-          data: {
-            eventType: event?.eventType ?? "unknown",
-            listingId: event?.listingId ?? null,
-            ledgerSequence: event?.ledgerSequence ?? null,
-            payload: event?.data ?? null,
-            error: message,
-          },
-        });
-      } catch (deadLetterErr) {
-        log.error("Failed to record dead-letter entry", {
-          err:
-            deadLetterErr instanceof Error
-              ? deadLetterErr.message
-              : String(deadLetterErr),
+        await db.$executeRawUnsafe(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+      } catch (rollbackErr) {
+        log.error("Failed to roll back dead-letter savepoint", {
+          error: errorMessage(rollbackErr),
         });
       }
     }
+    log.error("Failed to record dead-letter entry", {
+      eventType: event?.eventType,
+      listingId: event?.listingId,
+      ledgerSequence: event?.ledgerSequence,
+      error: errorMessage(deadLetterErr),
+    });
   }
+}
+
+/**
+ * Runs `work` for one event inside `SAVEPOINT <name>` on transaction `tx`.
+ * Returns true when the event was applied. On a data error the savepoint is
+ * rolled back (Postgres would otherwise reject every later statement in the
+ * transaction), the failure is logged and dead-lettered, and false is
+ * returned. Infrastructure errors are rethrown after rolling back the
+ * savepoint so the caller's batch transaction fails and retries.
+ */
+async function applyEventIsolated(
+  event: any,
+  tx: any,
+  savepoint: string,
+  work: () => Promise<void>,
+): Promise<boolean> {
+  await tx.$executeRawUnsafe(`SAVEPOINT ${savepoint}`);
+  try {
+    await work();
+    await tx.$executeRawUnsafe(`RELEASE SAVEPOINT ${savepoint}`);
+    return true;
+  } catch (err) {
+    if (!isDataError(err)) throw err;
+    await tx.$executeRawUnsafe(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+    log.error("Failed to process event; skipped and recorded in IndexerError", {
+      eventType: event?.eventType,
+      listingId: event?.listingId,
+      ledgerSequence: event?.ledgerSequence,
+      error: errorMessage(err),
+    });
+    await recordIndexerError(event, err, tx, `${savepoint}_dl`);
+    return false;
+  }
+}
+
+/**
+ * Processes a batch of events with per-event error isolation (#1174).
+ *
+ * With a transaction client each event runs in its own savepoint on that
+ * transaction; without one each event gets its own short transaction. Data
+ * errors are logged, dead-lettered and skipped; infrastructure errors are
+ * rethrown (see `isDataError`). Returns the events that were applied.
+ */
+export async function processEvents(events: any[], tx?: any): Promise<any[]> {
+  const applied: any[] = [];
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
+    if (tx) {
+      const ok = await applyEventIsolated(event, tx, `ev_${i}`, () =>
+        processEvent(event, tx),
+      );
+      if (ok) applied.push(event);
+      continue;
+    }
+    try {
+      await prisma.$transaction((client: any) => processEvent(event, client));
+      applied.push(event);
+    } catch (err) {
+      if (!isDataError(err)) throw err;
+      log.error("Failed to process event; skipped and recorded in IndexerError", {
+        eventType: event?.eventType,
+        listingId: event?.listingId,
+        ledgerSequence: event?.ledgerSequence,
+        error: errorMessage(err),
+      });
+      await recordIndexerError(event, err, prisma);
+    }
+  }
+  return applied;
+}
+
+/**
+ * Applies one polled batch and advances the sync cursor in a single
+ * transaction. Malformed events are isolated per event (savepoints inside
+ * `applyDecodedEvents`), so the cursor still moves past them; an
+ * infrastructure error rolls back the whole batch, cursor included, so the
+ * next poll retries the same range.
+ */
+export async function indexEventBatch(
+  decodedEvents: any[],
+  maxLedger: number,
+  latestHash: string | null,
+): Promise<{ updatedState: any; newEvents: any[] }> {
+  return prisma.$transaction(async (tx) => {
+    const toInsert = await applyDecodedEvents(decodedEvents, tx);
+    const updated = await tx.syncState.update({
+      where: { id: 1 },
+      data: buildSyncStateLedgerData(maxLedger, latestHash),
+    });
+    return { updatedState: updated, newEvents: toInsert };
+  });
 }
 
 // Runs `work` atomically. When the caller already holds a transaction client
