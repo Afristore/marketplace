@@ -1462,12 +1462,17 @@ fn setup_erc1155() -> (Env, NftStakingClient<'static>, Address, Address, Address
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     let collection = env.register_contract(None, mock_erc1155::MockErc1155);
-    let reward_token = Address::generate(&env);
+    // Rewards are paid out on unstake, so the pool needs a real, funded
+    // reward token.
+    let reward_token = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
 
     let staking_id = env.register_contract(None, crate::NftStaking);
     let staking = NftStakingClient::new(&env, &staking_id);
 
     staking.init(&admin, &collection, &reward_token, &1_000_000i128);
+    StellarAssetClient::new(&env, &reward_token).mint(&staking_id, &1_000_000_000_000_i128);
 
     (env, staking, user, collection, admin)
 }
@@ -1946,5 +1951,34 @@ fn test_get_staked_position_returns_none_after_unstake() {
     staking.unstake(&user, &collection, &0);
     assert!(staking
         .get_staked_position(&user, &collection, &0)
+        .is_none());
+}
+
+/// Issue #1093: Unit tests for nft-staking paused contract rejection on all state-mutating functions
+#[test]
+fn test_paused_contract_rejection_on_all_state_mutating_functions_issue_1093() {
+    let (env, staking, user, collection, _admin) = setup_with_mock();
+
+    staking.set_paused(&true);
+    assert!(staking.is_paused());
+
+    // State mutating functions must be rejected with ContractPaused
+    mint_token(&env, &collection, &user, 100);
+    let stake_err = staking
+        .try_stake_erc721(&user, &collection, &100)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(stake_err, StakingError::ContractPaused.into());
+
+    let unstake_err = staking
+        .try_unstake_erc721(&user, &collection, &100)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(unstake_err, StakingError::ContractPaused.into());
+
+    // Query functions continue to operate
+    assert_eq!(staking.total_staked(), 0);
+    assert!(staking
+        .get_staked_position(&user, &collection, &100)
         .is_none());
 }

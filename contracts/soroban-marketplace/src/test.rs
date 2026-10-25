@@ -1628,6 +1628,57 @@ fn test_withdraw_offer_success() {
     assert_eq!(token.balance(&buyer), 100_000_000_000_i128);
 }
 
+// ── Issue #1096: Offer withdrawal after listing cancellation ──────────────────
+
+#[test]
+fn test_offers_auto_refunded_when_listing_cancelled() {
+    let (env, client, artist, buyer, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    // Create listing and make an offer
+    let listing_id = create_test_listing(&env, &client, &artist, &token_id);
+    let offer_id = client.make_offer(&buyer, &listing_id, &5_000_000_i128, &token_id);
+
+    let token = TokenClient::new(&env, &token_id);
+
+    // Verify offer was created and funds are escrowed
+    let offer_before = client.get_offer(&offer_id);
+    assert_eq!(offer_before.status, OfferStatus::Pending);
+    assert_eq!(offer_before.amount, 5_000_000_i128);
+
+    // Verify buyer's balance decreased (funds escrowed in contract)
+    let buyer_balance_after_offer = token.balance(&buyer);
+    assert_eq!(
+        buyer_balance_after_offer,
+        100_000_000_000_i128 - 5_000_000_i128,
+        "Buyer balance should decrease by offer amount when offer is made"
+    );
+
+    // Artist cancels the listing
+    let cancel_result = client.cancel_listing(&artist, &listing_id);
+    assert!(cancel_result);
+
+    // Verify listing is cancelled
+    let listing = client.get_listing(&listing_id);
+    assert_eq!(listing.status, ListingStatus::Cancelled);
+
+    // Verify offer was automatically rejected (not Pending anymore)
+    let offer_after = client.get_offer(&offer_id);
+    assert_eq!(
+        offer_after.status,
+        OfferStatus::Rejected,
+        "Offer must be automatically rejected when listing is cancelled"
+    );
+
+    // Verify buyer was automatically refunded (no need to call withdraw_offer)
+    let buyer_balance_after_cancel = token.balance(&buyer);
+    assert_eq!(
+        buyer_balance_after_cancel, 100_000_000_000_i128,
+        "Buyer must be automatically refunded when listing is cancelled"
+    );
+}
+
 #[test]
 fn test_accept_offer_success() {
     let (env, client, artist, buyer, token_id, _contract_id, collection_id) = setup();
@@ -5233,4 +5284,36 @@ fn test_add_token_to_whitelist_after_admin_transfer_requires_new_admin() {
         (Address::generate(&env),).into_val(&env),
     );
     client.add_token_to_whitelist(&Address::generate(&env));
+}
+
+/// Issue #1094: Unit tests for soroban-marketplace reentrancy lock failure and release guarantees
+#[test]
+fn test_reentrancy_lock_failure_and_release_guarantees_issue_1094() {
+    let (env, client, artist, _buyer, token_id, contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let listing_id = 999u64;
+
+    // Manually acquire lock inside contract context
+    env.as_contract(&contract_id, || {
+        assert!(crate::storage::acquire_listing_lock(&env, listing_id));
+        // Second acquisition fails immediately (mutual exclusion)
+        assert!(!crate::storage::acquire_listing_lock(&env, listing_id));
+
+        // Release lock
+        crate::storage::release_listing_lock(&env, listing_id);
+        // Can re-acquire after release
+        assert!(crate::storage::acquire_listing_lock(&env, listing_id));
+        crate::storage::release_listing_lock(&env, listing_id);
+    });
+
+    let auction_id = 888u64;
+    env.as_contract(&contract_id, || {
+        assert!(crate::storage::acquire_auction_lock(&env, auction_id));
+        assert!(!crate::storage::acquire_auction_lock(&env, auction_id));
+        crate::storage::release_auction_lock(&env, auction_id);
+        assert!(crate::storage::acquire_auction_lock(&env, auction_id));
+        crate::storage::release_auction_lock(&env, auction_id);
+    });
 }

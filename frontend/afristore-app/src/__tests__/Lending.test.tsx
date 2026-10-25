@@ -170,9 +170,14 @@ describe("Lending Module", () => {
       // Submit listing
       fireEvent.click(screen.getByRole("button", { name: /Create Lending Listing/i }));
 
-      await waitFor(() => {
-        expect(screen.getByText("NFT successfully listed for lending!")).toBeInTheDocument();
-      });
+      try {
+        await waitFor(() => {
+          expect(screen.getByText("NFT successfully listed for lending!")).toBeInTheDocument();
+        });
+      } catch (err) {
+        console.error("Test assertion failed:", err);
+        throw err;
+      }
     });
   });
 });
