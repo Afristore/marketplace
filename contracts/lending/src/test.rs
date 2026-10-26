@@ -251,6 +251,66 @@ fn test_add_collateral_rejects_non_positive_amount() {
 }
 
 #[test]
+#[should_panic(expected = "Invalid oracle price")]
+fn test_settle_rejects_zero_oracle_price() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let oracle_address = Address::generate(&env);
+    let (col_token, col_admin) = create_token(&env, &admin);
+    col_admin.mint(&contract_id, &1_000_000_000);
+
+    env.as_contract(&contract_id, || {
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin: admin.clone(),
+                fee_receiver: admin.clone(),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 500,
+                min_buffer_bps: 12000,
+                max_buffer_bps: 20000,
+                min_liq_threshold_bps: 11000,
+                max_liq_threshold_bps: 15000,
+                oracle_address: oracle_address.clone(),
+                max_price_staleness_secs: 3600,
+            },
+        );
+
+        let sym = Symbol::new(&env, "USDC");
+        set_currency_symbol(&env, &col_token.address, &sym);
+
+        set_position(
+            &env,
+            1,
+            &Position {
+                id: 1,
+                listing_id: 1,
+                lender: Address::generate(&env),
+                borrower: borrower.clone(),
+                nft_contract: Address::generate(&env),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                collateral_currency: col_token.address.clone(),
+                collateral_amount: 120_000_000,
+                interest_schedule_bps: vec![&env, 100],
+                liquidation_threshold_bps: 11000,
+                start_time: 0,
+                max_duration_secs: 1000,
+                status: PositionStatus::Active,
+            },
+        );
+
+        // A non-positive oracle price must be rejected before any division.
+        let _ = settle(&env, 1, 0);
+    });
+}
+
+#[test]
 #[should_panic(expected = "Under-collateralized")]
 fn test_borrow_under_collateralized() {
     let env = Env::default();

@@ -30,13 +30,15 @@ export function getMagicInstance(): Magic {
       "Magic SDK is unavailable in E2E mock mode.",
     );
   }
-  if (!magicInstance && MAGIC_API_KEY) {
-    magicInstance = new Magic(MAGIC_API_KEY);
-  }
-  if (!magicInstance) {
+  const apiKey = process.env.NEXT_PUBLIC_MAGIC_API_KEY;
+  if (!apiKey || apiKey === "undefined") {
+    magicInstance = null;
     throw new Error(
       "Magic SDK not initialized. Please set NEXT_PUBLIC_MAGIC_API_KEY.",
     );
+  }
+  if (!magicInstance) {
+    magicInstance = new Magic(apiKey);
   }
   return magicInstance;
 }
@@ -54,6 +56,10 @@ export async function isMagicLoggedIn(): Promise<boolean> {
   if (isE2eMockChain()) {
     if (typeof window === "undefined") return false;
     return sessionStorage.getItem(E2E_LOGIN_KEY) === "true";
+  }
+  const apiKey = process.env.NEXT_PUBLIC_MAGIC_API_KEY || MAGIC_API_KEY;
+  if (!apiKey) {
+    return false;
   }
   try {
     const magic = getMagicInstance();
@@ -130,6 +136,10 @@ export async function loginWithPasskey(): Promise<MagicAccount> {
     try {
       didToken = await (magic.auth as any).loginWithPasskey?.();
     } catch (e) {
+      throw new Error("Passkey login is not available or failed");
+    }
+
+    if (!didToken) {
       throw new Error("Passkey login is not available or failed");
     }
 
