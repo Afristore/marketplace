@@ -1641,12 +1641,12 @@ fn test_offers_auto_refunded_when_listing_cancelled() {
     let offer_id = client.make_offer(&buyer, &listing_id, &5_000_000_i128, &token_id);
 
     let token = TokenClient::new(&env, &token_id);
-    
+
     // Verify offer was created and funds are escrowed
     let offer_before = client.get_offer(&offer_id);
     assert_eq!(offer_before.status, OfferStatus::Pending);
     assert_eq!(offer_before.amount, 5_000_000_i128);
-    
+
     // Verify buyer's balance decreased (funds escrowed in contract)
     let buyer_balance_after_offer = token.balance(&buyer);
     assert_eq!(
@@ -1658,7 +1658,7 @@ fn test_offers_auto_refunded_when_listing_cancelled() {
     // Artist cancels the listing
     let cancel_result = client.cancel_listing(&artist, &listing_id);
     assert!(cancel_result);
-    
+
     // Verify listing is cancelled
     let listing = client.get_listing(&listing_id);
     assert_eq!(listing.status, ListingStatus::Cancelled);
@@ -1674,8 +1674,7 @@ fn test_offers_auto_refunded_when_listing_cancelled() {
     // Verify buyer was automatically refunded (no need to call withdraw_offer)
     let buyer_balance_after_cancel = token.balance(&buyer);
     assert_eq!(
-        buyer_balance_after_cancel,
-        100_000_000_000_i128,
+        buyer_balance_after_cancel, 100_000_000_000_i128,
         "Buyer must be automatically refunded when listing is cancelled"
     );
 }
@@ -5318,4 +5317,3 @@ fn test_reentrancy_lock_failure_and_release_guarantees_issue_1094() {
         crate::storage::release_auction_lock(&env, auction_id);
     });
 }
-

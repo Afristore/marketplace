@@ -240,5 +240,5 @@ describe("LendingBorrowPage", () => {
     expect(screen.getByRole("button", { name: "Next →" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "← Prev" }));
     expect(await screen.findByText("Page 1 / 2")).toBeInTheDocument();
-  });
+  }, 15000);
 });

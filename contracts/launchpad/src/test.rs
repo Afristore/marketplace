@@ -2261,4 +2261,3 @@ fn test_deterministic_salt_isolation_across_multiple_creators_issue_1097() {
     // Identical raw salts from different creators must produce distinct addresses
     assert_ne!(addr_a, addr_b);
 }
-

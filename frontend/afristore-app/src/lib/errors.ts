@@ -55,11 +55,11 @@ export function getReadableErrorMessage(
 ): string {
   if (error instanceof Error) {
     const mapped = mapSorobanErrorMessage(error.message);
-    return mapped ?? error.message ?? fallback;
+    return mapped ?? (error.message.trim() ? error.message : fallback);
   }
   if (typeof error === "string") {
     const mapped = mapSorobanErrorMessage(error);
-    return mapped ?? error;
+    return mapped ?? (error.trim() ? error : fallback);
   }
   return fallback;
 }

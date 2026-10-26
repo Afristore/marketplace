@@ -17,6 +17,16 @@ const mockPrisma = vi.hoisted(() => ({
   lendingConfig: {
     findUnique: vi.fn(),
   },
+  // Array form: Promise.all(ops). Interactive form: callback(prisma).
+  $transaction: vi.fn(async (arg: unknown) => {
+    if (typeof arg === 'function') {
+      return (arg as (tx: typeof mockPrisma) => Promise<unknown>)(mockPrisma);
+    }
+    if (Array.isArray(arg)) {
+      return Promise.all(arg);
+    }
+    return arg;
+  }),
 }));
 
 const mockRedis = vi.hoisted(() => ({

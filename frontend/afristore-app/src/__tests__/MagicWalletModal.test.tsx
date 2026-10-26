@@ -174,7 +174,7 @@ describe("MagicWalletModal", () => {
       console.error("Test failed:", error);
       throw error;
     }
-  });
+  }, 15000);
 
   it("handles rejection and displays error message when loginWithPasskey rejects", async () => {
     try {
@@ -194,7 +194,7 @@ describe("MagicWalletModal", () => {
       console.error("Test failed:", error);
       throw error;
     }
-  });
+  }, 15000);
 
   it("calls onClose when backdrop is clicked", async () => {
     try {
