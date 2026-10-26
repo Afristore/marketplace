@@ -226,9 +226,14 @@ impl LendingContract {
         }
 
         let config = get_config(&env);
-        let oracle_price = oracle::get_price(&env, &config.oracle_address, &collateral_currency);
+        let oracle_price = oracle::get_price_with_staleness(
+            &env,
+            &config.oracle_address,
+            &collateral_currency,
+            config.max_price_staleness_secs,
+        );
 
-        let collateral_value_usd = (collateral_amount * oracle_price) / 10_000_000;
+        let collateral_value_usd = oracle::collateral_to_usd(collateral_amount, oracle_price);
 
         let required_collateral =
             (listing.declared_price_usd * (listing.min_collateral_buffer_bps as i128)) / 10_000;
@@ -389,10 +394,15 @@ impl LendingContract {
         let is_expired = now > position.start_time + position.max_duration_secs;
 
         let is_unhealthy = if !is_expired {
-            let oracle_price =
-                oracle::get_price(&env, &config.oracle_address, &position.collateral_currency);
+            let oracle_price = oracle::get_price_with_staleness(
+                &env,
+                &config.oracle_address,
+                &position.collateral_currency,
+                config.max_price_staleness_secs,
+            );
 
-            let collateral_value_usd = (position.collateral_amount * oracle_price) / 10_000_000;
+            let collateral_value_usd =
+                oracle::collateral_to_usd(position.collateral_amount, oracle_price);
 
             let accrued = accrued_interest_usd(&position, now);
             let owed_usd = position.declared_price_usd + accrued;
@@ -435,9 +445,14 @@ impl LendingContract {
         extend_instance_ttl(&env);
         let position = get_position(&env, position_id);
         let config = get_config(&env);
-        let oracle_price =
-            oracle::get_price(&env, &config.oracle_address, &position.collateral_currency);
-        let collateral_value_usd = (position.collateral_amount * oracle_price) / 10_000_000;
+        let oracle_price = oracle::get_price_with_staleness(
+            &env,
+            &config.oracle_address,
+            &position.collateral_currency,
+            config.max_price_staleness_secs,
+        );
+        let collateral_value_usd =
+            oracle::collateral_to_usd(position.collateral_amount, oracle_price);
         let owed_usd =
             position.declared_price_usd + accrued_interest_usd(&position, env.ledger().timestamp());
 

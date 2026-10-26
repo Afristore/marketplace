@@ -1,11 +1,86 @@
 #![cfg(test)]
 
+use crate::oracle::{self, PriceData};
 use crate::settlement::settle;
 use crate::storage::{has_listing, set_config, set_currency_symbol, set_listing, set_position};
 use crate::types::{Listing, ListingStatus, PlatformConfig, Position, PositionStatus};
 use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as TokenAdminClient};
-use soroban_sdk::{symbol_short, vec, Address, Env, IntoVal, Symbol};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, vec, Address, Env, IntoVal, Symbol,
+};
+
+#[contract]
+pub struct MockReflectorOracle;
+
+#[contracttype]
+#[derive(Clone)]
+pub enum MockOracleDataKey {
+    Price(Address),
+    FallbackPrice,
+}
+
+#[contractimpl]
+impl MockReflectorOracle {
+    /// Set a price and timestamp quote for a specific asset.
+    pub fn set_price(env: Env, asset: Address, price: i128, timestamp: u64) {
+        env.storage().persistent().set(
+            &MockOracleDataKey::Price(asset),
+            &PriceData { price, timestamp },
+        );
+    }
+
+    /// Remove the price quote for an asset so `price()` returns `None`.
+    pub fn remove_price(env: Env, asset: Address) {
+        env.storage()
+            .persistent()
+            .remove(&MockOracleDataKey::Price(asset));
+    }
+
+    /// Configure a fallback price (paired with the current ledger timestamp)
+    /// for assets without an explicit quote.
+    pub fn set_fallback_price(env: Env, price: i128) {
+        env.storage()
+            .persistent()
+            .set(&MockOracleDataKey::FallbackPrice, &price);
+    }
+
+    /// Reflector Oracle `price(asset: Address)` entrypoint.
+    pub fn price(env: Env, asset: Address) -> Option<PriceData> {
+        if let Some(data) = env
+            .storage()
+            .persistent()
+            .get::<MockOracleDataKey, PriceData>(&MockOracleDataKey::Price(asset))
+        {
+            return Some(data);
+        }
+
+        if let Some(default_price) = env
+            .storage()
+            .persistent()
+            .get::<MockOracleDataKey, i128>(&MockOracleDataKey::FallbackPrice)
+        {
+            return Some(PriceData {
+                price: default_price,
+                timestamp: env.ledger().timestamp(),
+            });
+        }
+
+        None
+    }
+}
+
+fn create_mock_oracle<'a>(env: &'a Env) -> (Address, MockReflectorOracleClient<'a>) {
+    let oracle_id = env.register(MockReflectorOracle, ());
+    let client = MockReflectorOracleClient::new(env, &oracle_id);
+    (oracle_id, client)
+}
+
+fn create_default_oracle(env: &Env) -> Address {
+    let (oracle_id, client) = create_mock_oracle(env);
+    client.set_fallback_price(&oracle::DECIMAL_SCALE);
+    oracle_id
+}
 
 fn create_token<'a>(env: &Env, admin: &Address) -> (TokenClient<'a>, TokenAdminClient<'a>) {
     let contract_id = env
@@ -114,7 +189,7 @@ fn test_borrow_success() {
     let lender = Address::generate(&env);
     let borrower = Address::generate(&env);
     let admin = Address::generate(&env);
-    let oracle_address = Address::generate(&env);
+    let oracle_address = create_default_oracle(&env);
 
     let (nft_token, nft_admin) = create_token(&env, &admin);
     let (col_token, col_admin) = create_token(&env, &admin);
@@ -340,7 +415,7 @@ fn test_borrow_under_collateralized() {
                 max_buffer_bps: 20000,
                 min_liq_threshold_bps: 11000,
                 max_liq_threshold_bps: 15000,
-                oracle_address: Address::generate(&env),
+                oracle_address: create_default_oracle(&env),
                 max_price_staleness_secs: 3600,
             },
         );
@@ -399,7 +474,7 @@ fn test_borrow_invalid_nft_contract_panics() {
                 max_buffer_bps: 20000,
                 min_liq_threshold_bps: 11000,
                 max_liq_threshold_bps: 15000,
-                oracle_address: Address::generate(&env),
+                oracle_address: create_default_oracle(&env),
                 max_price_staleness_secs: 3600,
             },
         );
@@ -558,7 +633,7 @@ fn test_settle_voluntary_return_partial_remaining() {
     let lender = Address::generate(&env);
     let borrower = Address::generate(&env);
     let fee_receiver = Address::generate(&env);
-    let oracle = Address::generate(&env);
+    let oracle = create_default_oracle(&env);
     let admin = Address::generate(&env);
 
     let (col_token, col_admin) = create_token(&env, &admin);
@@ -604,7 +679,7 @@ fn test_settle_liquidation_full_collateral_consumed() {
     let borrower = Address::generate(&env);
     let liquidator_addr = Address::generate(&env);
     let fee_receiver = Address::generate(&env);
-    let oracle = Address::generate(&env);
+    let oracle = create_default_oracle(&env);
     let admin = Address::generate(&env);
 
     let (col_token, col_admin) = create_token(&env, &admin);
@@ -646,7 +721,7 @@ fn test_settle_zero_interest_zero_liquidator_fee() {
     let lender = Address::generate(&env);
     let borrower = Address::generate(&env);
     let fee_receiver = Address::generate(&env);
-    let oracle = Address::generate(&env);
+    let oracle = create_default_oracle(&env);
     let admin = Address::generate(&env);
 
     let (col_token, col_admin) = create_token(&env, &admin);
@@ -894,7 +969,7 @@ fn setup_liquidate_test<'a>(
     let borrower = Address::generate(env);
     let liquidator = Address::generate(env);
     let fee_receiver = Address::generate(env);
-    let oracle_address = Address::generate(env);
+    let oracle_address = create_default_oracle(env);
 
     let (nft_token, nft_admin) = create_token(env, &admin);
     let (col_token, col_admin) = create_token(env, &admin);
@@ -1418,7 +1493,7 @@ fn test_e2e_voluntary_return() {
     let lender = Address::generate(&env);
     let borrower = Address::generate(&env);
     let fee_receiver = Address::generate(&env);
-    let oracle = Address::generate(&env);
+    let oracle = create_default_oracle(&env);
 
     // 1. Deploy + initialize contract
     let (nft_token, nft_admin) = create_token(&env, &admin);
@@ -1627,7 +1702,7 @@ fn test_e2e_liquidation() {
     let borrower = Address::generate(&env);
     let liquidator_addr = Address::generate(&env);
     let fee_receiver = Address::generate(&env);
-    let oracle = Address::generate(&env);
+    let oracle = create_default_oracle(&env);
 
     // 1. Deploy + initialize
     let (nft_token, nft_admin) = create_token(&env, &admin);
@@ -1970,7 +2045,7 @@ fn setup_return_nft<'a>(
     let lender = Address::generate(env);
     let borrower = Address::generate(env);
     let fee_receiver = Address::generate(env);
-    let oracle = Address::generate(env);
+    let oracle = create_default_oracle(env);
 
     let (nft_token, nft_admin) = create_token(env, &admin);
     let (col_token, col_admin) = create_token(env, &admin);
@@ -2623,4 +2698,611 @@ fn test_return_nft_balance_verification() {
         let pos = crate::storage::get_position(&env, 1);
         assert_eq!(pos.status, PositionStatus::Returned);
     });
+}
+
+// ─── Reflector Oracle unit & integration tests ───────────────────────────────
+
+#[test]
+fn test_oracle_get_price_fetches_valid_quotes() {
+    let env = Env::default();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    let (oracle_id, oracle_client) = create_mock_oracle(&env);
+    let usdc = Address::generate(&env);
+    let xlm = Address::generate(&env);
+    let weth = Address::generate(&env);
+
+    // USDC = $1.00, XLM = $0.12, wETH = $2,500.00 (all 7 decimals)
+    oracle_client.set_price(&usdc, &10_000_000, &950);
+    oracle_client.set_price(&xlm, &1_200_000, &1_000);
+    oracle_client.set_price(&weth, &25_000_000_000, &800);
+
+    assert_eq!(oracle::get_price(&env, &oracle_id, &usdc), 10_000_000);
+    assert_eq!(oracle::get_price(&env, &oracle_id, &xlm), 1_200_000);
+    assert_eq!(oracle::get_price(&env, &oracle_id, &weth), 25_000_000_000);
+}
+
+#[test]
+fn test_oracle_get_price_exact_staleness_window_boundary_succeeds() {
+    let env = Env::default();
+    let now = 10_000u64;
+    env.ledger().with_mut(|l| l.timestamp = now);
+
+    let (oracle_id, oracle_client) = create_mock_oracle(&env);
+    let asset = Address::generate(&env);
+
+    // Quote is exactly DEFAULT_MAX_STALENESS_SECS (300s) old.
+    oracle_client.set_price(
+        &asset,
+        &15_000_000,
+        &(now - oracle::DEFAULT_MAX_STALENESS_SECS),
+    );
+
+    assert_eq!(oracle::get_price(&env, &oracle_id, &asset), 15_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Stale oracle price")]
+fn test_oracle_get_price_expired_timestamp_panics() {
+    let env = Env::default();
+    let now = 10_000u64;
+    env.ledger().with_mut(|l| l.timestamp = now);
+
+    let (oracle_id, oracle_client) = create_mock_oracle(&env);
+    let asset = Address::generate(&env);
+
+    // Quote is 1 second older than the 5-minute (300s) staleness limit.
+    oracle_client.set_price(
+        &asset,
+        &15_000_000,
+        &(now - oracle::DEFAULT_MAX_STALENESS_SECS - 1),
+    );
+
+    oracle::get_price(&env, &oracle_id, &asset);
+}
+
+#[test]
+fn test_oracle_get_price_with_staleness_custom_window() {
+    let env = Env::default();
+    env.ledger().with_mut(|l| l.timestamp = 5_000);
+
+    let (oracle_id, oracle_client) = create_mock_oracle(&env);
+    let asset = Address::generate(&env);
+
+    // Quote age is 600s (older than default 300s, but within custom 900s window).
+    oracle_client.set_price(&asset, &12_500_000, &4_400);
+
+    assert_eq!(
+        oracle::get_price_with_staleness(&env, &oracle_id, &asset, 900),
+        12_500_000
+    );
+}
+
+#[test]
+#[should_panic(expected = "Invalid oracle price: price must be greater than zero")]
+fn test_oracle_get_price_zero_price_panics() {
+    let env = Env::default();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    let (oracle_id, oracle_client) = create_mock_oracle(&env);
+    let asset = Address::generate(&env);
+
+    oracle_client.set_price(&asset, &0, &1_000);
+    oracle::get_price(&env, &oracle_id, &asset);
+}
+
+#[test]
+#[should_panic(expected = "Invalid oracle price: price must be greater than zero")]
+fn test_oracle_get_price_negative_price_panics() {
+    let env = Env::default();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    let (oracle_id, oracle_client) = create_mock_oracle(&env);
+    let asset = Address::generate(&env);
+
+    oracle_client.set_price(&asset, &-10_000_000, &1_000);
+    oracle::get_price(&env, &oracle_id, &asset);
+}
+
+#[test]
+#[should_panic(expected = "Oracle price not found")]
+fn test_oracle_get_price_missing_quote_panics() {
+    let env = Env::default();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    let (oracle_id, _oracle_client) = create_mock_oracle(&env);
+    let unconfigured_asset = Address::generate(&env);
+
+    oracle::get_price(&env, &oracle_id, &unconfigured_asset);
+}
+
+#[test]
+fn test_oracle_collateral_to_usd_decimal_scaling() {
+    // 1.00 USD price (10_000_000): 150 tokens -> 150 USD
+    assert_eq!(
+        oracle::collateral_to_usd(1_500_000_000, 10_000_000),
+        1_500_000_000
+    );
+
+    // 0.25 USD price (2_500_000): 400 tokens -> 100 USD
+    assert_eq!(
+        oracle::collateral_to_usd(4_000_000_000, 2_500_000),
+        1_000_000_000
+    );
+
+    // 2,000.00 USD price (20_000_000_000): 0.5 tokens (5_000_000) -> 1,000 USD (10_000_000_000)
+    assert_eq!(
+        oracle::collateral_to_usd(5_000_000, 20_000_000_000),
+        10_000_000_000
+    );
+
+    // Zero collateral -> 0 USD
+    assert_eq!(oracle::collateral_to_usd(0, 10_000_000), 0);
+}
+
+#[test]
+fn test_oracle_usd_to_collateral_decimal_scaling() {
+    // 100 USD at $1.00/token -> 100 tokens
+    assert_eq!(
+        oracle::usd_to_collateral(1_000_000_000, 10_000_000),
+        1_000_000_000
+    );
+
+    // 100 USD at $2.00/token -> 50 tokens
+    assert_eq!(
+        oracle::usd_to_collateral(1_000_000_000, 20_000_000),
+        500_000_000
+    );
+
+    // 100 USD at $0.25/token -> 400 tokens
+    assert_eq!(
+        oracle::usd_to_collateral(1_000_000_000, 2_500_000),
+        4_000_000_000
+    );
+
+    // 0 USD -> 0 tokens
+    assert_eq!(oracle::usd_to_collateral(0, 20_000_000), 0);
+}
+
+#[test]
+#[should_panic(expected = "Invalid oracle price: price must be greater than zero")]
+fn test_oracle_collateral_to_usd_zero_price_panics() {
+    oracle::collateral_to_usd(100_000_000, 0);
+}
+
+#[test]
+#[should_panic(expected = "Invalid oracle price: price must be greater than zero")]
+fn test_oracle_collateral_to_usd_negative_price_panics() {
+    oracle::collateral_to_usd(100_000_000, -1);
+}
+
+#[test]
+#[should_panic(expected = "Invalid collateral amount: must be non-negative")]
+fn test_oracle_collateral_to_usd_negative_amount_panics() {
+    oracle::collateral_to_usd(-1, 10_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Invalid oracle price: price must be greater than zero")]
+fn test_oracle_usd_to_collateral_zero_price_panics() {
+    oracle::usd_to_collateral(100_000_000, 0);
+}
+
+#[test]
+#[should_panic(expected = "Invalid USD amount: must be non-negative")]
+fn test_oracle_usd_to_collateral_negative_amount_panics() {
+    oracle::usd_to_collateral(-1, 10_000_000);
+}
+
+#[test]
+fn test_borrow_with_reflector_oracle_scaled_price_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 2_000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (oracle_id, oracle_client) = create_mock_oracle(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    let (col_token, col_admin) = create_token(&env, &admin);
+
+    // Collateral asset priced at $2.00 (20_000_000).
+    // NFT is $100.00 (1_000_000_000) with 120% buffer ($120.00 required).
+    // 60 tokens (600_000_000) * $2.00 = $120.00 USD.
+    oracle_client.set_price(&col_token.address, &20_000_000, &1_950);
+
+    nft_admin.mint(&contract_id, &1);
+    col_admin.mint(&borrower, &600_000_000);
+
+    env.as_contract(&contract_id, || {
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin: admin.clone(),
+                fee_receiver: admin.clone(),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 500,
+                min_buffer_bps: 12000,
+                max_buffer_bps: 20000,
+                min_liq_threshold_bps: 11000,
+                max_liq_threshold_bps: 15000,
+                oracle_address: oracle_id.clone(),
+                max_price_staleness_secs: 300,
+            },
+        );
+
+        let sym = Symbol::new(&env, "TOKEN");
+        set_currency_symbol(&env, &col_token.address, &sym);
+
+        set_listing(
+            &env,
+            1,
+            &Listing {
+                id: 1,
+                lender: lender.clone(),
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 1_000_000_000, // $100.00
+                interest_schedule_bps: vec![&env, 100],
+                max_duration_days: 30,
+                min_collateral_buffer_bps: 12000, // 120% => $120.00 required
+                liquidation_threshold_bps: 11000,
+                status: ListingStatus::Open,
+                created_at: 1000,
+            },
+        );
+    });
+
+    let position_id = client.borrow(&1, &borrower, &col_token.address, &600_000_000);
+    assert_eq!(position_id, 1);
+    assert_eq!(col_token.balance(&contract_id), 600_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Under-collateralized")]
+fn test_borrow_with_reflector_oracle_scaled_price_under_collateralized_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 2_000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (oracle_id, oracle_client) = create_mock_oracle(&env);
+
+    let (nft_token, _) = create_token(&env, &admin);
+    let (col_token, col_admin) = create_token(&env, &admin);
+
+    // Collateral asset priced at $0.50 (5_000_000).
+    // NFT is $100.00 (100_000_000) with 120% buffer ($120.00 = 120_000_000 required).
+    // 239 tokens (239_000_000) * $0.50 = $119.50 < $120.00 -> under-collateralized.
+    oracle_client.set_price(&col_token.address, &5_000_000, &2_000);
+    col_admin.mint(&borrower, &300_000_000);
+
+    env.as_contract(&contract_id, || {
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin: admin.clone(),
+                fee_receiver: admin.clone(),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 500,
+                min_buffer_bps: 12000,
+                max_buffer_bps: 20000,
+                min_liq_threshold_bps: 11000,
+                max_liq_threshold_bps: 15000,
+                oracle_address: oracle_id.clone(),
+                max_price_staleness_secs: 300,
+            },
+        );
+
+        let sym = Symbol::new(&env, "XLM");
+        set_currency_symbol(&env, &col_token.address, &sym);
+
+        set_listing(
+            &env,
+            1,
+            &Listing {
+                id: 1,
+                lender: lender.clone(),
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                interest_schedule_bps: vec![&env, 100],
+                max_duration_days: 30,
+                min_collateral_buffer_bps: 12000,
+                liquidation_threshold_bps: 11000,
+                status: ListingStatus::Open,
+                created_at: 1000,
+            },
+        );
+    });
+
+    client.borrow(&1, &borrower, &col_token.address, &239_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Stale oracle price")]
+fn test_borrow_with_stale_oracle_quote_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 2_000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (oracle_id, oracle_client) = create_mock_oracle(&env);
+
+    let (nft_token, _) = create_token(&env, &admin);
+    let (col_token, col_admin) = create_token(&env, &admin);
+
+    // Quote timestamp is 1_600 (age = 400s > max_price_staleness_secs = 300s).
+    oracle_client.set_price(&col_token.address, &10_000_000, &1_600);
+    col_admin.mint(&borrower, &150_000_000);
+
+    env.as_contract(&contract_id, || {
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin: admin.clone(),
+                fee_receiver: admin.clone(),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 500,
+                min_buffer_bps: 12000,
+                max_buffer_bps: 20000,
+                min_liq_threshold_bps: 11000,
+                max_liq_threshold_bps: 15000,
+                oracle_address: oracle_id.clone(),
+                max_price_staleness_secs: 300,
+            },
+        );
+
+        let sym = Symbol::new(&env, "USDC");
+        set_currency_symbol(&env, &col_token.address, &sym);
+
+        set_listing(
+            &env,
+            1,
+            &Listing {
+                id: 1,
+                lender: lender.clone(),
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                interest_schedule_bps: vec![&env, 100],
+                max_duration_days: 30,
+                min_collateral_buffer_bps: 12000,
+                liquidation_threshold_bps: 11000,
+                status: ListingStatus::Open,
+                created_at: 1000,
+            },
+        );
+    });
+
+    client.borrow(&1, &borrower, &col_token.address, &120_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Invalid oracle price: price must be greater than zero")]
+fn test_borrow_with_zero_oracle_price_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 2_000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let (oracle_id, oracle_client) = create_mock_oracle(&env);
+
+    let (nft_token, _) = create_token(&env, &admin);
+    let (col_token, col_admin) = create_token(&env, &admin);
+
+    oracle_client.set_price(&col_token.address, &0, &2_000);
+    col_admin.mint(&borrower, &150_000_000);
+
+    env.as_contract(&contract_id, || {
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin: admin.clone(),
+                fee_receiver: admin.clone(),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 500,
+                min_buffer_bps: 12000,
+                max_buffer_bps: 20000,
+                min_liq_threshold_bps: 11000,
+                max_liq_threshold_bps: 15000,
+                oracle_address: oracle_id.clone(),
+                max_price_staleness_secs: 300,
+            },
+        );
+
+        let sym = Symbol::new(&env, "USDC");
+        set_currency_symbol(&env, &col_token.address, &sym);
+
+        set_listing(
+            &env,
+            1,
+            &Listing {
+                id: 1,
+                lender: lender.clone(),
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                interest_schedule_bps: vec![&env, 100],
+                max_duration_days: 30,
+                min_collateral_buffer_bps: 12000,
+                liquidation_threshold_bps: 11000,
+                status: ListingStatus::Open,
+                created_at: 1000,
+            },
+        );
+    });
+
+    client.borrow(&1, &borrower, &col_token.address, &120_000_000);
+}
+
+#[test]
+fn test_health_factor_and_liquidate_on_oracle_price_drop() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 1_000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let liquidator = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let (oracle_id, oracle_client) = create_mock_oracle(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    let (col_token, col_admin) = create_token(&env, &admin);
+
+    // Initial collateral price = $2.00 (20_000_000).
+    // 75 tokens (75_000_000) * $2.00 = $150.00 backing $100.00 loan => HF = 15_000 bps (150%).
+    oracle_client.set_price(&col_token.address, &20_000_000, &1_000);
+
+    nft_admin.mint(&borrower, &1);
+    col_admin.mint(&contract_id, &75_000_000);
+
+    env.as_contract(&contract_id, || {
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin: admin.clone(),
+                fee_receiver: fee_receiver.clone(),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 500,
+                min_buffer_bps: 12000,
+                max_buffer_bps: 20000,
+                min_liq_threshold_bps: 11000,
+                max_liq_threshold_bps: 15000,
+                oracle_address: oracle_id.clone(),
+                max_price_staleness_secs: 300,
+            },
+        );
+
+        set_position(
+            &env,
+            1,
+            &Position {
+                id: 1,
+                listing_id: 1,
+                lender: lender.clone(),
+                borrower: borrower.clone(),
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                collateral_currency: col_token.address.clone(),
+                collateral_amount: 75_000_000,
+                interest_schedule_bps: vec![&env, 0],
+                liquidation_threshold_bps: 11000,
+                start_time: 1_000,
+                max_duration_secs: 30 * 86400,
+                status: PositionStatus::Active,
+            },
+        );
+    });
+
+    assert_eq!(client.health_factor(&1), 15_000);
+
+    // Collateral price drops to $1.44 (14_400_000).
+    // 75 tokens * $1.44 = $108.00 => HF = 10_800 bps (108% <= 110% threshold).
+    env.ledger().with_mut(|l| l.timestamp = 1_100);
+    oracle_client.set_price(&col_token.address, &14_400_000, &1_100);
+
+    assert_eq!(client.health_factor(&1), 10_800);
+
+    client.liquidate(&1, &liquidator);
+
+    env.as_contract(&contract_id, || {
+        let pos = crate::storage::get_position(&env, 1);
+        assert_eq!(pos.status, PositionStatus::Liquidated);
+    });
+}
+
+#[test]
+#[should_panic(expected = "Stale oracle price")]
+fn test_liquidate_with_stale_oracle_quote_panics() {
+    let env = Env::default();
+    let (
+        client,
+        contract_id,
+        _admin,
+        lender,
+        borrower,
+        liquidator,
+        _fee_receiver,
+        nft_token,
+        col_token,
+    ) = setup_liquidate_test(&env);
+
+    env.ledger().with_mut(|l| l.timestamp = 10_000);
+
+    let oracle_id = env.as_contract(&contract_id, || {
+        crate::storage::get_config(&env).oracle_address
+    });
+    let oracle_client = MockReflectorOracleClient::new(&env, &oracle_id);
+    // Set quote timestamp to 1_000 (age = 9_000s > max_price_staleness_secs = 3_600s).
+    oracle_client.set_price(&col_token.address, &10_000_000, &1_000);
+
+    env.as_contract(&contract_id, || {
+        set_position(
+            &env,
+            1,
+            &Position {
+                id: 1,
+                listing_id: 1,
+                lender,
+                borrower,
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                collateral_currency: col_token.address.clone(),
+                collateral_amount: 105_000_000,
+                interest_schedule_bps: vec![&env, 0],
+                liquidation_threshold_bps: 11000,
+                start_time: 1_000,
+                max_duration_secs: 30 * 86400,
+                status: PositionStatus::Active,
+            },
+        );
+    });
+
+    client.liquidate(&1, &liquidator);
+}
+
+#[test]
+#[should_panic(expected = "Stale oracle price")]
+fn test_health_factor_with_stale_oracle_quote_panics() {
+    let env = Env::default();
+    let (client, contract_id, _borrower, _liquidator, col_token) =
+        setup_add_collateral(&env, PositionStatus::Active);
+
+    env.ledger().with_mut(|l| l.timestamp = 10_000);
+
+    let oracle_id = env.as_contract(&contract_id, || {
+        crate::storage::get_config(&env).oracle_address
+    });
+    let oracle_client = MockReflectorOracleClient::new(&env, &oracle_id);
+    oracle_client.set_price(&col_token.address, &10_000_000, &1_000);
+
+    client.health_factor(&1);
 }
