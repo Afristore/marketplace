@@ -703,7 +703,9 @@ fn test_multi_step_redemption_up_to_buyer_quota_boundary_issue_1099() {
     env.mock_all_auths();
 
     let buyer = Address::generate(&env);
-    let token_id = 99u128;
+    let token_id = 99u64;
+    client.register_edition(&token_id, &100u128);
+
     let voucher = MintVoucher1155 {
         token_id,
         buyer_quota: 10,
@@ -717,14 +719,13 @@ fn test_multi_step_redemption_up_to_buyer_quota_boundary_issue_1099() {
 
     // Step 1: Partial redemption (4 of 10)
     client.redeem(&buyer, &voucher, &4u128, &sig);
-    assert_eq!(client.balance(&buyer, &token_id), 4u128);
+    assert_eq!(client.balance_of(&buyer, &token_id), 4u128);
 
     // Step 2: Second partial redemption up to quota (6 of 10, total 10)
     client.redeem(&buyer, &voucher, &6u128, &sig);
-    assert_eq!(client.balance(&buyer, &token_id), 10u128);
+    assert_eq!(client.balance_of(&buyer, &token_id), 10u128);
 
     // Step 3: Attempt 1 more, exceeding buyer quota, must fail with ExceedsVoucherMax
     let res = client.try_redeem(&buyer, &voucher, &1u128, &sig);
     assert_eq!(res, Err(Ok(Error::ExceedsVoucherMax)));
 }
-

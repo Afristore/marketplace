@@ -32,6 +32,7 @@ use crate::{
 pub struct MarketplaceContract;
 
 const MIN_DURATION_SECONDS: u64 = 60;
+const MAX_DURATION_SECONDS: u64 = 30 * 86_400;
 
 #[contractimpl]
 impl MarketplaceContract {
@@ -563,6 +564,10 @@ impl MarketplaceContract {
         }
         // A duration of less than a minute is not practical.
         if duration < MIN_DURATION_SECONDS {
+            panic_with_error!(&env, MarketplaceError::InvalidAuctionDuration);
+        }
+        // Cap auction length so NFTs cannot be locked indefinitely.
+        if duration > MAX_DURATION_SECONDS {
             panic_with_error!(&env, MarketplaceError::InvalidAuctionDuration);
         }
 

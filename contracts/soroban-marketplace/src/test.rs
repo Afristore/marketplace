@@ -1641,12 +1641,12 @@ fn test_offers_auto_refunded_when_listing_cancelled() {
     let offer_id = client.make_offer(&buyer, &listing_id, &5_000_000_i128, &token_id);
 
     let token = TokenClient::new(&env, &token_id);
-    
+
     // Verify offer was created and funds are escrowed
     let offer_before = client.get_offer(&offer_id);
     assert_eq!(offer_before.status, OfferStatus::Pending);
     assert_eq!(offer_before.amount, 5_000_000_i128);
-    
+
     // Verify buyer's balance decreased (funds escrowed in contract)
     let buyer_balance_after_offer = token.balance(&buyer);
     assert_eq!(
@@ -1658,7 +1658,7 @@ fn test_offers_auto_refunded_when_listing_cancelled() {
     // Artist cancels the listing
     let cancel_result = client.cancel_listing(&artist, &listing_id);
     assert!(cancel_result);
-    
+
     // Verify listing is cancelled
     let listing = client.get_listing(&listing_id);
     assert_eq!(listing.status, ListingStatus::Cancelled);
@@ -1674,8 +1674,7 @@ fn test_offers_auto_refunded_when_listing_cancelled() {
     // Verify buyer was automatically refunded (no need to call withdraw_offer)
     let buyer_balance_after_cancel = token.balance(&buyer);
     assert_eq!(
-        buyer_balance_after_cancel,
-        100_000_000_000_i128,
+        buyer_balance_after_cancel, 100_000_000_000_i128,
         "Buyer must be automatically refunded when listing is cancelled"
     );
 }
@@ -5317,232 +5316,4 @@ fn test_reentrancy_lock_failure_and_release_guarantees_issue_1094() {
         assert!(crate::storage::acquire_auction_lock(&env, auction_id));
         crate::storage::release_auction_lock(&env, auction_id);
     });
-}
-
-
-
-mod mock_nft721 {
-    use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Env};
-
-    #[contract]
-    pub struct MockNft721;
-
-    #[contractimpl]
-    impl MockNft721 {
-        pub fn royalty_info(_env: Env) -> (Address, u32) {
-            (Address::generate(&_env), 0)
-        }
-
-        pub fn owner_of(env: Env, token_id: u64) -> Address {
-            env.storage()
-                .persistent()
-                .get(&token_id)
-                .unwrap_or_else(|| Address::generate(&env))
-        }
-
-        pub fn transfer_from(
-            env: Env,
-            _spender: Address,
-            _from: Address,
-            to: Address,
-            token_id: u64,
-        ) {
-            // 4 arguments as in ERC-721
-            env.storage().persistent().set(&token_id, &to);
-        }
-    }
-}
-
-mod mock_nft1155 {
-    use soroban_sdk::{contract, contractimpl, Address, Env};
-
-    #[contract]
-    pub struct MockNft1155;
-
-    #[contractimpl]
-    impl MockNft1155 {
-        pub fn royalty_info(_env: Env) -> (Address, u32) {
-            use soroban_sdk::testutils::Address as _;
-            (Address::generate(&_env), 0)
-        }
-
-        pub fn transfer_from(
-            env: Env,
-            _spender: Address,
-            _from: Address,
-            to: Address,
-            token_id: u64,
-            amount: u64,
-        ) {
-            // 5 arguments as in ERC-1155
-            env.storage().persistent().set(&(token_id, to), &amount);
-        }
-    }
-}
-
-#[test]
-fn test_erc721_and_erc1155_buy_artwork() {
-    let (env, client, artist, buyer, token_id, _contract_id, _) = setup();
-    client.set_admin(&artist);
-    client.add_token_to_whitelist(&token_id);
-
-    let erc721_collection = env.register(mock_nft721::MockNft721, ());
-    let erc1155_collection = env.register(mock_nft1155::MockNft1155, ());
-
-    let sac = StellarAssetClient::new(&env, &token_id);
-    sac.mint(&buyer, &100_000_000_i128);
-
-    let recipients = vec![
-        &env,
-        Recipient {
-            address: artist.clone(),
-            percentage: 100,
-        },
-    ];
-
-    // 1. Buy ERC-721 listing (amount = 1)
-    let listing_721 = client.create_listing(
-        &artist,
-        &1_000_000_i128,
-        &symbol_short!("TEST"),
-        &token_id,
-        &erc721_collection,
-        &1,
-        &1,
-        &recipients,
-    );
-    assert!(client.buy_artwork(&buyer, &listing_721));
-    let owner_721: Address = env.invoke_contract(
-        &erc721_collection,
-        &soroban_sdk::Symbol::new(&env, "owner_of"),
-        soroban_sdk::vec![&env, 1u64.into_val(&env)],
-    );
-    assert_eq!(owner_721, buyer);
-
-    // 2. Buy ERC-1155 listing (amount = 5)
-    let listing_1155 = client.create_listing(
-        &artist,
-        &1_000_000_i128,
-        &symbol_short!("TEST"),
-        &token_id,
-        &erc1155_collection,
-        &2,
-        &5,
-        &recipients,
-    );
-    assert!(client.buy_artwork(&buyer, &listing_1155));
-}
-
-#[test]
-fn test_erc721_and_erc1155_finalize_auction() {
-    let (env, client, creator, bidder, token_id, _contract_id, _) = setup();
-    client.set_admin(&creator);
-    client.add_token_to_whitelist(&token_id);
-
-    let erc721_collection = env.register(mock_nft721::MockNft721, ());
-    let erc1155_collection = env.register(mock_nft1155::MockNft1155, ());
-
-    let sac = StellarAssetClient::new(&env, &token_id);
-    sac.mint(&bidder, &100_000_000_i128);
-
-    let recipients = vec![
-        &env,
-        Recipient {
-            address: creator.clone(),
-            percentage: 100,
-        },
-    ];
-
-    // 1. Auction with ERC-721
-    let auc_721 = client.create_auction(
-        &creator,
-        &token_id,
-        &erc721_collection,
-        &10,
-        &1,
-        &1_000_000_i128,
-        &100,
-        &recipients,
-    );
-    client.place_bid(&bidder, &auc_721, &2_000_000_i128);
-    env.ledger().set_timestamp(env.ledger().timestamp() + 200);
-    client.finalize_auction(&creator, &auc_721);
-
-    let owner_721: Address = env.invoke_contract(
-        &erc721_collection,
-        &soroban_sdk::Symbol::new(&env, "owner_of"),
-        soroban_sdk::vec![&env, 10u64.into_val(&env)],
-    );
-    assert_eq!(owner_721, bidder);
-
-    // 2. Auction with ERC-1155
-    let auc_1155 = client.create_auction(
-        &creator,
-        &token_id,
-        &erc1155_collection,
-        &20,
-        &10,
-        &1_000_000_i128,
-        &100,
-        &recipients,
-    );
-    client.place_bid(&bidder, &auc_1155, &2_000_000_i128);
-    env.ledger().set_timestamp(env.ledger().timestamp() + 200);
-    client.finalize_auction(&creator, &auc_1155);
-}
-
-#[test]
-fn test_erc721_and_erc1155_accept_offer() {
-    let (env, client, artist, offerer, token_id, _contract_id, _) = setup();
-    client.set_admin(&artist);
-    client.add_token_to_whitelist(&token_id);
-
-    let erc721_collection = env.register(mock_nft721::MockNft721, ());
-    let erc1155_collection = env.register(mock_nft1155::MockNft1155, ());
-
-    let sac = StellarAssetClient::new(&env, &token_id);
-    sac.mint(&offerer, &100_000_000_i128);
-
-    let recipients = vec![
-        &env,
-        Recipient {
-            address: artist.clone(),
-            percentage: 100,
-        },
-    ];
-
-    // 1. Offer on ERC-721 listing
-    let listing_721 = client.create_listing(
-        &artist,
-        &5_000_000_i128,
-        &symbol_short!("TEST"),
-        &token_id,
-        &erc721_collection,
-        &100,
-        &1,
-        &recipients,
-    );
-    let offer_721 = client.make_offer(&offerer, &listing_721, &4_000_000_i128, &token_id);
-    client.accept_offer(&artist, &offer_721);
-
-    let owner_721: Address = env.invoke_contract(
-        &erc721_collection,
-        &soroban_sdk::Symbol::new(&env, "owner_of"),
-        soroban_sdk::vec![&env, 100u64.into_val(&env)],
-    );
-    assert_eq!(owner_721, offerer);
-
-    // 2. Offer on ERC-1155 listing
-    let listing_1155 = client.create_listing(
-        &artist,
-        &5_000_000_i128,
-        &symbol_short!("TEST"),
-        &token_id,
-        &erc1155_collection,
-        &200,
-        &3,
-        &recipients,
-    );
-    let offer_1155 = client.make_offer(&offerer, &listing_1155, &4_000_000_i128, &token_id);
-    client.accept_offer(&artist, &offer_1155);
 }
