@@ -434,18 +434,14 @@ impl MarketplaceContract {
             true,
         );
 
-        // Transfer the NFT (ERC-1155 requires amount as 5th arg; ERC-721 amount is always 1)
-        env.invoke_contract::<()>(
+        // Transfer the NFT
+        Self::transfer_nft(
+            &env,
             &listing.collection,
-            &soroban_sdk::Symbol::new(&env, "transfer_from"),
-            soroban_sdk::vec![
-                &env,
-                env.current_contract_address().into_val(&env),
-                listing.artist.into_val(&env),
-                buyer.into_val(&env),
-                listing.token_id.into_val(&env),
-                listing.amount.into_val(&env)
-            ],
+            &listing.artist,
+            &buyer,
+            listing.token_id,
+            listing.amount,
         );
 
         listing.status = ListingStatus::Sold;
@@ -699,18 +695,14 @@ impl MarketplaceContract {
                     false,
                 );
 
-                // Transfer the NFT (ERC-1155 requires amount as 5th arg; ERC-721 amount is always 1)
-                env.invoke_contract::<()>(
+                // Transfer the NFT
+                Self::transfer_nft(
+                    &env,
                     &auction.collection,
-                    &soroban_sdk::Symbol::new(&env, "transfer_from"),
-                    soroban_sdk::vec![
-                        &env,
-                        env.current_contract_address().into_val(&env),
-                        auction.creator.into_val(&env),
-                        winner.into_val(&env),
-                        auction.token_id.into_val(&env),
-                        auction.amount.into_val(&env)
-                    ],
+                    &auction.creator,
+                    winner,
+                    auction.token_id,
+                    auction.amount,
                 );
 
                 auction.status = AuctionStatus::Finalized;
@@ -886,18 +878,14 @@ impl MarketplaceContract {
             false,
         );
 
-        // Transfer the NFT (ERC-1155 requires amount as 5th arg; ERC-721 amount is always 1)
-        env.invoke_contract::<()>(
+        // Transfer the NFT
+        Self::transfer_nft(
+            &env,
             &listing.collection,
-            &soroban_sdk::Symbol::new(&env, "transfer_from"),
-            soroban_sdk::vec![
-                &env,
-                env.current_contract_address().into_val(&env),
-                artist.into_val(&env),
-                offer.offerer.into_val(&env),
-                listing.token_id.into_val(&env),
-                listing.amount.into_val(&env)
-            ],
+            &artist,
+            &offer.offerer,
+            listing.token_id,
+            listing.amount,
         );
         let accepted_offerer = offer.offerer.clone();
         let accepted_amount = offer.amount;
@@ -1082,6 +1070,54 @@ impl MarketplaceContract {
             };
             token.transfer(&env.current_contract_address(), &r.address, &amt);
             ds += amt;
+        }
+    }
+
+    fn is_erc721_collection(env: &Env, collection: &Address) -> bool {
+        let res = env.try_invoke_contract::<soroban_sdk::Val, soroban_sdk::Val>(
+            collection,
+            &Symbol::new(env, "owner_of"),
+            soroban_sdk::vec![env, 0u64.into_val(env)],
+        );
+        match res {
+            Ok(_) => true,
+            Err(_) => false,
+        }
+    }
+
+    fn transfer_nft(
+        env: &Env,
+        collection: &Address,
+        from: &Address,
+        to: &Address,
+        token_id: u64,
+        amount: u64,
+    ) {
+        if Self::is_erc721_collection(env, collection) {
+            env.invoke_contract::<()>(
+                collection,
+                &soroban_sdk::Symbol::new(env, "transfer_from"),
+                soroban_sdk::vec![
+                    env,
+                    env.current_contract_address().into_val(env),
+                    from.into_val(env),
+                    to.into_val(env),
+                    token_id.into_val(env)
+                ],
+            );
+        } else {
+            env.invoke_contract::<()>(
+                collection,
+                &soroban_sdk::Symbol::new(env, "transfer_from"),
+                soroban_sdk::vec![
+                    env,
+                    env.current_contract_address().into_val(env),
+                    from.into_val(env),
+                    to.into_val(env),
+                    token_id.into_val(env),
+                    amount.into_val(env)
+                ],
+            );
         }
     }
 }
