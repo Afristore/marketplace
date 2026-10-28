@@ -11,11 +11,23 @@ const DECIMALS: i128 = 10_000_000; // 1e7
 /// oracle price (USD per 1 token, 7 decimals).
 ///
 /// formula: token_units = usd_amount * DECIMALS / oracle_price
+///
+/// Panics with a clear message if `oracle_price <= 0` or if the arithmetic
+/// overflows, instead of panicking with an opaque divide-by-zero or wrapping.
 fn usd_to_token_amount(usd_amount: i128, oracle_price: i128) -> i128 {
+    if usd_amount < 0 {
+        panic!("InvalidAmount: usd_amount must be >= 0");
+    }
+    if oracle_price <= 0 {
+        panic!("InvalidOraclePrice: oracle_price must be > 0");
+    }
     // oracle_price: how many USD (7 dec) per 1 token (7 dec)
     // => token_units = usd_amount / oracle_price * DECIMALS
     //                = usd_amount * DECIMALS / oracle_price
-    usd_amount * DECIMALS / oracle_price
+    usd_amount
+        .checked_mul(DECIMALS)
+        .and_then(|v| v.checked_div(oracle_price))
+        .expect("usd_to_token_amount: arithmetic overflow")
 }
 
 /// Compute accrued interest in USD given the position's interest schedule and
@@ -74,6 +86,9 @@ pub fn settle(
     // ── Oracle price ──────────────────────────────────────────────────────────
     let oracle_price =
         oracle::get_price(env, &config.oracle_address, &position.collateral_currency);
+    if oracle_price <= 0 {
+        panic!("InvalidOraclePrice: oracle_price must be > 0");
+    }
 
     // ── Waterfall math ────────────────────────────────────────────────────────
     let accrued_interest_usd = compute_accrued_interest(

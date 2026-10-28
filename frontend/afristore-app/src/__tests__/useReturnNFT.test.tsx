@@ -25,7 +25,7 @@ describe("useReturnNFT (#1104)", () => {
     let success = true;
 
     await act(async () => {
-      success = await result.current(POSITION_ID);
+      success = await result.current.returnNFT(POSITION_ID);
     });
 
     expect(success).toBe(false);
@@ -38,7 +38,7 @@ describe("useReturnNFT (#1104)", () => {
     let success = true;
 
     await act(async () => {
-      success = await result.current(POSITION_ID);
+      success = await result.current.returnNFT(POSITION_ID);
     });
 
     expect(success).toBe(false);
@@ -51,7 +51,7 @@ describe("useReturnNFT (#1104)", () => {
     let success = false;
 
     await act(async () => {
-      success = await result.current(POSITION_ID);
+      success = await result.current.returnNFT(POSITION_ID);
     });
 
     expect(success).toBe(true);

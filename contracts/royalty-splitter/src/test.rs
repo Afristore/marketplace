@@ -876,7 +876,7 @@ fn test_single_beneficiary_10000_bps_full_distribution_no_dust() {
     sac.mint(&contract_id, &1_000_000);
 
     let tc = TokenClient::new(&env, &token);
-    
+
     // Verify initial state
     assert_eq!(tc.balance(&contract_id), 1_000_000);
     assert_eq!(tc.balance(&sole_beneficiary), 0);
@@ -891,14 +891,14 @@ fn test_single_beneficiary_10000_bps_full_distribution_no_dust() {
         1_000_000,
         "Sole beneficiary must receive exact 100% of contract balance"
     );
-    
+
     // Verify contract balance is strictly zero (no trapped dust)
     assert_eq!(
         tc.balance(&contract_id),
         0,
         "Contract balance must be exactly zero after distribution"
     );
-    
+
     // Verify caller received NO dust (remainder must be zero for 100% allocation)
     assert_eq!(
         tc.balance(&caller),
