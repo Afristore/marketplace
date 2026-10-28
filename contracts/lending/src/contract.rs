@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol};
+use soroban_sdk::{contract, contractclient, contractimpl, token, Address, Env, Symbol};
 
 use crate::events;
 use crate::interest::accrued_interest_usd;
@@ -12,6 +12,11 @@ use crate::storage::{
     set_listing, set_position,
 };
 use crate::types::{ListingStatus, PlatformConfig, Position, PositionStatus};
+
+#[contractclient(name = "NftClient")]
+pub trait Erc721 {
+    fn transfer(env: Env, from: Address, to: Address, token_id: u64);
+}
 
 #[contract]
 pub struct LendingContract;
@@ -188,11 +193,11 @@ impl LendingContract {
         }
 
         // Return NFT to lender
-        let nft_client = token::Client::new(&env, &listing.nft_contract);
+        let nft_client = NftClient::new(&env, &listing.nft_contract);
         nft_client.transfer(
             &env.current_contract_address(),
             &listing.lender,
-            &(listing.token_id as i128),
+            &(listing.token_id as u64),
         );
 
         remove_listing(&env, listing_id);
@@ -242,10 +247,6 @@ impl LendingContract {
             panic!("Under-collateralized");
         }
 
-        // Validate nft_contract is a valid token contract before initiating transfers
-        let nft_client = token::Client::new(&env, &listing.nft_contract);
-        let _ = nft_client.decimals();
-
         // Transfer collateral from borrower to contract
         let collateral_client = token::Client::new(&env, &collateral_currency);
         collateral_client.transfer(
@@ -255,10 +256,11 @@ impl LendingContract {
         );
 
         // Transfer NFT from contract to borrower
+        let nft_client = NftClient::new(&env, &listing.nft_contract);
         nft_client.transfer(
             &env.current_contract_address(),
             &borrower,
-            &(listing.token_id as i128),
+            &(listing.token_id as u64),
         );
 
         listing.status = ListingStatus::Filled;
@@ -315,16 +317,16 @@ impl LendingContract {
 
         // Transfer NFT from borrower back to contract, then to lender.
         let contract_address = env.current_contract_address();
-        let nft_client = token::Client::new(&env, &position.nft_contract);
+        let nft_client = NftClient::new(&env, &position.nft_contract);
         nft_client.transfer(
             &position.borrower,
             &contract_address,
-            &(position.token_id as i128),
+            &(position.token_id as u64),
         );
         nft_client.transfer(
             &contract_address,
             &position.lender,
-            &(position.token_id as i128),
+            &(position.token_id as u64),
         );
 
         // Settle collateral waterfall (no liquidator on voluntary return).

@@ -104,7 +104,7 @@ fn test_cancel_listing_success() {
 
     let lender = Address::generate(&env);
     let token_admin = Address::generate(&env);
-    let (nft_token, nft_admin) = create_token(&env, &token_admin);
+    let (nft_token, nft_admin) = create_nft(&env, &token_admin);
 
     nft_admin.mint(&contract_id, &1);
 
@@ -191,7 +191,7 @@ fn test_borrow_success() {
     let admin = Address::generate(&env);
     let oracle_address = create_default_oracle(&env);
 
-    let (nft_token, nft_admin) = create_token(&env, &admin);
+    let (nft_token, nft_admin) = create_nft(&env, &admin);
     let (col_token, col_admin) = create_token(&env, &admin);
 
     nft_admin.mint(&contract_id, &1);
@@ -950,14 +950,14 @@ fn setup_liquidate_test<'a>(
     env: &'a Env,
 ) -> (
     LendingContractClient<'a>,
-    Address,         // contract_id
-    Address,         // admin
-    Address,         // lender
-    Address,         // borrower
-    Address,         // liquidator
-    Address,         // fee_receiver
-    TokenClient<'a>, // nft_token
-    TokenClient<'a>, // col_token
+    Address,           // contract_id
+    Address,           // admin
+    Address,           // lender
+    Address,           // borrower
+    Address,           // liquidator
+    Address,           // fee_receiver
+    TestNftClient<'a>, // nft_token
+    TokenClient<'a>,   // col_token
 ) {
     env.mock_all_auths();
 
@@ -971,7 +971,7 @@ fn setup_liquidate_test<'a>(
     let fee_receiver = Address::generate(env);
     let oracle_address = create_default_oracle(env);
 
-    let (nft_token, nft_admin) = create_token(env, &admin);
+    let (nft_token, nft_admin) = create_nft(env, &admin);
     let (col_token, col_admin) = create_token(env, &admin);
 
     nft_admin.mint(&borrower, &1);
@@ -1496,7 +1496,7 @@ fn test_e2e_voluntary_return() {
     let oracle = create_default_oracle(&env);
 
     // 1. Deploy + initialize contract
-    let (nft_token, nft_admin) = create_token(&env, &admin);
+    let (nft_token, nft_admin) = create_nft(&env, &admin);
     let (usdc_token, usdc_admin) = create_token(&env, &admin);
 
     // Mint NFT to lender
@@ -1638,8 +1638,8 @@ fn test_e2e_voluntary_return() {
         let result = crate::settlement::settle(&env, &pos, None, &config);
 
         // Transfer NFT to lender
-        let nft_client = TokenClient::new(&env, &pos.nft_contract);
-        nft_client.transfer(&contract_id, &pos.lender, &(pos.token_id as i128));
+        let nft_client = crate::contract::NftClient::new(&env, &pos.nft_contract);
+        nft_client.transfer(&contract_id, &pos.lender, &(pos.token_id as u64));
 
         // Mark position as returned
         let mut updated_pos = pos.clone();
@@ -1705,7 +1705,7 @@ fn test_e2e_liquidation() {
     let oracle = create_default_oracle(&env);
 
     // 1. Deploy + initialize
-    let (nft_token, nft_admin) = create_token(&env, &admin);
+    let (nft_token, nft_admin) = create_nft(&env, &admin);
     let (usdc_token, usdc_admin) = create_token(&env, &admin);
 
     nft_admin.mint(&lender, &1);
@@ -2032,7 +2032,7 @@ fn setup_return_nft<'a>(
     Address,
     Address,
     Address,
-    TokenClient<'a>,
+    TestNftClient<'a>,
     TokenClient<'a>,
 ) {
     env.mock_all_auths();
@@ -2047,7 +2047,7 @@ fn setup_return_nft<'a>(
     let fee_receiver = Address::generate(env);
     let oracle = create_default_oracle(env);
 
-    let (nft_token, nft_admin) = create_token(env, &admin);
+    let (nft_token, nft_admin) = create_nft(env, &admin);
     let (col_token, col_admin) = create_token(env, &admin);
 
     // Borrower holds the NFT (1 unit); contract holds the collateral.
@@ -2596,12 +2596,12 @@ fn test_return_nft_liquidated_position_panics() {
 #[test]
 fn test_return_nft_exact_repayment() {
     let env = Env::default();
-    let (client, contract_id, lender, borrower, fee_receiver, nft_token, col_token) =
+    let (client, contract_id, lender, borrower, fee_receiver, _nft_token, col_token) =
         setup_return_nft(&env, 1000, 1000, PositionStatus::Active);
 
     let lender_col_before = col_token.balance(&lender);
     let fee_col_before = col_token.balance(&fee_receiver);
-    let borrower_col_before = col_token.balance(&borrower);
+    let _borrower_col_before = col_token.balance(&borrower);
 
     client.return_nft(&1);
 
@@ -2630,7 +2630,7 @@ fn test_return_nft_exact_repayment() {
 #[test]
 fn test_return_nft_with_excess_collateral() {
     let env = Env::default();
-    let (client, contract_id, lender, borrower, fee_receiver, nft_token, col_token) =
+    let (client, contract_id, lender, borrower, fee_receiver, _nft_token, col_token) =
         setup_return_nft(&env, 1000, 1000, PositionStatus::Active);
 
     // Capture starting balances
