@@ -260,9 +260,6 @@ impl NftStaking {
 
     pub fn unstake_erc721(env: Env, user: Address, token_address: Address, token_id: u64) {
         extend_instance_ttl(&env);
-        if Self::is_paused(env.clone()) {
-            panic_with_error!(&env, StakingError::ContractPaused);
-        }
         user.require_auth();
         Self::require_pool_nft(&env, &token_address);
 
@@ -325,9 +322,6 @@ impl NftStaking {
         amount: u64,
     ) {
         extend_instance_ttl(&env);
-        if Self::is_paused(env.clone()) {
-            panic_with_error!(&env, StakingError::ContractPaused);
-        }
         user.require_auth();
         Self::require_pool_nft(&env, &token_address);
 
