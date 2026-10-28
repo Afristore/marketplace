@@ -1,12 +1,30 @@
-import { useLendingPositions } from "./useLendingPositions";
+import { useLendingPositions, IndexedLendingPosition } from "./useLendingPositions";
 
-export function useBorrowerPositions({
-  walletAddress,
-}: {
-  walletAddress: string | null;
-}) {
+export type BorrowerPosition = IndexedLendingPosition;
+
+export interface UseBorrowerPositionsOptions {
+  page?: number;
+  limit?: number;
+}
+
+export function useBorrowerPositions(
+  walletAddressOrParams: { walletAddress: string | null } | string | null,
+  options?: UseBorrowerPositionsOptions,
+) {
+  const walletAddress =
+    typeof walletAddressOrParams === "object" && walletAddressOrParams !== null
+      ? walletAddressOrParams.walletAddress
+      : walletAddressOrParams;
+
+  const lending = useLendingPositions(walletAddress, "borrower");
+
+  const data =
+    lending.loading || lending.error ? undefined : lending.positions;
+
   return {
     borrower: walletAddress,
-    ...useLendingPositions(walletAddress, "borrower"),
+    ...lending,
+    data,
+    isLoading: lending.loading,
   };
 }
