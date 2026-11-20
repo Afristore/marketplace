@@ -3,6 +3,7 @@ use soroban_sdk::{
 };
 
 use crate::{
+    events,
     storage::{
         is_initialized, load_beneficiaries, load_shares, load_token, save_beneficiaries,
         save_shares, save_token, set_initialized, LEDGER_TTL_BUMP, LEDGER_TTL_THRESHOLD,
@@ -50,8 +51,8 @@ impl RoyaltySplitter {
     }
 
     /// Drain the contract's full token balance to all beneficiaries
-    /// proportionally. Callable by anyone; no auth required.
-    /// The caller receives any rounding remainder (dust) as a gas incentive.
+    /// proportionally. Callable by anyone; no auth required. Any rounding
+    /// remainder is assigned to the first beneficiary.
     pub fn distribute(env: Env, token_address: Address, caller: Address) {
         if !is_initialized(&env) {
             panic_with_error!(&env, SplitterError::NotInitialized);
@@ -89,8 +90,14 @@ impl RoyaltySplitter {
 
         let remainder = balance - distributed;
         if remainder > 0 {
-            token_client.transfer(&contract_addr, &caller, &remainder);
+            let first_beneficiary = beneficiaries
+                .get(0)
+                .unwrap_or_else(|| panic_with_error!(&env, SplitterError::NoBeneficiaries));
+            token_client.transfer(&contract_addr, &first_beneficiary, &remainder);
+            distributed += remainder;
         }
+
+        events::publish_distributed(&env, token, balance, distributed, caller);
     }
 
     pub fn get_token(env: Env) -> Address {
