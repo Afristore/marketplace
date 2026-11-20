@@ -1,6 +1,9 @@
 extern crate std;
 
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, BytesN, Env, String};
+use soroban_sdk::{
+    symbol_short, testutils::Address as _, testutils::Events as _, testutils::Ledger as _,
+    Address, BytesN, Env, IntoVal, String, Symbol, Val, Vec as SorobanVec,
+};
 
 use crate::{CollectionKind, Error, Launchpad, LaunchpadClient};
 
@@ -2260,4 +2263,107 @@ fn test_deterministic_salt_isolation_across_multiple_creators_issue_1097() {
 
     // Identical raw salts from different creators must produce distinct addresses
     assert_ne!(addr_a, addr_b);
+}
+
+// ── Issue #1214: deploy_splitter must not emit a CollectionKind ──────────────
+
+/// Asserts the launchpad's events from the last invocation are exactly one
+/// `("deploy", tag)` event carrying `data`.
+fn assert_single_deploy_event(env: &Env, launchpad: &Address, tag: Symbol, data: Val) {
+    let topics: SorobanVec<Val> = (symbol_short!("deploy"), tag).into_val(env);
+    let expected = SorobanVec::from_array(env, [(launchpad.clone(), topics, data)]);
+    assert_eq!(env.events().all().filter_by_contract(launchpad), expected);
+}
+
+#[test]
+fn deploy_splitter_event_omits_collection_kind() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let wasm_splitter = env
+        .deployer()
+        .upload_contract_wasm(wasm_bytes("royalty_splitter").as_slice());
+    client.set_royalty_splitter_wasm_hash(&wasm_splitter);
+
+    let token = Address::generate(&env);
+    client.add_approved_currency(&token);
+    let beneficiaries = SorobanVec::from_array(&env, [Address::generate(&env)]);
+    let shares = SorobanVec::from_array(&env, [10_000u32]);
+
+    let splitter = client.deploy_splitter(
+        &creator,
+        &token,
+        &beneficiaries,
+        &shares,
+        &BytesN::from_array(&env, &[0x77u8; 32]),
+    );
+
+    // Payload is exactly (creator, splitter): no CollectionKind element.
+    let data: Val = (creator.clone(), splitter).into_val(&env);
+    assert_single_deploy_event(&env, &client.address, symbol_short!("split"), data);
+}
+
+#[test]
+fn nft_collection_deploy_event_still_carries_kind() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+
+    let royalty_receiver = Address::generate(&env);
+    let addr = client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Kind 721"),
+        &String::from_str(&env, "K7"),
+        &100u64,
+        &0u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0x88u8; 32]),
+    );
+
+    let data: Val = (creator.clone(), addr, CollectionKind::Normal721).into_val(&env);
+    assert_single_deploy_event(&env, &client.address, symbol_short!("n721"), data);
+}
+
+// ── Issue #1215: deploy_splitter collects the platform fee ───────────────────
+
+#[test]
+fn deploy_splitter_collects_platform_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let fee_token = env.register_stellar_asset_contract_v2(token_admin).address();
+
+    let fee: u32 = 500;
+    client.initialize(&admin, &fee_receiver, &fee, &fee_token);
+    client.add_approved_currency(&fee_token);
+
+    let wasm_splitter = env
+        .deployer()
+        .upload_contract_wasm(wasm_bytes("royalty_splitter").as_slice());
+    client.set_royalty_splitter_wasm_hash(&wasm_splitter);
+
+    soroban_sdk::token::StellarAssetClient::new(&env, &fee_token).mint(&creator, &1_000i128);
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &fee_token);
+
+    let beneficiaries = SorobanVec::from_array(&env, [Address::generate(&env)]);
+    let shares = SorobanVec::from_array(&env, [10_000u32]);
+    client.deploy_splitter(
+        &creator,
+        &fee_token,
+        &beneficiaries,
+        &shares,
+        &BytesN::from_array(&env, &[0x99u8; 32]),
+    );
+
+    assert_eq!(token_client.balance(&fee_receiver), fee as i128);
+    assert_eq!(token_client.balance(&creator), 1_000 - fee as i128);
 }
