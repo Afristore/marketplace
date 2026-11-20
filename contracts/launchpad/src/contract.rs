@@ -479,6 +479,18 @@ impl Launchpad {
         creator.require_auth();
         storage::require_approved_currency(&env, &token)?;
 
+        // [FEE] Collect deployment fee (#1215) — use globally-set fee token
+        let (receiver, fee) = storage::get_platform_fee(&env);
+        if fee > 0 {
+            let fee_token =
+                storage::get_platform_fee_token(&env).ok_or(Error::PlatformFeeTokenNotSet)?;
+            soroban_sdk::token::TokenClient::new(&env, &fee_token).transfer(
+                &creator,
+                &receiver,
+                &(fee as i128),
+            );
+        }
+
         let wasm = storage::get_royalty_splitter_wasm_hash(&env).ok_or(Error::WasmHashNotSet)?;
 
         let secure_salt = make_secure_salt(&env, &creator, &salt);

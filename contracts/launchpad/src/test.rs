@@ -2324,3 +2324,46 @@ fn nft_collection_deploy_event_still_carries_kind() {
     let data: Val = (creator.clone(), addr, CollectionKind::Normal721).into_val(&env);
     assert_single_deploy_event(&env, &client.address, symbol_short!("n721"), data);
 }
+
+// ── Issue #1215: deploy_splitter collects the platform fee ───────────────────
+
+#[test]
+fn deploy_splitter_collects_platform_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(&env, &launchpad_id);
+
+    let admin = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let fee_token = env.register_stellar_asset_contract_v2(token_admin).address();
+
+    let fee: u32 = 500;
+    client.initialize(&admin, &fee_receiver, &fee, &fee_token);
+    client.add_approved_currency(&fee_token);
+
+    let wasm_splitter = env
+        .deployer()
+        .upload_contract_wasm(wasm_bytes("royalty_splitter").as_slice());
+    client.set_royalty_splitter_wasm_hash(&wasm_splitter);
+
+    soroban_sdk::token::StellarAssetClient::new(&env, &fee_token).mint(&creator, &1_000i128);
+    let token_client = soroban_sdk::token::TokenClient::new(&env, &fee_token);
+
+    let beneficiaries = SorobanVec::from_array(&env, [Address::generate(&env)]);
+    let shares = SorobanVec::from_array(&env, [10_000u32]);
+    client.deploy_splitter(
+        &creator,
+        &fee_token,
+        &beneficiaries,
+        &shares,
+        &BytesN::from_array(&env, &[0x99u8; 32]),
+    );
+
+    assert_eq!(token_client.balance(&fee_receiver), fee as i128);
+    assert_eq!(token_client.balance(&creator), 1_000 - fee as i128);
+}
