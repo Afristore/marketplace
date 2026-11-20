@@ -16,6 +16,17 @@ pub fn publish_deploy(
     );
 }
 
+/// Emitted when a RoyaltySplitter is deployed. A splitter is not an NFT
+/// collection, so the payload carries only `(creator, address)` and no
+/// `CollectionKind`.
+#[allow(deprecated)]
+pub fn publish_deploy_splitter(env: &Env, creator: &Address, address: &Address) {
+    env.events().publish(
+        (symbol_short!("deploy"), symbol_short!("split")),
+        (creator.clone(), address.clone()),
+    );
+}
+
 #[allow(deprecated)]
 pub fn publish_staking_deploy(
     env: &Env,

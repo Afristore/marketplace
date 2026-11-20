@@ -489,13 +489,7 @@ impl Launchpad {
 
         RoyaltySplitterClient::new(&env, &addr).initialize(&token, &beneficiaries, &shares);
 
-        events::publish_deploy(
-            &env,
-            symbol_short!("split"),
-            &creator,
-            &addr,
-            &CollectionKind::Normal721,
-        );
+        events::publish_deploy_splitter(&env, &creator, &addr);
         Ok(addr)
     }
 
