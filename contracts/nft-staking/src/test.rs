@@ -576,6 +576,14 @@ fn test_claim_rewards_zero_duration_reverts() {
         result.is_err(),
         "claiming with zero elapsed time must revert with NoRewardsToClaim"
     );
+    assert_eq!(
+        staking
+            .get_staked_position(&user, &collection, &0)
+            .unwrap()
+            .staked_at,
+        1000,
+        "a zero-reward claim must not reset the position timestamp"
+    );
 
     // Nothing was paid out.
     assert_eq!(
@@ -1505,7 +1513,7 @@ fn test_stake_erc1155_happy_path_creates_position_and_escrows_tokens() {
     assert_eq!(pos.staked_at, env.ledger().timestamp());
     assert_eq!(pos.rewards_earned, 0);
 
-    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(staking.total_staked(), 4);
     assert_eq!(staking.get_user_stakes(&user).len(), 1);
 
     // Tokens moved from the user into the pool's custody.
@@ -1567,7 +1575,7 @@ fn test_stake_erc1155_double_stake_fails() {
         .unwrap();
     assert_eq!(err, StakingError::AlreadyStaked.into());
 
-    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(staking.total_staked(), 4);
     assert_eq!(erc1155_balance(&env, &collection, &user, 0), 6);
     assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 4);
 }
@@ -1604,7 +1612,7 @@ fn test_stake_erc1155_multiple_token_ids() {
     staking.stake_erc1155(&user, &collection, &0, &2);
     staking.stake_erc1155(&user, &collection, &1, &3);
 
-    assert_eq!(staking.total_staked(), 2);
+    assert_eq!(staking.total_staked(), 5);
     assert_eq!(staking.get_user_stakes(&user).len(), 2);
     assert!(staking
         .get_staked_position(&user, &collection, &0)
@@ -1626,7 +1634,7 @@ fn test_unstake_erc1155_happy_path_returns_tokens_and_clears_state() {
 
     mint_erc1155(&env, &collection, &user, 0, 10);
     staking.stake_erc1155(&user, &collection, &0, &4);
-    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(staking.total_staked(), 4);
 
     staking.unstake_erc1155(&user, &collection, &0, &4);
 
@@ -1697,7 +1705,7 @@ fn test_unstake_erc1155_fails_with_wrong_token() {
     assert!(staking
         .get_staked_position(&user, &collection, &0)
         .is_some());
-    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(staking.total_staked(), 4);
     assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 4);
 }
 
@@ -1739,7 +1747,7 @@ fn test_unstake_erc1155_fails_for_different_user() {
     assert!(staking
         .get_staked_position(&victim, &collection, &0)
         .is_some());
-    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(staking.total_staked(), 4);
     assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 4);
     assert_eq!(erc1155_balance(&env, &collection, &victim, 0), 6);
     assert_eq!(erc1155_balance(&env, &collection, &attacker, 0), 0);
@@ -1785,11 +1793,11 @@ fn test_stake_erc1155_concurrent_users_same_token_id_are_isolated() {
 
     env.ledger().set_timestamp(1_000);
     staking.stake_erc1155(&user_a, &collection, &token_id, &4);
-    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(staking.total_staked(), 4);
 
     env.ledger().set_timestamp(1_500);
     staking.stake_erc1155(&user_b, &collection, &token_id, &7);
-    assert_eq!(staking.total_staked(), 2);
+    assert_eq!(staking.total_staked(), 11);
 
     // Each user owns a distinct position keyed by (user, collection, token_id).
     let position_a = staking
@@ -1825,7 +1833,7 @@ fn test_stake_erc1155_concurrent_users_same_token_id_are_isolated() {
 
     // User A unstakes first; User B's position and accrual are untouched.
     staking.unstake_erc1155(&user_a, &collection, &token_id, &4);
-    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(staking.total_staked(), 7);
     assert!(staking
         .get_staked_position(&user_a, &collection, &token_id)
         .is_none());
