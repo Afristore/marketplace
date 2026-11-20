@@ -175,6 +175,7 @@ impl NftStaking {
             owner: user.clone(),
             token_address: token_address.clone(),
             token_id,
+            amount: 1,
             staked_at: env.ledger().timestamp(),
             rewards_earned: 0,
         };
@@ -209,6 +210,9 @@ impl NftStaking {
         }
         user.require_auth();
         Self::require_pool_nft(&env, &token_address);
+        if amount == 0 {
+            panic_with_error!(&env, StakingError::InvalidDuration);
+        }
 
         let position_key = DataKey::StakedPosition(user.clone(), token_address.clone(), token_id);
 
@@ -233,6 +237,7 @@ impl NftStaking {
             owner: user.clone(),
             token_address: token_address.clone(),
             token_id,
+            amount,
             staked_at: env.ledger().timestamp(),
             rewards_earned: 0,
         };
@@ -332,10 +337,14 @@ impl NftStaking {
         if position.owner != user {
             panic_with_error!(&env, StakingError::Unauthorized);
         }
+        if amount != position.amount {
+            panic_with_error!(&env, StakingError::InvalidDuration);
+        }
 
         let rate = Self::rewards_per_second(&env);
         let elapsed = env.ledger().timestamp() - position.staked_at;
-        let pending = position.rewards_earned + (elapsed as i128) * rate;
+        let pending =
+            position.rewards_earned + (elapsed as i128) * rate * (position.amount as i128);
 
         if pending > 0 {
             let reward_token_addr = get_reward_token(&env)
@@ -390,7 +399,8 @@ impl NftStaking {
             if let Some(mut position) = load_staked_position(&env, &key) {
                 let elapsed = env.ledger().timestamp() - position.staked_at;
                 // Collect all pending rewards: previously accrued + newly elapsed.
-                let claimable = position.rewards_earned + (elapsed as i128) * rate;
+                let claimable =
+                    position.rewards_earned + (elapsed as i128) * rate * (position.amount as i128);
                 total_rewards += claimable;
                 // Reset so the same rewards are never counted twice.
                 position.rewards_earned = 0;
@@ -459,7 +469,8 @@ impl NftStaking {
             if let Some(position) = load_staked_position(&env, &key) {
                 let elapsed = env.ledger().timestamp() - position.staked_at;
                 // rewards_earned holds only the pending (not-yet-claimed) portion.
-                total += (elapsed as i128) * rate + position.rewards_earned;
+                total +=
+                    (elapsed as i128) * rate * (position.amount as i128) + position.rewards_earned;
             }
         }
         total

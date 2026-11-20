@@ -1820,8 +1820,8 @@ fn test_stake_erc1155_concurrent_users_same_token_id_are_isolated() {
 
     // Rewards accrue from each user's own stake time.
     env.ledger().set_timestamp(2_000);
-    assert_eq!(staking.calculate_rewards(&user_a), 1_000 * rate);
-    assert_eq!(staking.calculate_rewards(&user_b), 500 * rate);
+    assert_eq!(staking.calculate_rewards(&user_a), 1_000 * rate * 4);
+    assert_eq!(staking.calculate_rewards(&user_b), 500 * rate * 7);
 
     // User A unstakes first; User B's position and accrual are untouched.
     staking.unstake_erc1155(&user_a, &collection, &token_id, &4);
@@ -1835,7 +1835,7 @@ fn test_stake_erc1155_concurrent_users_same_token_id_are_isolated() {
         Some(position_b)
     );
     assert_eq!(staking.calculate_rewards(&user_a), 0);
-    assert_eq!(staking.calculate_rewards(&user_b), 500 * rate);
+    assert_eq!(staking.calculate_rewards(&user_b), 500 * rate * 7);
 
     assert_eq!(erc1155_balance(&env, &collection, &user_a, token_id), 10);
     assert_eq!(erc1155_balance(&env, &collection, &user_b, token_id), 13);
@@ -1843,7 +1843,7 @@ fn test_stake_erc1155_concurrent_users_same_token_id_are_isolated() {
 
     // User B unstakes at a later interval.
     env.ledger().set_timestamp(3_200);
-    assert_eq!(staking.calculate_rewards(&user_b), 1_700 * rate);
+    assert_eq!(staking.calculate_rewards(&user_b), 1_700 * rate * 7);
     staking.unstake_erc1155(&user_b, &collection, &token_id, &7);
     assert_eq!(staking.total_staked(), 0);
     assert!(staking
@@ -1853,6 +1853,35 @@ fn test_stake_erc1155_concurrent_users_same_token_id_are_isolated() {
 
     assert_eq!(erc1155_balance(&env, &collection, &user_b, token_id), 20);
     assert_eq!(erc1155_balance(&env, &collection, &pool, token_id), 0);
+}
+
+// Regression for issue #1210: ERC-1155 rewards scale with the escrowed quantity,
+// and claiming resets accrual without double-paying a previous interval.
+#[test]
+fn test_erc1155_rewards_scale_with_amount_and_reset_after_claim() {
+    let (env, staking, single, collection, _admin) = setup_erc1155();
+    let multiple = Address::generate(&env);
+    let rate = staking.get_reward_rate();
+
+    mint_erc1155(&env, &collection, &single, 0, 1);
+    mint_erc1155(&env, &collection, &multiple, 0, 10);
+
+    env.ledger().set_timestamp(1_000);
+    staking.stake_erc1155(&single, &collection, &0, &1);
+    staking.stake_erc1155(&multiple, &collection, &0, &10);
+
+    env.ledger().set_timestamp(1_010);
+    assert_eq!(staking.calculate_rewards(&single), 10 * rate);
+    assert_eq!(staking.calculate_rewards(&multiple), 100 * rate);
+
+    assert_eq!(staking.claim_rewards(&single), 10 * rate);
+    assert_eq!(staking.claim_rewards(&multiple), 100 * rate);
+    assert_eq!(staking.calculate_rewards(&single), 0);
+    assert_eq!(staking.calculate_rewards(&multiple), 0);
+
+    env.ledger().set_timestamp(1_020);
+    assert_eq!(staking.claim_rewards(&single), 10 * rate);
+    assert_eq!(staking.claim_rewards(&multiple), 100 * rate);
 }
 
 // ── Issue #834: get_staked_position ─────────────────────────────────────────
@@ -1943,10 +1972,14 @@ fn test_get_staked_position_returns_none_after_unstake() {
 fn test_paused_contract_rejection_on_all_state_mutating_functions_issue_1093() {
     let (env, staking, user, collection, _admin) = setup_with_mock();
 
+    // A previously staked NFT must remain withdrawable during an emergency pause.
+    mint_token(&env, &collection, &user, 99);
+    staking.stake_erc721(&user, &collection, &99);
+
     staking.set_paused(&true);
     assert!(staking.is_paused());
 
-    // State mutating functions like staking must be rejected with ContractPaused
+    // No new deposits or reward claims while paused.
     mint_token(&env, &collection, &user, 100);
     let stake_err = staking
         .try_stake_erc721(&user, &collection, &100)
@@ -1954,15 +1987,22 @@ fn test_paused_contract_rejection_on_all_state_mutating_functions_issue_1093() {
         .unwrap();
     assert_eq!(stake_err, StakingError::ContractPaused.into());
 
-    let unstake_err = staking
-        .try_unstake_erc721(&user, &collection, &100)
-        .unwrap_err()
-        .unwrap();
-    assert_eq!(unstake_err, StakingError::ContractPaused.into());
+    let claim_err = staking.try_claim_rewards(&user).unwrap_err().unwrap();
+    assert_eq!(claim_err, StakingError::ContractPaused.into());
 
-    // Query functions continue to operate
+    // Emergency withdrawal remains possible, even though the pool is paused.
+    staking.unstake_erc721(&user, &collection, &99);
     assert_eq!(staking.total_staked(), 0);
+    assert!(staking
+        .get_staked_position(&user, &collection, &99)
+        .is_none());
     assert!(staking
         .get_staked_position(&user, &collection, &100)
         .is_none());
+    let owner: Address = env.invoke_contract(
+        &collection,
+        &Symbol::new(&env, "owner_of"),
+        soroban_sdk::vec![&env, 99u64.into_val(&env)],
+    );
+    assert_eq!(owner, user);
 }

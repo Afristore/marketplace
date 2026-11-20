@@ -24,6 +24,8 @@ pub struct StakedPosition {
     pub owner: Address,
     pub token_address: Address,
     pub token_id: u64,
+    /// ERC-721 positions hold one token; ERC-1155 positions hold the deposited quantity.
+    pub amount: u64,
     pub staked_at: u64,
     pub rewards_earned: i128,
 }

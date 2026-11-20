@@ -92,6 +92,73 @@ fn create_token<'a>(env: &Env, admin: &Address) -> (TokenClient<'a>, TokenAdminC
     )
 }
 
+// Minimal ERC-721 test double used by the lending lifecycle tests.
+#[contract]
+pub struct TestNft;
+
+#[contracttype]
+#[derive(Clone)]
+enum TestNftKey {
+    Owner(u64),
+    Balance(Address),
+}
+
+#[contractimpl]
+impl TestNft {
+    pub fn mint(env: Env, to: Address, token_id: u64) {
+        let owner_key = TestNftKey::Owner(token_id);
+        assert!(
+            !env.storage().persistent().has(&owner_key),
+            "token already minted"
+        );
+        env.storage().persistent().set(&owner_key, &to);
+        let balance_key = TestNftKey::Balance(to);
+        let balance = env
+            .storage()
+            .persistent()
+            .get::<_, i128>(&balance_key)
+            .unwrap_or(0);
+        env.storage().persistent().set(&balance_key, &(balance + 1));
+    }
+
+    pub fn balance(env: Env, owner: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&TestNftKey::Balance(owner))
+            .unwrap_or(0)
+    }
+
+    pub fn transfer(env: Env, from: Address, to: Address, token_id: u64) {
+        let owner_key = TestNftKey::Owner(token_id);
+        let owner: Address = env
+            .storage()
+            .persistent()
+            .get(&owner_key)
+            .expect("token not minted");
+        assert_eq!(owner, from, "not token owner");
+        if from == to {
+            return;
+        }
+        let from_key = TestNftKey::Balance(from);
+        let to_key = TestNftKey::Balance(to.clone());
+        let from_balance: i128 = env.storage().persistent().get(&from_key).unwrap_or(0);
+        let to_balance: i128 = env.storage().persistent().get(&to_key).unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&from_key, &(from_balance - 1));
+        env.storage().persistent().set(&to_key, &(to_balance + 1));
+        env.storage().persistent().set(&owner_key, &to);
+    }
+}
+
+fn create_nft<'a>(env: &'a Env, _admin: &Address) -> (TestNftClient<'a>, TestNftClient<'a>) {
+    let address = env.register(TestNft, ());
+    (
+        TestNftClient::new(env, &address),
+        TestNftClient::new(env, &address),
+    )
+}
+
 // ─── Cancel listing tests ───────────────────────────────────────────────────
 
 #[test]
@@ -335,8 +402,9 @@ fn test_settle_rejects_zero_oracle_price() {
 
     let borrower = Address::generate(&env);
     let admin = Address::generate(&env);
-    let oracle_address = Address::generate(&env);
+    let (oracle_address, oracle_client) = create_mock_oracle(&env);
     let (col_token, col_admin) = create_token(&env, &admin);
+    oracle_client.set_price(&col_token.address, &0, &env.ledger().timestamp());
     col_admin.mint(&contract_id, &1_000_000_000);
 
     env.as_contract(&contract_id, || {
@@ -381,7 +449,9 @@ fn test_settle_rejects_zero_oracle_price() {
         );
 
         // A non-positive oracle price must be rejected before any division.
-        let _ = settle(&env, 1, 0);
+        let position = crate::storage::get_position(&env, 1);
+        let config = crate::storage::get_config(&env);
+        let _ = settle(&env, &position, None, &config);
     });
 }
 
@@ -2908,7 +2978,7 @@ fn test_borrow_with_reflector_oracle_scaled_price_succeeds() {
     let admin = Address::generate(&env);
     let (oracle_id, oracle_client) = create_mock_oracle(&env);
 
-    let (nft_token, nft_admin) = create_token(&env, &admin);
+    let (nft_token, nft_admin) = create_nft(&env, &admin);
     let (col_token, col_admin) = create_token(&env, &admin);
 
     // Collateral asset priced at $2.00 (20_000_000).
