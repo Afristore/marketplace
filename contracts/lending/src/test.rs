@@ -1805,9 +1805,8 @@ fn test_e2e_voluntary_return() {
     let health_factor_mid = env.as_contract(&contract_id, || {
         let pos = crate::storage::get_position(&env, position_id);
         // Health factor = collateral_value / (principal + accrued_interest)
-        // At 45 days (halfway through 90-day term), accrued interest = 5% (half of 10%)
-        // owed = 100 + 5 = 105 USD
-        // health_factor = 150 / 105 = 1.428 (142.8%)
+        // At 45 days, accrued interest is one full month plus half a month at 10%.
+        // Owed = 100 + 15 = 115 USD; health_factor = 150 / 115 = 130.4%.
         // We can't call a view function directly, so we compute manually
         let accrued = crate::interest::accrued_interest_usd(&pos, env.ledger().timestamp());
         let owed = pos.declared_price_usd + accrued;
@@ -1872,17 +1871,15 @@ fn test_e2e_voluntary_return() {
     assert_eq!(nft_token.balance(&contract_id), 0);
 
     // Assert exact collateral distribution
-    // At 90 days: principal = 100, interest = 10 (10%), owed = 110 USD
-    // platform_fee = 1% of 110 = 1.1 USD
-    // total_debit = 110 + 1.1 = 111.1 USD = 111_100_000
-    // borrower_rem = 180 - 111.1 = 68.9 USD = 68_900_000
+    // At 90 days: three monthly periods accrue 30 USD of interest.
+    // Owed = 130 USD; platform fee = 1.3 USD; borrower remainder = 48.7 USD.
     let lender_received = usdc_token.balance(&lender) - initial_lender_balance;
     let fee_received = usdc_token.balance(&fee_receiver) - initial_fee_receiver_balance;
     let borrower_received = usdc_token.balance(&borrower) - initial_borrower_balance;
 
-    assert_eq!(lender_received, 110_000_000); // Principal + interest
-    assert_eq!(fee_received, 1_100_000); // Platform fee
-    assert_eq!(borrower_received, 68_900_000); // Remainder
+    assert_eq!(lender_received, 130_000_000); // Principal + interest
+    assert_eq!(fee_received, 1_300_000); // Platform fee
+    assert_eq!(borrower_received, 48_700_000); // Remainder
 
     // Assert contract balance is zero (all collateral distributed)
     assert_eq!(usdc_token.balance(&contract_id), 0);
@@ -1978,10 +1975,8 @@ fn test_e2e_liquidation() {
     assert_eq!(usdc_token.balance(&contract_id), 122_000_000);
 
     // 5. Advance ledger until health factor < liquidation threshold (120%)
-    // At 20% interest rate over 90 days:
-    // After ~11 days: accrued interest ≈ 2.44% (11/90 * 20%)
-    // owed ≈ 100 + 2.44 = 102.44 USD
-    // health_factor = 122 / 102.44 = 119.1% < 120% threshold
+    // The 20% monthly rate accrues proportionally over the first 11 days.
+    // Owed ≈ 107.33 USD; health_factor ≈ 113.6% < 120% threshold.
     env.ledger().with_mut(|l| l.timestamp = 1000 + (11 * 86400));
 
     // Verify position is under-collateralized
@@ -2029,11 +2024,9 @@ fn test_e2e_liquidation() {
     assert_eq!(nft_token.balance(&contract_id), 0);
 
     // Assert exact collateral distribution
-    // owed ≈ 100 + (11/90 * 20) = 102.444... USD ≈ 102_444_444
-    // platform_fee = 1% of owed ≈ 1_024_444
-    // liquidator_fee = 5% of owed ≈ 5_122_222
-    // total_debit ≈ 102_444_444 + 1_024_444 + 5_122_222 = 108_591_110
-    // borrower_rem = 122_000_000 - 108_591_110 = 13_408_890
+    // Accrued interest ≈ 7_333_333; owed ≈ 107_333_333.
+    // Platform fee ≈ 1_073_333; liquidator fee ≈ 5_366_666.
+    // Borrower remainder ≈ 8_226_668.
 
     let lender_received = usdc_token.balance(&lender) - initial_lender_balance;
     let liquidator_received = usdc_token.balance(&liquidator_addr) - initial_liquidator_balance;
@@ -2041,10 +2034,10 @@ fn test_e2e_liquidation() {
     let borrower_received = usdc_token.balance(&borrower) - initial_borrower_balance;
 
     // Allow small rounding tolerance (within 1000 units = 0.0001 USD)
-    assert!((102_400_000..=102_500_000).contains(&lender_received));
-    assert!((5_100_000..=5_150_000).contains(&liquidator_received));
-    assert!((1_020_000..=1_030_000).contains(&fee_received));
-    assert!((13_400_000..=13_450_000).contains(&borrower_received));
+    assert!((107_300_000..=107_400_000).contains(&lender_received));
+    assert!((5_350_000..=5_400_000).contains(&liquidator_received));
+    assert!((1_070_000..=1_080_000).contains(&fee_received));
+    assert!((8_200_000..=8_250_000).contains(&borrower_received));
 
     // Platform received its fee
     assert!(fee_received > 0);
@@ -3119,7 +3112,7 @@ fn test_borrow_with_reflector_oracle_scaled_price_succeeds() {
     let admin = Address::generate(&env);
     let (oracle_id, oracle_client) = create_mock_oracle(&env);
 
-    let (nft_token, nft_admin) = create_token(&env, &admin);
+    let (nft_token, nft_admin) = create_nft(&env, &admin);
     let (col_token, col_admin) = create_token(&env, &admin);
 
     // Collateral asset priced at $2.00 (20_000_000).
