@@ -16,6 +16,7 @@ pub enum StakingError {
     InvalidToken = 10,
     InsufficientRewardBalance = 11,
     RewardRateTooHigh = 12,
+    InvalidAmount = 13,
 }
 
 #[contracttype]
