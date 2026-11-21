@@ -509,8 +509,9 @@ fn test_settle_rejects_zero_oracle_price() {
 
     let borrower = Address::generate(&env);
     let admin = Address::generate(&env);
-    let oracle_address = Address::generate(&env);
     let (col_token, col_admin) = create_token(&env, &admin);
+    let (oracle_address, oracle_client) = create_mock_oracle(&env);
+    oracle_client.set_price(&col_token.address, &0, &env.ledger().timestamp());
     col_admin.mint(&contract_id, &1_000_000_000);
 
     env.as_contract(&contract_id, || {
@@ -843,6 +844,40 @@ fn test_settle_voluntary_return_partial_remaining() {
     assert_eq!(col_token.balance(&fee_receiver), 1_100_000);
     assert_eq!(col_token.balance(&borrower), 38_900_000);
     assert_eq!(col_token.balance(&contract_id), 0);
+}
+
+#[test]
+fn test_settle_uses_the_full_monthly_interest_schedule() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 86400 * 31);
+
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let oracle = create_default_oracle(&env);
+    let admin = Address::generate(&env);
+    let (col_token, col_admin) = create_token(&env, &admin);
+    let contract_id = env.register(LendingContract, ());
+
+    col_admin.mint(&contract_id, &150_000_000);
+
+    let config = make_config(&env, fee_receiver, oracle);
+    let mut position = make_position(
+        &env,
+        lender,
+        borrower,
+        col_token.address.clone(),
+        150_000_000,
+    );
+    position.interest_schedule_bps = vec![&env, 500u32, 800u32];
+    position.max_duration_secs = 86400 * 90;
+
+    let result = env.as_contract(&contract_id, || settle(&env, &position, None, &config));
+    let expected = crate::interest::accrued_interest_usd(&position, env.ledger().timestamp());
+
+    assert_eq!(expected, 5_266_666);
+    assert_eq!(result.accrued_interest_usd, expected);
 }
 
 #[test]
