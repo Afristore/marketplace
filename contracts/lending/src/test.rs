@@ -2,7 +2,9 @@
 
 use crate::oracle::{self, PriceData};
 use crate::settlement::settle;
-use crate::storage::{has_listing, set_config, set_currency_symbol, set_listing, set_position};
+use crate::storage::{
+    get_listing, has_listing, set_config, set_currency_symbol, set_listing, set_position,
+};
 use crate::types::{Listing, ListingStatus, PlatformConfig, Position, PositionStatus};
 use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as TokenAdminClient};
@@ -90,6 +92,178 @@ fn create_token<'a>(env: &Env, admin: &Address) -> (TokenClient<'a>, TokenAdminC
         TokenClient::new(env, &contract_id),
         TokenAdminClient::new(env, &contract_id),
     )
+}
+
+#[contract]
+pub struct TestNft;
+
+#[contracttype]
+#[derive(Clone)]
+enum TestNftDataKey {
+    Owner(u64),
+    Balance(Address),
+}
+
+#[contractimpl]
+impl TestNft {
+    pub fn mint(env: Env, to: Address, token_id: u64) {
+        let owner_key = TestNftDataKey::Owner(token_id);
+        if env.storage().persistent().has(&owner_key) {
+            panic!("token already minted");
+        }
+        env.storage().persistent().set(&owner_key, &to);
+        let balance_key = TestNftDataKey::Balance(to);
+        let balance: u64 = env.storage().persistent().get(&balance_key).unwrap_or(0);
+        env.storage().persistent().set(&balance_key, &(balance + 1));
+    }
+
+    pub fn transfer(env: Env, from: Address, to: Address, token_id: u64) {
+        from.require_auth();
+        let owner_key = TestNftDataKey::Owner(token_id);
+        let owner: Address = env.storage().persistent().get(&owner_key).unwrap();
+        if owner != from {
+            panic!("not token owner");
+        }
+
+        env.storage().persistent().set(&owner_key, &to);
+        let from_key = TestNftDataKey::Balance(from);
+        let from_balance: u64 = env.storage().persistent().get(&from_key).unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&from_key, &from_balance.saturating_sub(1));
+        let to_key = TestNftDataKey::Balance(to);
+        let to_balance: u64 = env.storage().persistent().get(&to_key).unwrap_or(0);
+        env.storage().persistent().set(&to_key, &(to_balance + 1));
+    }
+
+    pub fn balance(env: Env, owner: Address) -> u64 {
+        env.storage()
+            .persistent()
+            .get(&TestNftDataKey::Balance(owner))
+            .unwrap_or(0)
+    }
+
+    pub fn owner_of(env: Env, token_id: u64) -> Address {
+        env.storage()
+            .persistent()
+            .get(&TestNftDataKey::Owner(token_id))
+            .unwrap()
+    }
+}
+
+fn create_nft<'a>(env: &'a Env, _admin: &Address) -> (TestNftClient<'a>, TestNftClient<'a>) {
+    let address = env.register(TestNft, ());
+    (
+        TestNftClient::new(env, &address),
+        TestNftClient::new(env, &address),
+    )
+}
+
+fn configure_listing_test(env: &Env, contract_id: &Address) {
+    env.as_contract(contract_id, || {
+        set_config(
+            env,
+            &PlatformConfig {
+                admin: Address::generate(env),
+                fee_receiver: Address::generate(env),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 500,
+                min_buffer_bps: 12000,
+                max_buffer_bps: 20000,
+                min_liq_threshold_bps: 10500,
+                max_liq_threshold_bps: 12000,
+                oracle_address: Address::generate(env),
+                max_price_staleness_secs: 3600,
+            },
+        );
+    });
+}
+
+#[test]
+fn test_create_listing_escrows_nft_before_persisting_listing() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let lender = Address::generate(&env);
+    let (nft, nft_admin) = create_nft(&env, &lender);
+    nft_admin.mint(&lender, &1);
+    configure_listing_test(&env, &contract_id);
+
+    let listing_id = client.create_listing(
+        &lender,
+        &nft.address,
+        &1,
+        &100_000_000,
+        &vec![&env, 500u32],
+        &30,
+        &12000,
+        &11000,
+    );
+
+    assert_eq!(listing_id, 1);
+    assert_eq!(nft.owner_of(&1), contract_id);
+    assert_eq!(nft.balance(&lender), 0);
+    assert_eq!(nft.balance(&contract_id), 1);
+
+    let listing = env.as_contract(&contract_id, || get_listing(&env, listing_id));
+    assert_eq!(listing.status, ListingStatus::Open);
+    assert_eq!(listing.lender, lender);
+}
+
+#[test]
+fn test_create_listing_requires_lender_authorization() {
+    let env = Env::default();
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let lender = Address::generate(&env);
+    let (nft, nft_admin) = create_nft(&env, &lender);
+    nft_admin.mint(&lender, &1);
+    configure_listing_test(&env, &contract_id);
+
+    assert!(client
+        .try_create_listing(
+            &lender,
+            &nft.address,
+            &1,
+            &100_000_000,
+            &vec![&env, 500u32],
+            &30,
+            &12000,
+            &11000,
+        )
+        .is_err());
+    assert_eq!(nft.owner_of(&1), lender);
+    assert!(!env.as_contract(&contract_id, || has_listing(&env, 1)));
+}
+
+#[test]
+fn test_create_listing_rejects_nft_not_owned_by_lender() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+    let lender = Address::generate(&env);
+    let owner = Address::generate(&env);
+    let (nft, nft_admin) = create_nft(&env, &owner);
+    nft_admin.mint(&owner, &1);
+    configure_listing_test(&env, &contract_id);
+
+    assert!(client
+        .try_create_listing(
+            &lender,
+            &nft.address,
+            &1,
+            &100_000_000,
+            &vec![&env, 500u32],
+            &30,
+            &12000,
+            &11000,
+        )
+        .is_err());
+    assert_eq!(nft.owner_of(&1), owner);
+    assert!(!env.as_contract(&contract_id, || has_listing(&env, 1)));
 }
 
 // ─── Cancel listing tests ───────────────────────────────────────────────────
@@ -381,7 +555,9 @@ fn test_settle_rejects_zero_oracle_price() {
         );
 
         // A non-positive oracle price must be rejected before any division.
-        let _ = settle(&env, 1, 0);
+        let position = crate::storage::get_position(&env, 1);
+        let config = crate::storage::get_config(&env);
+        let _ = settle(&env, &position, None, &config);
     });
 }
 

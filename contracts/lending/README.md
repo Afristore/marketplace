@@ -118,7 +118,7 @@ DataKey::WhitelistedCurrency(Address)  // -> Reflector asset symbol/identifier
 |---|---|---|
 | `initialize(...)` | Admin | Set platform config: admin, fee receiver, oracle, bounds |
 | `whitelist_currency(currency, reflector_asset)` | Admin | Approve a token as valid collateral |
-| `create_listing(...)` | Lender | Escrow NFT, declare price, set interest schedule & terms |
+| `create_listing(...)` | Lender | Require lender authorization and escrow the NFT before saving an open listing |
 | `cancel_listing(listing_id)` | Lender | Cancel open listing, return NFT to lender |
 | `borrow(listing_id, borrower, currency, amount)` | Borrower | Post collateral, receive NFT (real ownership transfer) |
 | `add_collateral(position_id, amount)` | Borrower | Top up collateral to avoid liquidation |
