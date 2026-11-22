@@ -346,6 +346,67 @@ impl NormalNFT1155 {
         Ok(())
     }
 
+    /// Batch burn multiple token types.
+    pub fn burn_batch(
+        env: Env,
+        spender: Address,
+        from: Address,
+        token_ids: Vec<u64>,
+        amounts: Vec<u128>,
+    ) -> Result<(), Error> {
+        Self::extend_instance_ttl(&env);
+        spender.require_auth();
+
+        // [SECURITY] Allow owner or authorized operator to burn (#48)
+        if spender != from && !Self::_is_approved_for_all(&env, &spender, &from) {
+            return Err(Error::NotApproved);
+        }
+
+        if token_ids.len() != amounts.len() {
+            return Err(Error::LengthMismatch);
+        }
+
+        for (token_id, amount) in token_ids.iter().zip(amounts.iter()) {
+            let bal: u128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::Balance(from.clone(), token_id))
+                .unwrap_or(0);
+            if bal < amount {
+                return Err(Error::InsufficientBalance);
+            }
+
+            let balance_key = DataKey::Balance(from.clone(), token_id);
+            env.storage()
+                .persistent()
+                .set(&balance_key, &(bal - amount));
+            Self::extend_persistent_ttl(&env, &balance_key);
+
+            let supply: u128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::TotalSupply(token_id))
+                .unwrap_or(0);
+            let supply_key = DataKey::TotalSupply(token_id);
+            env.storage()
+                .persistent()
+                .set(&supply_key, &(supply.saturating_sub(amount)));
+            Self::extend_persistent_ttl(&env, &supply_key);
+        }
+
+        // Emit TransferBatch event for burn (to zero address)
+        env.events().publish(
+            (
+                Symbol::new(&env, "TransferBatch"),
+                spender.clone(),
+                from.clone(),
+                from.clone(),
+            ),
+            (token_ids, amounts),
+        );
+        Ok(())
+    }
+
     // ── View functions ────────────────────────────────────────────────────
 
     pub fn balance_of(env: Env, account: Address, token_id: u64) -> u128 {
@@ -446,6 +507,12 @@ impl NormalNFT1155 {
 
     fn extend_instance_ttl(env: &Env) {
         env.storage().instance().extend_ttl(TTL_THRESHOLD, TTL_BUMP);
+    }
+
+    fn extend_persistent_ttl(env: &Env, key: &DataKey) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, TTL_THRESHOLD, TTL_BUMP);
     }
 
     fn only_creator(env: &Env) -> Result<Address, Error> {

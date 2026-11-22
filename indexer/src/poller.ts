@@ -1015,7 +1015,7 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
   // Update Listing/Position state based on event type
   // Lending position liquidation carries a position_id mapped to listingId by the parser,
   // so we guard here for all remaining event types that require an entity id.
-  if (!listingId) return;
+  if (!listingId && !event.positionId && !data?.position_id && !data?.listing_id) return;
 
   switch (eventType) {
     case "LISTING_CREATED": {
@@ -1375,20 +1375,6 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
 
     // ── Lending event handlers ────────────────────────────────────────────────
 
-    case "LISTING_CANCELLED": {
-      const { count } = await db.lendingListing.updateMany({
-        where: { listingId: BigInt(listingId) },
-        data: {
-          status: "Cancelled",
-          updatedAtLedger: ledgerSequence,
-        },
-      });
-      if (count === 0) {
-        log.warn("LISTING_CANCELLED: lending listing not found", { listingId, ledgerSequence });
-      }
-      break;
-    }
-
     case "POSITION_LIQUIDATED":
     case "Liquidated": {
       const posId = BigInt(data.position_id ?? listingId ?? 0);
@@ -1476,6 +1462,7 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
       break;
     }
 
+    case "LENDING_COLLATERAL_ADDED":
     case "COLLATERAL_ADDED": {
       const posId = BigInt(data.position_id ?? listingId ?? 0);
       const addedAmount = data.amount?.toString() || "0";
@@ -1493,14 +1480,35 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
 
       // Only update if this ledger is newer than the last update (idempotent)
       if (ledgerSequence > position.updatedAtLedger) {
-        await db.lendingPosition.update({
-          where: { positionId: posId },
-          data: {
-            collateralAmount: newTotal || position.collateralAmount,
-            updatedAtLedger: ledgerSequence,
-          },
+        const updatedCollateral =
+          newTotal ||
+          (
+            BigInt(position.collateralAmount.toString()) + BigInt(addedAmount)
+          ).toString();
+
+        let healthFactor: string | undefined = undefined;
+        if (data.health_factor !== undefined && data.health_factor !== null) {
+          healthFactor = data.health_factor.toString();
+        } else if (data.healthFactor !== undefined && data.healthFactor !== null) {
+          healthFactor = data.healthFactor.toString();
+        } else {
+          const declaredPrice = Number(position.declaredPriceUsd);
+          if (declaredPrice > 0) {
+            healthFactor = (Number(updatedCollateral) / declaredPrice).toString();
+          }
+        }
+
+        await withTransaction(tx, async (client) => {
+          await client.lendingPosition.update({
+            where: { positionId: posId },
+            data: {
+              collateralAmount: updatedCollateral,
+              ...(healthFactor !== undefined ? { healthFactor } : {}),
+              updatedAtLedger: ledgerSequence,
+            },
+          });
         });
-        log.info("COLLATERAL_ADDED: increased position collateral", { posId, addedAmount, ledgerSequence });
+        log.info("COLLATERAL_ADDED: increased position collateral", { posId, addedAmount, healthFactor, ledgerSequence });
       } else {
         log.info("COLLATERAL_ADDED: skipped stale update", { posId, ledgerSequence });
       }
@@ -1523,12 +1531,11 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
       );
 
       await db.lendingListing.upsert({
-        where: { id },
+        where: { listingId: id },
         create: {
-          id,
+          listingId: id,
           lender,
           nftContract,
-          collectionAddress: nftContract || null,
           tokenId,
           declaredPriceUsd,
           interestScheduleBps,
@@ -1542,7 +1549,6 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
         update: {
           lender,
           nftContract,
-          collectionAddress: nftContract || null,
           tokenId,
           declaredPriceUsd,
           interestScheduleBps,
@@ -1558,13 +1564,16 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
 
     case "LENDING_LISTING_CANCELLED": {
       const id = BigInt(data.listing_id ?? listingId ?? 0);
-      await db.lendingListing.updateMany({
-        where: { id },
+      const { count } = await db.lendingListing.updateMany({
+        where: { listingId: id },
         data: {
           status: "Cancelled",
           updatedAtLedger: ledgerSequence,
         },
       });
+      if (count === 0) {
+        log.warn("LENDING_LISTING_CANCELLED: lending listing not found", { listingId: id, ledgerSequence });
+      }
       break;
     }
 

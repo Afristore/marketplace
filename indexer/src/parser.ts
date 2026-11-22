@@ -51,7 +51,7 @@ const LENDING_SUBTOPIC_MAP: Record<string, string> = {
   'lst_crtd': 'LENDING_LISTING_CREATED',
   'lst_cncl': 'LENDING_LISTING_CANCELLED',
   'pos_open': 'POSITION_OPENED',
-  'col_add': 'COLLATERAL_ADDED',
+  'col_add': 'LENDING_COLLATERAL_ADDED',
   'pos_ret': 'POSITION_RETURNED',
   'pos_liq': 'POSITION_LIQUIDATED',
   'cur_wl': 'CURRENCY_WHITELISTED',
@@ -218,6 +218,8 @@ export function parseLendingEvent(
 
   if (nativeData.listing_id !== undefined) {
     listingId = BigInt(nativeData.listing_id);
+  } else if (nativeData.position_id !== undefined) {
+    listingId = BigInt(nativeData.position_id);
   }
   if (nativeData.position_id !== undefined) {
     positionId = BigInt(nativeData.position_id);
