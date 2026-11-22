@@ -30,6 +30,7 @@ export function RoyaltiesDistributor({
 
   const { balance, error: balanceError, refresh: refreshBalance } = usePendingBalance(
     contractAddress || null,
+    userPublicKey,
   );
 
   const { distribute, isDistributing, error: distributeError } =
