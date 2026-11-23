@@ -386,41 +386,38 @@ impl MarketplaceContract {
         }
         buyer.require_auth();
 
-        // Reentrancy guard
-        if !acquire_listing_lock(&env, listing_id) {
-            panic_with_error!(&env, MarketplaceError::ReentrancyGuard);
-        }
-
         let mut listing = match load_listing(&env, listing_id) {
             Some(l) => l,
             None => {
-                release_listing_lock(&env, listing_id);
                 panic_with_error!(&env, MarketplaceError::ListingNotFound);
             }
         };
 
         // Status checks
         if listing.status == ListingStatus::Sold {
-            release_listing_lock(&env, listing_id);
             panic_with_error!(&env, MarketplaceError::ListingSold);
         }
         if listing.status == ListingStatus::Cancelled {
-            release_listing_lock(&env, listing_id);
             panic_with_error!(&env, MarketplaceError::ListingCancelled);
         }
         if listing.status != ListingStatus::Active {
-            release_listing_lock(&env, listing_id);
             panic_with_error!(&env, MarketplaceError::ListingNotActive);
         }
         if listing.artist == buyer {
-            release_listing_lock(&env, listing_id);
             panic_with_error!(&env, MarketplaceError::CannotBuyOwnListing);
         }
 
         // Ensure token is still whitelisted at purchase time. If it was removed after listing creation, block the purchase.
         if !Self::is_token_whitelisted(&env, &listing.token) {
-            release_listing_lock(&env, listing_id);
             panic_with_error!(&env, MarketplaceError::TokenNotWhitelisted);
+        }
+
+        // Reentrancy guard: acquire lock immediately prior to external transfers.
+        // If any token transfer fails mid-transaction, execution aborts and Soroban's
+        // transaction rollback semantics ensure that temporary storage reentrancy locks
+        // and all state mutations are reverted cleanly without leaving the listing locked.
+        if !acquire_listing_lock(&env, listing_id) {
+            panic_with_error!(&env, MarketplaceError::ReentrancyGuard);
         }
 
         Self::distribute_payout(

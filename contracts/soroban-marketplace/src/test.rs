@@ -5392,3 +5392,38 @@ fn test_reentrancy_lock_failure_and_release_guarantees_issue_1094() {
         crate::storage::release_auction_lock(&env, auction_id);
     });
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #22)")]
+fn test_buy_artwork_reentrancy_guard() {
+    let (env, client, artist, buyer, token_id, contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let listing_id = create_test_listing(&env, &client, &artist, &token_id);
+
+    // Simulate reentrancy lock already held
+    env.as_contract(&contract_id, || {
+        assert!(crate::storage::acquire_listing_lock(&env, listing_id));
+    });
+    client.buy_artwork(&buyer, &listing_id);
+}
+
+#[test]
+fn test_buy_artwork_failure_does_not_leave_listing_locked() {
+    let (env, client, artist, _buyer, token_id, contract_id, _collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let listing_id = create_test_listing(&env, &client, &artist, &token_id);
+
+    // Attempt invalid purchase (artist buying own listing fails)
+    let r = client.try_buy_artwork(&artist, &listing_id);
+    assert!(r.is_err());
+
+    // Lock must not be left behind; re-acquisition must succeed
+    env.as_contract(&contract_id, || {
+        assert!(crate::storage::acquire_listing_lock(&env, listing_id));
+        crate::storage::release_listing_lock(&env, listing_id);
+    });
+}
