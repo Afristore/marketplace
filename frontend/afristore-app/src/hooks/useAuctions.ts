@@ -32,7 +32,7 @@ import { DEFAULT_TOKEN } from "@/config/tokens";
  */
 export function useAuctions() {
   const [auctions, setAuctions] = useState<Auction[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   useTransientErrorToast(error);
 
