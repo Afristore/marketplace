@@ -1,5 +1,8 @@
 import { rpc } from '@stellar/stellar-sdk';
 import { parseMarketplaceEvent, parseLendingEvent, type DecodedEvent } from './parser.js';
+import { logger } from './logger.js';
+
+const log = logger.child({ component: 'event-sync' });
 
 export const MAX_LEDGER_WINDOW = 17_000;
 export const EVENT_PAGE_LIMIT = 100;
@@ -34,7 +37,8 @@ export async function collectMarketplaceEvents(
   server: rpc.Server,
   contractIds: string[],
   startLedger: number,
-  endLedger: number
+  endLedger: number,
+  onDecodeError?: (rawEvent: unknown, err: unknown) => Promise<void> | void
 ): Promise<DecodedEvent[]> {
   if (contractIds.length === 0 || startLedger > endLedger) {
     return [];
@@ -61,8 +65,25 @@ export async function collectMarketplaceEvents(
       } as any);
 
       for (const event of response.events ?? []) {
-        const decoded = decodeRpcEvent(event);
-        if (decoded) decodedEvents.push(decoded);
+        try {
+          const decoded = decodeRpcEvent(event);
+          if (decoded) decodedEvents.push(decoded);
+        } catch (err) {
+          log.error('Failed to decode RPC event; skipping and routing to dead-letter handler', {
+            ledger: (event as any)?.ledger,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          if (onDecodeError) {
+            try {
+              await onDecodeError(event, err);
+            } catch (dlErr) {
+              log.error('Dead-letter handler failed for malformed RPC event', {
+                ledger: (event as any)?.ledger,
+                error: dlErr instanceof Error ? dlErr.message : String(dlErr),
+              });
+            }
+          }
+        }
       }
 
       paginationToken = response.paginationToken ?? null;
