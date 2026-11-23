@@ -102,7 +102,9 @@ export function ConnectWalletModal({
         {/* Backdrop */}
         <div
           className="absolute inset-0 bg-midnight-950/80 backdrop-blur-md animate-fade-in"
-          onClick={onClose}
+          onClick={
+            isConnecting ? undefined : onClose
+          } /* #1281: block outside-click while pending */
         />
 
         {/* Modal Card */}
@@ -280,7 +282,8 @@ export function ConnectWalletModal({
               )}
             </div>
 
-            {(connectError || (error && status !== "CONNECTED" && !isConnecting)) && (
+            {(connectError ||
+              (error && status !== "CONNECTED" && !isConnecting)) && (
               <div
                 role="alert"
                 className="mt-6 rounded-xl bg-terracotta-50 p-3 flex items-start gap-2 text-xs text-terracotta-700 animate-slide-up"
