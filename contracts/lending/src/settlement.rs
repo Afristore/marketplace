@@ -82,10 +82,48 @@ pub fn settle(
 
     let total_owed_usd = owed_usd + platform_fee_usd + liquidator_fee_usd;
 
-    let debit_tokens = usd_to_token_amount(total_owed_usd, oracle_price);
-    let lender_payout = usd_to_token_amount(owed_usd, oracle_price);
-    let platform_payout = usd_to_token_amount(platform_fee_usd, oracle_price);
-    let liquidator_payout = usd_to_token_amount(liquidator_fee_usd, oracle_price);
+    let requested_lender_payout = usd_to_token_amount(owed_usd, oracle_price);
+    let requested_platform_payout = usd_to_token_amount(platform_fee_usd, oracle_price);
+    let requested_liquidator_payout = usd_to_token_amount(liquidator_fee_usd, oracle_price);
+    let requested_debit_tokens = usd_to_token_amount(total_owed_usd, oracle_price);
+
+    let available_collateral = position.collateral_amount;
+
+    // Cap total payouts to position.collateral_amount.
+    // If the loan is underwater (collateral < total debit), prorate lender,
+    // platform, and liquidator payouts without exceeding the position's deposited collateral.
+    let (lender_payout, liquidator_payout, platform_payout) = {
+        let total_requested =
+            requested_lender_payout + requested_liquidator_payout + requested_platform_payout;
+        if total_requested <= available_collateral || total_requested == 0 {
+            (
+                requested_lender_payout,
+                requested_liquidator_payout,
+                requested_platform_payout,
+            )
+        } else {
+            let actual_platform = requested_platform_payout
+                .checked_mul(available_collateral)
+                .and_then(|v| v.checked_div(total_requested))
+                .unwrap_or(0);
+
+            let actual_liquidator = requested_liquidator_payout
+                .checked_mul(available_collateral)
+                .and_then(|v| v.checked_div(total_requested))
+                .unwrap_or(0);
+
+            let rem = available_collateral.saturating_sub(actual_platform + actual_liquidator);
+            let actual_lender = core::cmp::min(requested_lender_payout, rem);
+
+            (actual_lender, actual_liquidator, actual_platform)
+        }
+    };
+
+    let debit_tokens = if position.collateral_amount > requested_debit_tokens {
+        requested_debit_tokens
+    } else {
+        lender_payout + liquidator_payout + platform_payout
+    };
 
     // borrower_rem: collateral remaining after all debits are taken.
     // Clamped to 0 — the borrower never receives a negative amount even if

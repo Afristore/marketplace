@@ -3663,3 +3663,199 @@ fn test_liquidate_settles_with_configured_staleness_window() {
         assert_eq!(pos.status, PositionStatus::Liquidated);
     });
 }
+
+#[test]
+#[should_panic(expected = "Stale oracle price")]
+fn test_return_nft_with_stale_oracle_quote_panics() {
+    let env = Env::default();
+    let (client, contract_id, _lender, _borrower, _fee_receiver, _nft_token, col_token) =
+        setup_return_nft(&env, 1000, 10_000, PositionStatus::Active);
+
+    let (oracle_id, oracle_client) = create_mock_oracle(&env);
+    // Timestamp is 1_000; current ledger is 10_000 (elapsed 9_000s > max_price_staleness_secs 3_600s)
+    oracle_client.set_price(&col_token.address, &10_000_000, &1_000);
+
+    env.as_contract(&contract_id, || {
+        let mut config = crate::storage::get_config(&env);
+        config.oracle_address = oracle_id;
+        config.max_price_staleness_secs = 3_600;
+        set_config(&env, &config);
+    });
+
+    client.return_nft(&1);
+}
+
+#[test]
+fn test_liquidate_deeply_underwater_position_caps_payouts_to_position_collateral() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 2_000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let liquidator = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let (oracle_id, oracle_client) = create_mock_oracle(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    let (col_token, col_admin) = create_token(&env, &admin);
+
+    // Collateral price is $1.00 (10_000_000). Fresh quote at timestamp 2_000.
+    oracle_client.set_price(&col_token.address, &10_000_000, &2_000);
+
+    nft_admin.mint(&borrower, &1);
+
+    // Position deposited 50 tokens (50_000_000), but debt is $100 (100 tokens).
+    // Mint 50 tokens for this position + 150 extra tokens representing other borrowers' collateral.
+    col_admin.mint(&contract_id, &200_000_000);
+
+    env.as_contract(&contract_id, || {
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin: admin.clone(),
+                fee_receiver: fee_receiver.clone(),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 500,
+                min_buffer_bps: 12000,
+                max_buffer_bps: 20000,
+                min_liq_threshold_bps: 11000,
+                max_liq_threshold_bps: 15000,
+                oracle_address: oracle_id.clone(),
+                max_price_staleness_secs: 3_600,
+            },
+        );
+
+        set_position(
+            &env,
+            1,
+            &Position {
+                id: 1,
+                listing_id: 1,
+                lender: lender.clone(),
+                borrower: borrower.clone(),
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 100_000_000, // $100 owed
+                collateral_currency: col_token.address.clone(),
+                collateral_amount: 50_000_000, // Only 50 tokens deposited (deeply insolvent)
+                interest_schedule_bps: vec![&env, 0],
+                liquidation_threshold_bps: 11000,
+                start_time: 2_000,
+                max_duration_secs: 30 * 86400,
+                status: PositionStatus::Active,
+            },
+        );
+    });
+
+    // Liquidation must succeed without panicking on InsufficientBalance,
+    // and must NOT drain other borrowers' collateral.
+    client.liquidate(&1, &liquidator);
+
+    env.as_contract(&contract_id, || {
+        let pos = crate::storage::get_position(&env, 1);
+        assert_eq!(pos.status, PositionStatus::Liquidated);
+    });
+
+    // Payout assertions:
+    // With prorating, all three parties receive a positive proportion of available collateral,
+    // and the total sum transferred out is exactly the 50_000_000 collateral of this position.
+    let lender_bal = col_token.balance(&lender);
+    let liq_bal = col_token.balance(&liquidator);
+    let fee_bal = col_token.balance(&fee_receiver);
+
+    assert!(lender_bal > 0);
+    assert!(liq_bal > 0);
+    assert!(fee_bal > 0);
+    assert_eq!(lender_bal + liq_bal + fee_bal, 50_000_000);
+    assert_eq!(col_token.balance(&borrower), 0);
+    // Contract still holds exactly the 150 other tokens — completely untouched!
+    assert_eq!(col_token.balance(&contract_id), 150_000_000);
+}
+
+#[test]
+fn test_liquidate_partially_underwater_position_prorates_without_exceeding_collateral() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|l| l.timestamp = 2_000);
+
+    let contract_id = env.register(LendingContract, ());
+    let client = LendingContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let lender = Address::generate(&env);
+    let borrower = Address::generate(&env);
+    let liquidator = Address::generate(&env);
+    let fee_receiver = Address::generate(&env);
+    let (oracle_id, oracle_client) = create_mock_oracle(&env);
+
+    let (nft_token, nft_admin) = create_token(&env, &admin);
+    let (col_token, col_admin) = create_token(&env, &admin);
+
+    // Collateral price is $1.00 (10_000_000).
+    oracle_client.set_price(&col_token.address, &10_000_000, &2_000);
+
+    nft_admin.mint(&borrower, &1);
+
+    // Position collateral: 103 tokens.
+    // Owed: $100 (100 tokens), liquidator fee (5%): 5 tokens, platform fee (1%): 1 token.
+    // Total debit wanted: 106 tokens. Available: 103 tokens.
+    // Mint 103 tokens + 50 other tokens = 153 tokens into contract.
+    col_admin.mint(&contract_id, &153_000_000);
+
+    env.as_contract(&contract_id, || {
+        set_config(
+            &env,
+            &PlatformConfig {
+                admin: admin.clone(),
+                fee_receiver: fee_receiver.clone(),
+                platform_fee_bps: 100,
+                liquidator_fee_bps: 500,
+                min_buffer_bps: 12000,
+                max_buffer_bps: 20000,
+                min_liq_threshold_bps: 11000,
+                max_liq_threshold_bps: 15000,
+                oracle_address: oracle_id.clone(),
+                max_price_staleness_secs: 3_600,
+            },
+        );
+
+        set_position(
+            &env,
+            1,
+            &Position {
+                id: 1,
+                listing_id: 1,
+                lender: lender.clone(),
+                borrower: borrower.clone(),
+                nft_contract: nft_token.address.clone(),
+                token_id: 1,
+                declared_price_usd: 100_000_000,
+                collateral_currency: col_token.address.clone(),
+                collateral_amount: 103_000_000,
+                interest_schedule_bps: vec![&env, 0],
+                liquidation_threshold_bps: 11000,
+                start_time: 2_000,
+                max_duration_secs: 30 * 86400,
+                status: PositionStatus::Active,
+            },
+        );
+    });
+
+    client.liquidate(&1, &liquidator);
+
+    let lender_bal = col_token.balance(&lender);
+    let liq_bal = col_token.balance(&liquidator);
+    let fee_bal = col_token.balance(&fee_receiver);
+
+    assert!(lender_bal > 0);
+    assert!(liq_bal > 0);
+    assert!(fee_bal > 0);
+    assert_eq!(lender_bal + liq_bal + fee_bal, 103_000_000);
+    // Other borrowers' 50 tokens remain safely in contract
+    assert_eq!(col_token.balance(&contract_id), 50_000_000);
+}

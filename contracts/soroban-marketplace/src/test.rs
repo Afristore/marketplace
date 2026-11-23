@@ -1136,6 +1136,72 @@ fn test_create_auction_zero_reserve_rejected() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #26)")]
+fn test_create_auction_duration_exceeds_max_fails() {
+    let (env, client, artist, _, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    // MAX_AUCTION_DURATION is 30 days (2_592_000 seconds).
+    // Attempting 30 days + 1 second should fail with InvalidAuctionDuration (#26).
+    client.create_auction(
+        &artist,
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &1_000_000_i128,
+        &(crate::contract::MAX_AUCTION_DURATION + 1),
+        &valid_recipients(&env, &artist),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #26)")]
+fn test_create_auction_duration_below_min_fails() {
+    let (env, client, artist, _, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    // MIN_DURATION_SECONDS is 60. Attempting 59 seconds should fail with InvalidAuctionDuration (#26).
+    client.create_auction(
+        &artist,
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &1_000_000_i128,
+        &(crate::contract::MIN_DURATION_SECONDS - 1),
+        &valid_recipients(&env, &artist),
+    );
+}
+
+#[test]
+fn test_create_auction_duration_at_max_boundary_succeeds() {
+    let (env, client, artist, _, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let auction_id = client.create_auction(
+        &artist,
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &1_000_000_i128,
+        &crate::contract::MAX_AUCTION_DURATION,
+        &valid_recipients(&env, &artist),
+    );
+
+    assert_eq!(auction_id, 1);
+    let auction = client.get_auction(&auction_id);
+    assert_eq!(
+        auction.end_time,
+        env.ledger().timestamp() + crate::contract::MAX_AUCTION_DURATION
+    );
+}
+
+#[test]
 fn test_place_bid_success() {
     let (env, client, artist, buyer, token_id, _contract_id, collection_id) = setup();
     client.set_admin(&artist);
