@@ -642,3 +642,14 @@ fn next_token_id_advances_with_each_mint() {
     client.mint(&alice, &String::from_str(&env, "uri-1"));
     assert_eq!(client.next_token_id(), 2u64);
 }
+
+// ── contract_type (#1220) ────────────────────────────────────────────────────
+
+#[test]
+fn contract_type_returns_collection_identifier() {
+    let (env, client, _, _) = setup();
+    assert_eq!(
+        client.contract_type(),
+        String::from_str(&env, "collection_nft_erc721")
+    );
+}

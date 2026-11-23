@@ -1,3 +1,4 @@
+use ed25519_dalek::{Signer, SigningKey};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     Address, BytesN, Env, String,
@@ -392,4 +393,61 @@ fn test_voucher_verification_tampered_fields_rejected_issue_1098() {
     let invalid_signature = BytesN::from_array(&env, &[0xFFu8; 64]);
     let result = client.try_redeem(&buyer, &voucher, &invalid_signature);
     assert!(result.is_err());
+}
+
+fn creator_signing_key() -> SigningKey {
+    let secret_key: ed25519_dalek::SecretKey = [7u8; 32];
+    SigningKey::from_bytes(&secret_key)
+}
+
+fn sign_voucher(env: &Env, contract_id: &Address, voucher: &crate::MintVoucher) -> BytesN<64> {
+    let signing_key = creator_signing_key();
+    let digest = env.as_contract(contract_id, || LazyMint721::_voucher_digest(env, voucher));
+    let mut msg = [0u8; 32];
+    digest.copy_into_slice(&mut msg);
+    let sig = signing_key.try_sign(&msg).unwrap();
+    BytesN::<64>::from_array(env, &sig.to_bytes())
+}
+
+#[test]
+fn test_used_voucher_ttl_is_extended_on_redeem() {
+    let (env, client, creator) = setup_test();
+    let signing_key = creator_signing_key();
+    let pubkey_bytes = signing_key.verifying_key().to_bytes();
+    let pubkey = BytesN::from_array(&env, &pubkey_bytes);
+    let royalty_receiver = Address::generate(&env);
+
+    client.initialize(
+        &creator,
+        &pubkey,
+        &String::from_str(&env, "Test NFT"),
+        &String::from_str(&env, "TNFT"),
+        &1000u64,
+        &0u32,
+        &royalty_receiver,
+    );
+
+    let buyer = Address::generate(&env);
+    let currency = Address::generate(&env);
+    let token_id = 42u64;
+    let voucher = crate::MintVoucher {
+        token_id,
+        price: 0,
+        currency,
+        uri: String::from_str(&env, "ipfs://uri-42"),
+        uri_hash: BytesN::from_array(&env, &[1u8; 32]),
+        valid_until: 0,
+    };
+    let sig = sign_voucher(&env, &client.address, &voucher);
+
+    client.redeem(&buyer, &voucher, &sig);
+    assert!(client.is_voucher_used(&token_id));
+
+    // Jump ledger past default TTL threshold (50,000)
+    env.ledger().with_mut(|li| {
+        li.sequence_number += 60_000;
+    });
+
+    // Verify UsedVoucher persistent storage key did not expire
+    assert!(client.is_voucher_used(&token_id));
 }

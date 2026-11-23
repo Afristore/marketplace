@@ -16,7 +16,7 @@ vi.mock('@stellar/stellar-sdk', () => ({
   scValToNative: mockScValToNative,
 }));
 
-import { parseMarketplaceEvent, DecodedEvent } from '../parser';
+import { parseMarketplaceEvent, parseLendingEvent, DecodedEvent } from '../parser';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -279,5 +279,38 @@ describe('parseMarketplaceEvent — BigInt serialisation in data', () => {
 
     const result = parseMarketplaceEvent(['t'], 'v', 1)!;
     expect(result.data.amounts).toEqual(['100', '200']);
+  });
+});
+
+// ── LENDING_LISTING_CANCELLED subtopic alignment (#1227) ─────────────────────
+
+describe('parseMarketplaceEvent & parseLendingEvent — LENDING_LISTING_CANCELLED', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockFromXDR.mockReturnValue({});
+  });
+
+  it('maps lending lst_cncl subtopic to LENDING_LISTING_CANCELLED in parseMarketplaceEvent', () => {
+    mockScValToNative
+      .mockReturnValueOnce('lending')
+      .mockReturnValueOnce('lst_cncl')
+      .mockReturnValueOnce({ listing_id: 12n, lender: 'G_LENDER' });
+
+    const result = parseMarketplaceEvent(['t0', 't1'], 'v', 100);
+    expect(result).not.toBeNull();
+    expect(result!.eventType).toBe('LENDING_LISTING_CANCELLED');
+    expect(result!.listingId).toBe(12n);
+  });
+
+  it('maps lst_cncl to LENDING_LISTING_CANCELLED in parseLendingEvent', () => {
+    mockScValToNative
+      .mockReturnValueOnce('lending')
+      .mockReturnValueOnce('lst_cncl')
+      .mockReturnValueOnce({ listing_id: 12n, lender: 'G_LENDER' });
+
+    const result = parseLendingEvent(['t0', 't1'], 'v', 100);
+    expect(result).not.toBeNull();
+    expect(result!.eventType).toBe('LENDING_LISTING_CANCELLED');
+    expect(result!.listingId).toBe(12n);
   });
 });

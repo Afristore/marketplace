@@ -825,6 +825,28 @@ describe("processEvent — POSITION_OPENED", () => {
   });
 });
 
+// ── LENDING_LISTING_CANCELLED (#1227) ─────────────────────────────────────────
+
+describe("processEvent — LENDING_LISTING_CANCELLED (#1227)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("updates lendingListing status to Cancelled", async () => {
+    mockPrisma.lendingListing.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    await processEvent(
+      makeEvent("LENDING_LISTING_CANCELLED", 42n, "G_LENDER", { listing_id: 42n }, 900),
+    );
+
+    expect(mockPrisma.lendingListing.updateMany).toHaveBeenCalledWith({
+      where: { listingId: 42n },
+      data: {
+        status: "Cancelled",
+        updatedAtLedger: 900,
+      },
+    });
+  });
+});
+
 // ── CURRENCY_WHITELISTED and CURRENCY_REMOVED (#710) ─────────────────────────
 
 describe("processEvent — CURRENCY_WHITELISTED & CURRENCY_REMOVED", () => {
