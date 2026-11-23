@@ -100,6 +100,39 @@ impl RoyaltySplitter {
         events::publish_distributed(&env, token, balance, distributed, caller);
     }
 
+    /// Rescue/sweep non-configured tokens accidentally sent to the contract.
+    /// Requires authorization from all configured beneficiaries to prevent
+    /// unauthorized sweeps, and rejects the primary configured royalty token
+    /// (which must be distributed via `distribute`).
+    pub fn rescue_token(env: Env, token_address: Address, recipient: Address) {
+        if !is_initialized(&env) {
+            panic_with_error!(&env, SplitterError::NotInitialized);
+        }
+
+        env.storage()
+            .instance()
+            .extend_ttl(LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
+
+        if token_address == load_token(&env) {
+            panic_with_error!(&env, SplitterError::InvalidToken);
+        }
+
+        let beneficiaries = load_beneficiaries(&env);
+        for beneficiary in beneficiaries.iter() {
+            beneficiary.require_auth();
+        }
+
+        let token_client = TokenClient::new(&env, &token_address);
+        let contract_addr = env.current_contract_address();
+        let balance = token_client.balance(&contract_addr);
+        if balance <= 0 {
+            return;
+        }
+
+        token_client.transfer(&contract_addr, &recipient, &balance);
+        events::publish_token_rescued(&env, token_address, recipient, balance);
+    }
+
     pub fn get_token(env: Env) -> Address {
         load_token(&env)
     }
