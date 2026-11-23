@@ -7,6 +7,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import {
+  Account,
   Contract,
   SorobanRpc,
   TransactionBuilder,
@@ -133,7 +134,13 @@ export async function invokeContract(
   const contract = getContract(contractId);
 
   // Fetch the caller's account for the sequence number.
-  const account = await rpc.getAccount(callerPublicKey);
+  // For readonly calls, catch errors (e.g. 404 for unfunded/guest accounts)
+  // and construct an ephemeral dummy Account with sequence "0".
+  const account = readonly
+    ? await rpc
+        .getAccount(callerPublicKey)
+        .catch(() => new Account(callerPublicKey, "0"))
+    : await rpc.getAccount(callerPublicKey);
 
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
