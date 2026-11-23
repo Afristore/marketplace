@@ -5590,3 +5590,75 @@ fn test_secondary_sale_royalty_split_multi_recipients() {
     assert_eq!(token.balance(&co_seller), co_seller_before + last_share);
     assert_eq!(first_share + last_share + royalty, price);
 }
+
+// ── Issue #1206: Minimum bid increment floor on low reserve prices ──────────
+
+#[test]
+fn test_place_bid_low_reserve_enforces_minimum_increment_floor() {
+    let (env, client, artist, bidder_a, token_id, contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    // Reserve price of 10 stroops: 10 * 500 / 10_000 = 0 (truncates to 0).
+    // Floor of 1 must still be enforced so min_bid = 11.
+    let reserve_price = 10_i128;
+    let auction_id = client.create_auction(
+        &artist,
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &reserve_price,
+        &3600u64,
+        &valid_recipients(&env, &artist),
+    );
+
+    client.place_bid(&bidder_a, &auction_id, &10_i128);
+
+    let bidder_b = Address::generate(&env);
+    let sac = StellarAssetClient::new(&env, &token_id);
+    sac.mint(&bidder_b, &1_000_i128);
+
+    // Equal bid (0 increment) must fail
+    env.as_contract(&contract_id, || {
+        let res = client.try_place_bid(&bidder_b, &auction_id, &10_i128);
+        assert!(res.is_err(), "0-increment bid must fail on low reserve");
+    });
+
+    // Minimum floor increment (+1 -> 11) must succeed
+    client.place_bid(&bidder_b, &auction_id, &11_i128);
+    let auction = client.get_auction(&auction_id);
+    assert_eq!(auction.highest_bid, 11_i128);
+    assert_eq!(auction.highest_bidder, Some(bidder_b));
+}
+
+#[test]
+fn test_place_bid_one_stroop_reserve_enforces_floor() {
+    let (env, client, artist, bidder_a, token_id, contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let auction_id = client.create_auction(
+        &artist,
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &1_i128,
+        &3600u64,
+        &valid_recipients(&env, &artist),
+    );
+
+    client.place_bid(&bidder_a, &auction_id, &1_i128);
+
+    let bidder_b = Address::generate(&env);
+    StellarAssetClient::new(&env, &token_id).mint(&bidder_b, &100_i128);
+
+    env.as_contract(&contract_id, || {
+        let res = client.try_place_bid(&bidder_b, &auction_id, &1_i128);
+        assert!(res.is_err(), "same-price bid must fail");
+    });
+
+    client.place_bid(&bidder_b, &auction_id, &2_i128);
+    assert_eq!(client.get_auction(&auction_id).highest_bid, 2_i128);
+}
