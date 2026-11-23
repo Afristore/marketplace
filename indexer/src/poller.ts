@@ -1375,6 +1375,21 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
 
     // ── Lending event handlers ────────────────────────────────────────────────
 
+    case "LENDING_LISTING_CANCELLED": {
+      const targetListingId = BigInt(data.listing_id ?? listingId ?? 0);
+      const { count } = await db.lendingListing.updateMany({
+        where: { listingId: targetListingId },
+        data: {
+          status: "Cancelled",
+          updatedAtLedger: ledgerSequence,
+        },
+      });
+      if (count === 0) {
+        log.warn("LENDING_LISTING_CANCELLED: lending listing not found", { listingId: targetListingId.toString(), ledgerSequence });
+      }
+      break;
+    }
+
     case "POSITION_LIQUIDATED":
     case "Liquidated": {
       const posId = BigInt(data.position_id ?? listingId ?? 0);
@@ -1559,21 +1574,6 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
           updatedAtLedger: ledgerSequence,
         },
       });
-      break;
-    }
-
-    case "LENDING_LISTING_CANCELLED": {
-      const id = BigInt(data.listing_id ?? listingId ?? 0);
-      const { count } = await db.lendingListing.updateMany({
-        where: { listingId: id },
-        data: {
-          status: "Cancelled",
-          updatedAtLedger: ledgerSequence,
-        },
-      });
-      if (count === 0) {
-        log.warn("LENDING_LISTING_CANCELLED: lending listing not found", { listingId: id, ledgerSequence });
-      }
       break;
     }
 

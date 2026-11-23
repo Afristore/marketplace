@@ -392,6 +392,10 @@ impl NormalNFT721 {
             .unwrap_or(u64::MAX)
     }
 
+    pub fn contract_type(env: Env) -> String {
+        String::from_str(&env, "collection_nft_erc721")
+    }
+
     pub fn name(env: Env) -> String {
         env.storage().instance().get(&DataKey::Name).unwrap()
     }

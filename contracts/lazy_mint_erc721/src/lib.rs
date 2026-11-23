@@ -25,8 +25,10 @@ use soroban_sdk::{
     token::Client as TokenClient, xdr::ToXdr, Address, Bytes, BytesN, Env, String,
 };
 
-const TTL_THRESHOLD: u32 = 50_000;
-const TTL_BUMP: u32 = 100_000;
+pub const LEDGER_TTL_THRESHOLD: u32 = 50_000;
+pub const LEDGER_TTL_BUMP: u32 = 100_000;
+const TTL_THRESHOLD: u32 = LEDGER_TTL_THRESHOLD;
+const TTL_BUMP: u32 = LEDGER_TTL_BUMP;
 
 // ─── Errors ──────────────────────────────────────────────────────────────────
 
@@ -214,18 +216,19 @@ impl LazyMint721 {
         env.storage()
             .persistent()
             .set(&DataKey::TokenUri(token_id), &voucher.uri);
+        let key = DataKey::UsedVoucher(token_id);
+        env.storage().persistent().set(&key, &true);
         env.storage()
             .persistent()
-            .set(&DataKey::UsedVoucher(token_id), &true);
+            .extend_ttl(&DataKey::Owner(token_id), TTL_THRESHOLD, TTL_BUMP);
+        env.storage().persistent().extend_ttl(
+            &DataKey::TokenUri(token_id),
+            TTL_THRESHOLD,
+            TTL_BUMP,
+        );
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey::Owner(token_id), 50_000, 100_000);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::TokenUri(token_id), 50_000, 100_000);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::UsedVoucher(token_id), 50_000, 100_000);
+            .extend_ttl(&key, LEDGER_TTL_THRESHOLD, LEDGER_TTL_BUMP);
 
         let bal: u64 = env
             .storage()
