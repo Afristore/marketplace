@@ -5392,3 +5392,65 @@ fn test_reentrancy_lock_failure_and_release_guarantees_issue_1094() {
         crate::storage::release_auction_lock(&env, auction_id);
     });
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #27)")]
+fn test_create_listing_zero_amount_fails() {
+    let (env, client, artist, _, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    client.create_listing(
+        &artist,
+        &10_000_000,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1,
+        &0,
+        &valid_recipients(&env, &artist),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #27)")]
+fn test_create_listing_erc721_amount_greater_than_one_fails() {
+    let (env, client, artist, _, token_id, _, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let collection_id = env.register(mock_erc721_nonzero_token::MockErc721, ());
+    let collection = mock_erc721_nonzero_token::MockErc721Client::new(&env, &collection_id);
+    collection.mint(&artist, &1);
+
+    client.create_listing(
+        &artist,
+        &10_000_000,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1,
+        &2,
+        &valid_recipients(&env, &artist),
+    );
+}
+
+#[test]
+fn test_create_listing_erc1155_amount_greater_than_one_succeeds() {
+    let (env, client, artist, _, token_id, _, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let listing_id = client.create_listing(
+        &artist,
+        &10_000_000,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1,
+        &5,
+        &valid_recipients(&env, &artist),
+    );
+
+    assert_eq!(client.get_listing(&listing_id).amount, 5);
+}
