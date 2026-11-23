@@ -2,7 +2,7 @@
  * Component tests for SearchFilter.
  */
 import React from "react";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // lucide-react icons can cause issues in jsdom — mock them
@@ -53,14 +53,46 @@ describe("SearchFilter", () => {
           showFilters={false}
           setShowFilters={jest.fn()}
           totalResults={5}
+          debounceMs={0}
         />,
       );
       await user.type(screen.getByPlaceholderText(/search/i), "landscape");
-      expect(onChange).toHaveBeenCalledWith({ search: "l" });
+      await waitFor(() => {
+        expect(onChange).toHaveBeenCalledWith({ search: "l" });
+      });
     } catch (error) {
       console.error("Test failed:", error);
       throw error;
     }
+  });
+
+  it("debounces search input changes", async () => {
+    jest.useFakeTimers();
+    const onChange = jest.fn();
+    render(
+      <SearchFilter
+        filters={DEFAULT_FILTERS}
+        onFilterChange={onChange}
+        showFilters={false}
+        setShowFilters={jest.fn()}
+        totalResults={5}
+        debounceMs={300}
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/search/i), {
+      target: { value: "art" },
+    });
+    expect(onChange).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(299);
+    expect(onChange).not.toHaveBeenCalled();
+
+    jest.advanceTimersByTime(1);
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalledWith({ search: "art" });
+    });
+    jest.useRealTimers();
   });
 
   it("calls setShowFilters when filter toggle button is clicked", async () => {
@@ -253,6 +285,7 @@ describe("SearchFilter — error handling", () => {
           showFilters={false}
           setShowFilters={jest.fn()}
           totalResults={5}
+          debounceMs={0}
         />,
       );
 

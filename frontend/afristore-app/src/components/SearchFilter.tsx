@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Search,
   SlidersHorizontal,
@@ -37,6 +37,7 @@ interface SearchFilterProps {
   showFilters: boolean;
   setShowFilters: (show: boolean) => void;
   totalResults: number;
+  debounceMs?: number;
 }
 
 export function SearchFilter({
@@ -45,22 +46,50 @@ export function SearchFilter({
   showFilters,
   setShowFilters,
   totalResults,
+  debounceMs = 300,
 }: SearchFilterProps) {
   const [error, setError] = useState<string | null>(null);
+  const [searchInput, setSearchInput] = useState(filters.search);
+  const isFirstSearchSync = useRef(true);
+  const pendingSearch = useRef<string | null>(null);
 
-  const handleFilterChange = async (newFilters: Partial<Filters>) => {
-    setError(null);
-    try {
-      await onFilterChange(newFilters);
-    } catch (err: unknown) {
-      console.error("Filter change failed:", err);
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Failed to apply filter. Please try again.";
-      setError(message);
+  useEffect(() => {
+    if (pendingSearch.current !== null && filters.search === pendingSearch.current) {
+      pendingSearch.current = null;
+      return;
     }
-  };
+    setSearchInput(filters.search);
+  }, [filters.search]);
+
+  const handleFilterChange = useCallback(
+    async (newFilters: Partial<Filters>) => {
+      setError(null);
+      try {
+        await onFilterChange(newFilters);
+      } catch (err: unknown) {
+        console.error("Filter change failed:", err);
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Failed to apply filter. Please try again.";
+        setError(message);
+      }
+    },
+    [onFilterChange],
+  );
+
+  useEffect(() => {
+    if (isFirstSearchSync.current) {
+      isFirstSearchSync.current = false;
+      return;
+    }
+    if (searchInput === filters.search) return;
+    const timer = setTimeout(() => {
+      pendingSearch.current = searchInput;
+      void handleFilterChange({ search: searchInput });
+    }, debounceMs);
+    return () => clearTimeout(timer);
+  }, [searchInput, debounceMs, filters.search, handleFilterChange]);
 
   const handleToggleFilters = () => {
     setError(null);
@@ -77,6 +106,7 @@ export function SearchFilter({
   };
 
   const clearFilters = async () => {
+    setSearchInput("");
     await handleFilterChange({
       search: "",
       status: "All",
@@ -87,7 +117,7 @@ export function SearchFilter({
   };
 
   const hasActiveFilters =
-    filters.search !== "" ||
+    searchInput !== "" ||
     filters.status !== "All" ||
     filters.category !== "All" ||
     filters.minPrice !== "" ||
@@ -105,8 +135,8 @@ export function SearchFilter({
             <input
               type="text"
               placeholder="Search by title, artist, or description..."
-              value={filters.search}
-              onChange={(e) => handleFilterChange({ search: e.target.value })}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
               className="w-full rounded-2xl border border-gray-200 bg-gray-50 py-3 pl-12 pr-4 text-sm text-gray-900 placeholder:text-gray-400 focus:border-brand-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-brand-500/10 transition-all shadow-sm"
             />
           </div>
@@ -221,23 +251,75 @@ export function SearchFilter({
               <label className="text-xs font-bold uppercase tracking-wider text-gray-500">
                 Price Range (XLM)
               </label>
-              <div className="flex items-center gap-3">
-                <input
-                  type="number"
-                  placeholder="Min"
-                  value={filters.minPrice}
-                  onChange={(e) => handleFilterChange({ minPrice: e.target.value })}
-                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
-                />
-                <span className="text-gray-400">—</span>
-                <input
-                  type="number"
-                  placeholder="Max"
-                  value={filters.maxPrice}
-                  onChange={(e) => handleFilterChange({ maxPrice: e.target.value })}
-                  className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
-                />
-              </div>
+              {(() => {
+                const sliderMax = 10000;
+                const minVal = Math.min(
+                  Math.max(Number(filters.minPrice || 0), 0),
+                  sliderMax,
+                );
+                const maxVal = Math.min(
+                  Math.max(Number(filters.maxPrice || sliderMax), minVal),
+                  sliderMax,
+                );
+                const minPct = (minVal / sliderMax) * 100;
+                const maxPct = (maxVal / sliderMax) * 100;
+                return (
+                  <div className="space-y-3">
+                    <div className="relative h-6">
+                      <div className="absolute top-1/2 h-1.5 w-full -translate-y-1/2 rounded-full bg-gray-200" />
+                      <div
+                        className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-brand-500"
+                        style={{ left: `${minPct}%`, right: `${100 - maxPct}%` }}
+                      />
+                      <input
+                        type="range"
+                        min={0}
+                        max={sliderMax}
+                        step={1}
+                        value={minVal}
+                        aria-label="Minimum price"
+                        onChange={(e) => {
+                          const next = Math.min(Number(e.target.value), maxVal);
+                          handleFilterChange({ minPrice: String(next) });
+                        }}
+                        className="absolute top-0 h-6 w-full appearance-none bg-transparent pointer-events-none [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-brand-500 [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-brand-500"
+                      />
+                      <input
+                        type="range"
+                        min={0}
+                        max={sliderMax}
+                        step={1}
+                        value={maxVal}
+                        aria-label="Maximum price"
+                        onChange={(e) => {
+                          const next = Math.max(Number(e.target.value), minVal);
+                          handleFilterChange({
+                            maxPrice: next >= sliderMax ? "" : String(next),
+                          });
+                        }}
+                        className="absolute top-0 h-6 w-full appearance-none bg-transparent pointer-events-none [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-brand-500 [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-brand-500"
+                      />
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="number"
+                        placeholder="Min"
+                        value={filters.minPrice}
+                        onChange={(e) => handleFilterChange({ minPrice: e.target.value })}
+                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
+                      />
+                      <span className="text-gray-400">—</span>
+                      <input
+                        type="number"
+                        placeholder="Max"
+                        value={filters.maxPrice}
+                        onChange={(e) => handleFilterChange({ maxPrice: e.target.value })}
+                        className="w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
 

@@ -19,7 +19,7 @@ import {
   Wallet,
 } from "lucide-react";
 import clsx from "clsx";
-import { useTranslation } from "react-i18next";
+import { useTranslation } from "@/lib/i18n/useTranslation";
 import {
   calculateAccruedInterest,
   calculateHealthFactor,

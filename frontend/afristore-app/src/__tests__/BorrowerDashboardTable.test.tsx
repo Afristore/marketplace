@@ -2,7 +2,7 @@ import React from "react";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import "@/i18n";
-import i18n from "i18next";
+import i18n from "@/i18n";
 import {
   BorrowerDashboardTable,
   BorrowerDebt,

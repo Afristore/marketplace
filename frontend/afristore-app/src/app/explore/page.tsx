@@ -10,7 +10,7 @@
 
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Listing } from "@/lib/contract";
 import { ListingCard } from "@/components/ListingCard";
 import {
@@ -54,19 +54,7 @@ export default function ExplorePage() {
     sold: number;
   } | null>(null);
 
-  // Debounce search so we don't fire on every keystroke
-  const [debouncedSearch, setDebouncedSearch] = useState("");
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    searchTimer.current = setTimeout(
-      () => setDebouncedSearch(filters.search),
-      350,
-    );
-    return () => {
-      if (searchTimer.current) clearTimeout(searchTimer.current);
-    };
-  }, [filters.search]);
+  const debouncedSearch = filters.search;
 
   // Fetch marketplace-wide stats for the header counters (independent of the
   // paginated listing query so the whole catalogue is never downloaded).
