@@ -1,7 +1,9 @@
 import {
+  Account,
   Address,
   BASE_FEE,
   Contract,
+  Keypair,
   nativeToScVal,
   Operation,
   scValToNative,
@@ -10,7 +12,7 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
-import { signWithFreighter } from "./freighter";
+import { getConnectedPublicKey, signWithFreighter } from "./freighter";
 import { mapSorobanErrorMessage } from "./errors";
 import {
   e2eMockDeployRoyaltySplitter,
@@ -200,14 +202,29 @@ async function initializeSplitter(
   await submitAndPoll(tx, rpc);
 }
 
+async function getSimulationAccount(
+  rpc: SorobanRpc.Server,
+  callerPublicKey?: string,
+): Promise<Account> {
+  const connected =
+    callerPublicKey || (await getConnectedPublicKey().catch(() => null));
+  const pubKey = connected || Keypair.random().publicKey();
+
+  try {
+    return await rpc.getAccount(pubKey);
+  } catch {
+    return new Account(pubKey, "0");
+  }
+}
+
 export async function getSplitterRecipients(
   contractId: string,
+  callerPublicKey?: string,
 ): Promise<SplitterRecipient[]> {
   try {
-    const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
     const contract = new Contract(contractId);
     const rpc = getRpc();
-    const account = await rpc.getAccount(DUMMY_KEY);
+    const account = await getSimulationAccount(rpc, callerPublicKey);
 
     const [beneficiariesResult, sharesResult] = await Promise.all([
       rpc.simulateTransaction(new TransactionBuilder(account, {
@@ -254,11 +271,11 @@ export async function getSplitterRecipients(
 
 export async function getPendingBalance(
   contractId: string,
+  callerPublicKey?: string,
 ): Promise<number> {
-  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
   const contract = new Contract(contractId);
   const rpc = getRpc();
-  const account = await rpc.getAccount(DUMMY_KEY);
+  const account = await getSimulationAccount(rpc, callerPublicKey);
 
   // Get the token address from the contract
   const tokenTx = new TransactionBuilder(account, {
