@@ -68,7 +68,7 @@ export function topUpAmountSchema(walletBalance: bigint | null) {
   return z
     .string()
     .trim()
-    .min(1, "Enter an amount to add")
+    .min(1, "Enter an amount greater than zero")
     .refine((v) => parseFixed7(v) !== null, "Enter a valid amount with at most 7 decimal places")
     .refine((v) => (parseFixed7(v) ?? 0n) > 0n, "Enter an amount greater than zero")
     .refine(

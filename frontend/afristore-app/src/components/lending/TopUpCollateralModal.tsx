@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { X, Loader2, Plus, ArrowRight } from "lucide-react";
 import { useAddCollateral } from "@/hooks/mutations/useAddCollateral";
 import { BorrowerDebt } from "./BorrowerDashboardTable";
 import { calculateHealthFactor, calculateAccruedInterest, toBigInt, MAX_HEALTH_FACTOR_BPS } from "@/lib/lendingMath";
+import { getTokenBalanceOrNull } from "@/lib/lending";
+import { parseFixed7, topUpAmountSchema } from "@/lib/lendingValidation";
 
 interface TopUpCollateralModalProps {
   isOpen: boolean;
@@ -29,10 +31,36 @@ export function TopUpCollateralModal({
   const { addCollateral, isAddingCollateral, error } = useAddCollateral(borrowerPublicKey);
   const [amount, setAmount] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Wallet balance of the collateral token, 7-decimal fixed point. null while
+  // loading or when it can't be read; the amount is then checked for being
+  // positive only, and the contract still rejects an unfunded transfer.
+  const [walletBalance, setWalletBalance] = useState<bigint | null>(null);
 
-  const parsedAmount = Number(amount);
-  const isAmountValid =
-    amount.trim() !== "" && Number.isFinite(parsedAmount) && parsedAmount > 0;
+  const collateralCurrency = debt?.collateralCurrency;
+  useEffect(() => {
+    if (!isOpen || !borrowerPublicKey || !collateralCurrency) return;
+    let cancelled = false;
+    getTokenBalanceOrNull(borrowerPublicKey, collateralCurrency)
+      .then((balance) => {
+        if (!cancelled) setWalletBalance(balance);
+      })
+      .catch(() => {
+        if (!cancelled) setWalletBalance(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, borrowerPublicKey, collateralCurrency]);
+
+  const amountSchema = useMemo(() => topUpAmountSchema(walletBalance), [walletBalance]);
+  const amountCheck = amountSchema.safeParse(amount);
+  const isAmountValid = amountCheck.success;
+  // Explain an invalid amount as soon as one is typed (but not for an empty
+  // field the user hasn't touched yet).
+  const amountError =
+    amount.trim() !== "" && !amountCheck.success
+      ? amountCheck.error.issues[0]?.message ?? null
+      : null;
   
   const currentDebtUsd = useMemo(() => {
     if (!debt) return 0n;
@@ -51,9 +79,9 @@ export function TopUpCollateralModal({
   }, [debt, currentDebtUsd]);
 
   const newHealthFactor = useMemo(() => {
-    if (!debt || !amount || isNaN(Number(amount))) return currentHealthFactor;
+    const addedAmount = parseFixed7(amount);
+    if (!debt || addedAmount === null) return currentHealthFactor;
     try {
-      const addedAmount = BigInt(Math.floor(Number(amount) * 10_000_000));
       const newCollateral = toBigInt(debt.collateralUsdValue) + addedAmount;
       return calculateHealthFactor(newCollateral, currentDebtUsd);
     } catch {
@@ -67,16 +95,15 @@ export function TopUpCollateralModal({
     e.preventDefault();
     setSubmitError(null);
 
-    if (!isAmountValid) {
-      setSubmitError("Enter an amount greater than zero");
+    if (!amountCheck.success) {
+      setSubmitError(amountCheck.error.issues[0]?.message ?? "Enter a valid amount");
       return;
     }
 
-    // convert amount to the 7-decimal fixed-point expected by the contract
-    let addedAmount: bigint;
-    try {
-      addedAmount = BigInt(Math.floor(parsedAmount * 10_000_000));
-    } catch {
+    // 7-decimal fixed point, parsed from the string so no float rounding
+    // can change the amount that gets signed.
+    const addedAmount = parseFixed7(amount);
+    if (addedAmount === null) {
       setSubmitError("Enter a valid amount");
       return;
     }
@@ -149,8 +176,19 @@ export function TopUpCollateralModal({
                   className="w-full rounded-xl border-2 border-gray-100 p-3 pl-10 text-gray-900 outline-none transition focus:border-brand-500"
                   placeholder="0.00"
                   required
+                  aria-invalid={amountError ? true : undefined}
+                  aria-describedby={amountError ? "topup-amount-error" : undefined}
                 />
               </div>
+              {amountError && (
+                <p
+                  id="topup-amount-error"
+                  data-testid="topup-amount-error"
+                  className="mt-2 text-sm text-red-600"
+                >
+                  {amountError}
+                </p>
+              )}
             </div>
             
             <div className="rounded-2xl bg-gray-50 p-4">

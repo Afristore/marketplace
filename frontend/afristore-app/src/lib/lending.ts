@@ -172,6 +172,19 @@ export async function getTokenBalance(
   userPublicKey: string,
   tokenAddress: string
 ): Promise<bigint> {
+  return (await getTokenBalanceOrNull(userPublicKey, tokenAddress)) ?? 0n;
+}
+
+/**
+ * Like `getTokenBalance`, but returns null when the balance cannot be read
+ * (RPC down, simulation error) instead of 0n. Use this where a failed read
+ * must not look like an empty wallet, e.g. blocking a form on "insufficient
+ * balance".
+ */
+export async function getTokenBalanceOrNull(
+  userPublicKey: string,
+  tokenAddress: string
+): Promise<bigint | null> {
   if (isE2eMockChain()) {
     return 1_000_000_000_000n;
   }
@@ -205,7 +218,7 @@ export async function getTokenBalance(
     return BigInt(val);
   } catch (err) {
     console.warn("getTokenBalance error:", err);
-    return 0n;
+    return null;
   }
 }
 
