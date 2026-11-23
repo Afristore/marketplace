@@ -1,8 +1,11 @@
 "use client";
 
 import {
+  Account,
   Contract,
+  Keypair,
   SorobanRpc,
+  StrKey,
   TransactionBuilder,
   xdr,
   nativeToScVal,
@@ -78,6 +81,59 @@ function getNetworkPassphrase(): string {
   return config.networkPassphrase;
 }
 
+export function isValidStellarPublicKey(publicKey: string): boolean {
+  return Boolean(
+    publicKey && StrKey.isValidEd25519PublicKey(publicKey.trim()),
+  );
+}
+
+export async function resolveSimulationPublicKey(
+  callerPublicKey?: string,
+): Promise<string> {
+  if (callerPublicKey !== undefined) {
+    const trimmed = callerPublicKey.trim();
+    if (!isValidStellarPublicKey(trimmed)) {
+      throw new Error(
+        "Invalid simulation caller public key: must be a valid Stellar Ed25519 public key (G...).",
+      );
+    }
+    return trimmed;
+  }
+
+  const connected = await getConnectedPublicKey().catch(() => null);
+  if (connected && isValidStellarPublicKey(connected)) {
+    return connected.trim();
+  }
+
+  const configured = (
+    process.env.NEXT_PUBLIC_SIMULATION_ACCOUNT ??
+    config.simulationAccount ??
+    ""
+  ).trim();
+  if (configured) {
+    if (!isValidStellarPublicKey(configured)) {
+      throw new Error(
+        "Invalid NEXT_PUBLIC_SIMULATION_ACCOUNT: must be a valid Stellar Ed25519 public key (G...).",
+      );
+    }
+    return configured;
+  }
+
+  return Keypair.random().publicKey();
+}
+
+export async function getSimulationAccount(
+  rpc: SorobanRpc.Server,
+  callerPublicKey?: string,
+): Promise<Account> {
+  const publicKey = await resolveSimulationPublicKey(callerPublicKey);
+  try {
+    return await rpc.getAccount(publicKey);
+  } catch {
+    return new Account(publicKey, "0");
+  }
+}
+
 async function invokeStakingContract(
   callerPublicKey: string,
   method: string,
@@ -95,7 +151,9 @@ async function invokeStakingContract(
   const rpc = getRpc();
   const contract = new Contract(contractId);
 
-  const account = await rpc.getAccount(callerPublicKey);
+  const account = readonly
+    ? await getSimulationAccount(rpc, callerPublicKey)
+    : await rpc.getAccount(callerPublicKey);
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
     networkPassphrase: getNetworkPassphrase(),
@@ -372,6 +430,7 @@ export async function totalStaked(poolContractId?: string): Promise<number> {
 
 export async function getStakingPoolConfig(
   poolContractId: string,
+  callerPublicKey?: string,
 ): Promise<StakingPoolConfig> {
   try {
     if (isE2eMockChain()) {
@@ -382,13 +441,31 @@ export async function getStakingPoolConfig(
         rewardRate: mock.rewardRate,
       };
     }
-    const DUMMY_KEY =
-      "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+    const simulationPublicKey =
+      await resolveSimulationPublicKey(callerPublicKey);
 
     const [nftVal, tokenVal, rateVal] = await Promise.all([
-      invokeStakingContract(DUMMY_KEY, "get_nft_address", [], true, poolContractId),
-      invokeStakingContract(DUMMY_KEY, "get_reward_token", [], true, poolContractId),
-      invokeStakingContract(DUMMY_KEY, "get_reward_rate", [], true, poolContractId),
+      invokeStakingContract(
+        simulationPublicKey,
+        "get_nft_address",
+        [],
+        true,
+        poolContractId,
+      ),
+      invokeStakingContract(
+        simulationPublicKey,
+        "get_reward_token",
+        [],
+        true,
+        poolContractId,
+      ),
+      invokeStakingContract(
+        simulationPublicKey,
+        "get_reward_rate",
+        [],
+        true,
+        poolContractId,
+      ),
     ]);
 
     return {
