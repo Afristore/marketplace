@@ -14,6 +14,7 @@ export interface IndexedLendingPosition {
   interestScheduleBps: number[];
   liquidationThresholdBps: number;
   startTime: string;
+  maxDurationSecs?: string | number;
   status: "Active" | "Returned" | "Liquidated" | "Expired";
   healthFactor: string | null;
 }

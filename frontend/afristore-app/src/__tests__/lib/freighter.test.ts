@@ -223,6 +223,25 @@ describe("freighter.ts", () => {
         "Failed to sign transaction with Freighter"
       );
     });
+
+    it("should reject with a friendly message when signing takes over 90 seconds", async () => {
+      jest.useFakeTimers();
+      const txXdr = "ABCD1234EFGH5678";
+      const networkPassphrase = "Public Global Stellar Network ; September 2015";
+
+      mockFreighterAPI.signTransaction.mockReturnValue(new Promise(() => {}));
+
+      const signing = signWithFreighter(txXdr, networkPassphrase);
+
+      jest.advanceTimersByTime(89_999);
+      await Promise.resolve();
+      jest.advanceTimersByTime(1);
+
+      await expect(signing).rejects.toThrow(
+        "Signing request timed out. Please check your wallet and try again."
+      );
+      jest.useRealTimers();
+    });
   });
 
   describe("getConnectedPublicKey", () => {

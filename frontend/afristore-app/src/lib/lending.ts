@@ -85,6 +85,16 @@ export interface LendingBounds {
   maxLiqThresholdBps: number;
 }
 
+export interface CreateLendingListingInput {
+  nftContract: string;
+  tokenId: number | bigint;
+  declaredPriceUsd: bigint | number | string;
+  interestScheduleBps: number[];
+  maxDurationDays: number;
+  minCollateralBufferBps: number;
+  liquidationThresholdBps: number;
+}
+
 export function getLendingContractId(): string {
   return config.lendingContractId || "CLENDING_DEFAULT_CONTRACT_ID";
 }
@@ -480,6 +490,37 @@ export async function getLendingAdmin(): Promise<string | null> {
 }
 
 // ── Lending Contract Write Operations ────────────────────────────────────────
+
+export async function createLendingListing(
+  lenderPublicKey: string,
+  input: CreateLendingListingInput,
+): Promise<number> {
+  if (isE2eMockChain()) {
+    return Math.floor(Date.now() / 1000);
+  }
+
+  const args: xdr.ScVal[] = [
+    new Address(lenderPublicKey).toScVal(),
+    new Address(input.nftContract).toScVal(),
+    nativeToScVal(BigInt(input.tokenId), { type: "u128" }),
+    nativeToScVal(BigInt(input.declaredPriceUsd), { type: "i128" }),
+    xdr.ScVal.scvVec(
+      input.interestScheduleBps.map((bps) => nativeToScVal(bps, { type: "u32" })),
+    ),
+    asU32(input.maxDurationDays),
+    asU32(input.minCollateralBufferBps),
+    asU32(input.liquidationThresholdBps),
+  ];
+
+  const retVal = await invokeContract(
+    lenderPublicKey,
+    "create_listing",
+    args,
+    false,
+    getLendingContractId(),
+  );
+  return Number(scValToNative(retVal));
+}
 
 export async function borrow(
   borrowerPublicKey: string,

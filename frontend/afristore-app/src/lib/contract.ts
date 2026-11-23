@@ -36,6 +36,8 @@ import {
 } from "@/config/tokens";
 import { fetchListings, fetchAuctions } from "./indexer";
 
+export { mapSorobanErrorMessage } from "./errors";
+
 // ── Types mirrored from the Rust contract ────────────────────
 
 export type ListingStatus = "Active" | "Sold" | "Cancelled";
