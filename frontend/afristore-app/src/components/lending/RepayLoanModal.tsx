@@ -1,9 +1,10 @@
 // ─────────────────────────────────────────────────────────────
 // components/lending/RepayLoanModal.tsx
 // ─────────────────────────────────────────────────────────────
-// Modal that breaks down the exact fees required to close a
-// borrow position (Principal, Interest, Platform Fee) and
-// retrieve the NFT. Executes the repayment via `useReturnNFT`.
+// Modal that itemises the debt required to close a borrow
+// position (Principal, Accrued Interest, Platform Fee), the
+// collateral deposited, and the estimated collateral refund,
+// then executes the repayment via `useReturnNFT`.
 // ─────────────────────────────────────────────────────────────
 
 "use client";
@@ -22,8 +23,36 @@ export interface RepayLoanModalProps {
   borrowerPublicKey?: string | null;
   /** Platform fee in bps (defaults to 1% / 100 bps). */
   platformFeeBps?: number;
+  /**
+   * Oracle price of the collateral token in USD (7 decimals per 1 token).
+   * When provided, the modal estimates the collateral refunded to the
+   * borrower after settlement; otherwise the refund is shown as unavailable.
+   */
+  collateralPriceUsd?: bigint | null;
+  /** Display symbol for the collateral token (e.g. "XLM", "USDC"). */
+  collateralSymbol?: string;
   /** Called after a successful repayment. */
   onSuccess?: () => void;
+}
+
+/** Fixed-point scale shared by USD values and token amounts (7 decimals). */
+const DECIMALS = 10_000_000n;
+
+/**
+ * Estimates the collateral returned to the borrower on voluntary repayment.
+ * Mirrors the contract's settlement waterfall:
+ *   debit_tokens = total_owed_usd * DECIMALS / oracle_price
+ *   refund       = max(collateral_amount - debit_tokens, 0)
+ * Returns null when no valid oracle price is available.
+ */
+export function estimateCollateralRefund(
+  collateralAmount: bigint,
+  totalRequiredUsd: bigint,
+  collateralPriceUsd: bigint | null | undefined,
+): bigint | null {
+  if (collateralPriceUsd == null || collateralPriceUsd <= 0n) return null;
+  const debitTokens = (totalRequiredUsd * DECIMALS) / collateralPriceUsd;
+  return collateralAmount > debitTokens ? collateralAmount - debitTokens : 0n;
 }
 
 function formatUsd(value: bigint): string {
@@ -34,14 +63,24 @@ function formatUsd(value: bigint): string {
     .padStart(2, "0")}`;
 }
 
+function formatTokenAmount(value: bigint, symbol: string): string {
+  const whole = value / DECIMALS;
+  const frac = (value % DECIMALS).toString().padStart(7, "0").slice(0, 4);
+  return `${Intl.NumberFormat("en-US").format(whole)}.${frac} ${symbol}`.trim();
+}
+
 function FeeRow({
   label,
   value,
   emphasis = false,
+  hint,
+  testId,
 }: {
   label: string;
   value: string;
   emphasis?: boolean;
+  hint?: string;
+  testId?: string;
 }) {
   return (
     <div
@@ -52,10 +91,15 @@ function FeeRow({
       }
     >
       <span className={emphasis ? "font-bold text-white" : "text-white/60"}>
-        {label}
+        <span>{label}</span>
+        {hint && (
+          <span className="block text-[11px] font-normal text-white/40">
+            {hint}
+          </span>
+        )}
       </span>
       <span
-        data-testid={emphasis ? "repay-total" : undefined}
+        data-testid={testId ?? (emphasis ? "repay-total" : undefined)}
         className={
           emphasis ? "font-bold text-mint-400" : "font-medium text-white/90"
         }
@@ -72,6 +116,8 @@ export function RepayLoanModal({
   position,
   borrowerPublicKey,
   platformFeeBps = 100,
+  collateralPriceUsd,
+  collateralSymbol = "",
   onSuccess,
 }: RepayLoanModalProps) {
   const { returnNFT, isReturningNFT, error } = useReturnNFT(borrowerPublicKey);
@@ -85,6 +131,19 @@ export function RepayLoanModal({
       return null;
     }
   }, [position, platformFeeBps]);
+
+  const collateralRefund = useMemo(() => {
+    if (!position || !fees) return null;
+    try {
+      return estimateCollateralRefund(
+        BigInt(position.collateral_amount),
+        fees.totalRequiredUsd,
+        collateralPriceUsd,
+      );
+    } catch {
+      return null;
+    }
+  }, [position, fees, collateralPriceUsd]);
 
   // Reset transient state whenever the modal opens.
   useEffect(() => {
@@ -147,6 +206,9 @@ export function RepayLoanModal({
         <RepayModalBody
           fees={fees}
           platformFeeBps={platformFeeBps}
+          collateralAmount={BigInt(position.collateral_amount)}
+          collateralRefund={collateralRefund}
+          collateralSymbol={collateralSymbol}
           error={error}
           success={success}
           isReturningNFT={isReturningNFT}
@@ -168,6 +230,9 @@ interface RepayModalBodyProps {
     totalRequiredUsd: bigint;
   } | null;
   platformFeeBps: number;
+  collateralAmount: bigint;
+  collateralRefund: bigint | null;
+  collateralSymbol: string;
   error: string | null;
   success: boolean;
   isReturningNFT: boolean;
@@ -179,6 +244,9 @@ interface RepayModalBodyProps {
 function RepayModalBody({
   fees,
   platformFeeBps,
+  collateralAmount,
+  collateralRefund,
+  collateralSymbol,
   error,
   success,
   isReturningNFT,
@@ -207,20 +275,61 @@ function RepayModalBody({
 
   return (
     <>
-      <div className="mb-5 space-y-3 rounded-2xl bg-white/[0.03] p-4 ring-1 ring-white/5">
-        <FeeRow label="Principal" value={fees ? formatUsd(fees.principalUsd) : "—"} />
+      <div
+        data-testid="repay-debt-breakdown"
+        className="mb-5 space-y-3 rounded-2xl bg-white/[0.03] p-4 ring-1 ring-white/5"
+      >
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-white/40">
+          Debt Breakdown
+        </p>
+        <FeeRow
+          label="Principal Debt"
+          value={fees ? formatUsd(fees.principalUsd) : "—"}
+          testId="repay-principal"
+        />
         <FeeRow
           label="Accrued Interest"
+          hint="Interest accumulated since the loan started"
           value={fees ? formatUsd(fees.accruedInterestUsd) : "—"}
+          testId="repay-interest"
         />
         <FeeRow
           label={`Platform Fee (${(platformFeeBps / 100).toFixed(2)}%)`}
           value={fees ? formatUsd(fees.platformFeeUsd) : "—"}
+          testId="repay-platform-fee"
         />
         <FeeRow
           label="Total Required"
           value={fees ? formatUsd(fees.totalRequiredUsd) : "—"}
           emphasis
+        />
+      </div>
+
+      <div
+        data-testid="repay-collateral-summary"
+        className="mb-5 space-y-3 rounded-2xl bg-white/[0.03] p-4 ring-1 ring-white/5"
+      >
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-white/40">
+          Collateral
+        </p>
+        <FeeRow
+          label="Collateral Deposited"
+          value={formatTokenAmount(collateralAmount, collateralSymbol)}
+          testId="repay-collateral-deposited"
+        />
+        <FeeRow
+          label="Estimated Collateral Refund"
+          hint={
+            collateralRefund === null
+              ? "Requires a live collateral price"
+              : "Final amount depends on the oracle price at settlement"
+          }
+          value={
+            collateralRefund === null
+              ? "—"
+              : formatTokenAmount(collateralRefund, collateralSymbol)
+          }
+          testId="repay-collateral-refund"
         />
       </div>
 
