@@ -303,6 +303,7 @@ export async function createListing(
 export async function buyArtwork(
   buyerPublicKey: string,
   listingId: number,
+  maxFee?: number, // #1262: optional fee override; defaults to BASE_FEE
 ): Promise<boolean> {
   if (isE2eMockChain()) {
     if (typeof window !== "undefined") registerE2eMockListingsOnWindow();
@@ -314,7 +315,9 @@ export async function buyArtwork(
     nativeToScVal(BigInt(listingId), { type: "u64" }),
   ];
 
-  await invokeContract(buyerPublicKey, "buy_artwork", args);
+  await invokeContract(buyerPublicKey, "buy_artwork", args, {
+    fee: maxFee ?? Number(BASE_FEE),
+  });
   return true;
 }
 
