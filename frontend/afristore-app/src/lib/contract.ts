@@ -255,6 +255,7 @@ export async function createListing(
   tokenAddress: string = DEFAULT_TOKEN.address,
   collectionAddress: string,
   nftTokenId: number,
+  amount: number = 1,
   recipients: Array<{ address: string; percentage: number }> = [],
 ): Promise<number> {
   if (isE2eMockChain()) {
@@ -284,6 +285,7 @@ export async function createListing(
     new Address(selectedToken.address).toScVal(),
     new Address(collectionAddress).toScVal(),
     nativeToScVal(nftTokenId, { type: "u64" }),
+    nativeToScVal(amount, { type: "u64" }),
     nativeToScVal(
       finalRecipients.map((r) => ({
         address: new Address(r.address),
