@@ -37,11 +37,17 @@ pub fn accrued_interest_usd(position: &Position, now: u64) -> i128 {
 
     let mut total: i128 = 0;
 
-    // Accumulate interest for each completed month.
-    for m in 0..full_months {
-        let idx = m.min(len - 1) as u32;
+    // Read each explicitly scheduled month once; later months repeat the final rate.
+    let scheduled_months = full_months.min(len - 1);
+    for m in 0..scheduled_months {
+        let idx = m as u32;
         let rate = schedule.get(idx).unwrap() as i128;
         total += price * rate / 10_000;
+    }
+    let repeated_months = full_months - scheduled_months;
+    if repeated_months > 0 {
+        let last_rate = schedule.get((len - 1) as u32).unwrap() as i128;
+        total += (price * last_rate / 10_000) * (repeated_months as i128);
     }
 
     // Partial month pro-rated linearly.
@@ -156,6 +162,15 @@ mod tests {
         let now = 90 * 86400; // 3 full months
         let pos = make_position(&env, vec![&env, 500u32, 800u32], 0);
         assert_eq!(accrued_interest_usd(&pos, now), 21_000_000);
+    }
+
+    #[test]
+    fn test_last_rate_repeats_over_long_loan() {
+        let env = Env::default();
+        let mut pos = make_position(&env, vec![&env, 100u32, 200u32], 0);
+        pos.max_duration_secs = 86400 * 30 * 120;
+
+        assert_eq!(accrued_interest_usd(&pos, 86400 * 30 * 120), 239_000_000);
     }
 
     /// Empty schedule panics.

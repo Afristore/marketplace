@@ -1,4 +1,4 @@
-use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, IntoVal};
+use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, IntoVal, Vec};
 
 use crate::events::*;
 use crate::storage::*;
@@ -243,7 +243,7 @@ impl NftStaking {
             &user,
             DataKey::StakedPosition(user.clone(), token_address.clone(), token_id),
         );
-        set_total_staked(&env, get_total_staked(&env) + 1);
+        set_total_staked(&env, get_total_staked(&env) + amount);
 
         StakedEvent {
             user,
@@ -260,9 +260,6 @@ impl NftStaking {
 
     pub fn unstake_erc721(env: Env, user: Address, token_address: Address, token_id: u64) {
         extend_instance_ttl(&env);
-        if Self::is_paused(env.clone()) {
-            panic_with_error!(&env, StakingError::ContractPaused);
-        }
         user.require_auth();
         Self::require_pool_nft(&env, &token_address);
 
@@ -325,9 +322,6 @@ impl NftStaking {
         amount: u64,
     ) {
         extend_instance_ttl(&env);
-        if Self::is_paused(env.clone()) {
-            panic_with_error!(&env, StakingError::ContractPaused);
-        }
         user.require_auth();
         Self::require_pool_nft(&env, &token_address);
 
@@ -369,7 +363,7 @@ impl NftStaking {
 
         remove_staked_position(&env, &position_key);
         remove_user_stake(&env, &user, &position_key);
-        set_total_staked(&env, get_total_staked(&env).saturating_sub(1));
+        set_total_staked(&env, get_total_staked(&env).saturating_sub(amount));
 
         UnstakedEvent {
             user,
@@ -391,22 +385,27 @@ impl NftStaking {
         let rate = Self::rewards_per_second(&env);
         let stake_keys = get_user_stakes(&env, &user);
         let mut total_rewards: i128 = 0;
+        let mut positions = Vec::new(&env);
 
         for key in stake_keys.iter() {
-            if let Some(mut position) = load_staked_position(&env, &key) {
+            if let Some(position) = load_staked_position(&env, &key) {
                 let elapsed = env.ledger().timestamp() - position.staked_at;
                 // Collect all pending rewards: previously accrued + newly elapsed.
                 let claimable = position.rewards_earned + (elapsed as i128) * rate;
                 total_rewards += claimable;
-                // Reset so the same rewards are never counted twice.
-                position.rewards_earned = 0;
-                position.staked_at = env.ledger().timestamp();
-                save_staked_position(&env, &key, &position);
+                positions.push_back((key, position));
             }
         }
 
         if total_rewards <= 0 {
             panic_with_error!(&env, StakingError::NoRewardsToClaim);
+        }
+
+        for (key, mut position) in positions.iter() {
+            // Reset only after confirming the claim has a positive payout.
+            position.rewards_earned = 0;
+            position.staked_at = env.ledger().timestamp();
+            save_staked_position(&env, &key, &position);
         }
 
         let reward_token_addr = get_reward_token(&env)

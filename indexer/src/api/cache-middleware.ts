@@ -28,7 +28,7 @@ export const cacheMiddleware = (ttl: number) => {
         const cacheKey = `cache:${req.originalUrl || req.url}`;
 
         try {
-            const cachedData = await redisClient.get(cacheKey);
+            const cachedData = await client.get(cacheKey);
 
             if (cachedData) {
                 return res.json(JSON.parse(cachedData));

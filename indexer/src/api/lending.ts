@@ -51,13 +51,15 @@ router.get('/listings', async (req: Request, res: Response) => {
       ? Math.min(rawOffset, 10_000)
       : undefined;
 
-    const results = await prisma.lendingListing.findMany({
-      where,
-      take,
-      skip,
-      orderBy: { createdAtLedger: 'desc' }
-    });
-    const total = await prisma.lendingListing.count({ where });
+    const [results, total] = await prisma.$transaction([
+      prisma.lendingListing.findMany({
+        where,
+        take,
+        skip,
+        orderBy: { createdAtLedger: 'desc' }
+      }),
+      prisma.lendingListing.count({ where }),
+    ]);
 
     const response = { listings: serialize(results), total };
     await setCachedStats(cacheKey, response);
@@ -83,24 +85,29 @@ router.get('/positions/:borrower', async (req: Request, res: Response) => {
     const where: any = { borrower };
     if (status) where.status = String(status);
 
-    const positions = await prisma.lendingPosition.findMany({
-      where,
-      orderBy: { updatedAtLedger: 'desc' }
-    });
+    const positions = await prisma.$transaction([
+      prisma.lendingPosition.findMany({
+        where,
+        orderBy: { updatedAtLedger: 'desc' }
+      }),
+    ]).then(([results]) => results);
 
     // Join with listing details where possible
-    const merged = await Promise.all(positions.map(async (p: any) => {
-      let listing = null;
-      try {
-        if (p.listingId !== undefined && p.listingId !== null) {
-          listing = await prisma.lendingListing.findUnique({
-            where: { listingId: p.listingId }
-          });
-        }
-      } catch {
-        listing = null;
-      }
-      return { position: p, listing };
+    const listingIds = positions
+      .map((p: any) => p.listingId)
+      .filter((id: any) => id !== undefined && id !== null);
+
+    const listings = listingIds.length > 0
+      ? await prisma.lendingListing.findMany({
+          where: { listingId: { in: listingIds } }
+        })
+      : [];
+
+    const listingMap = new Map(listings.map((l: any) => [l.listingId, l]));
+
+    const merged = positions.map((p: any) => ({
+      position: p,
+      listing: p.listingId ? listingMap.get(p.listingId) ?? null : null,
     }));
 
     const response = serialize(merged);
@@ -130,18 +137,20 @@ router.get('/loans/:lender', async (req: Request, res: Response) => {
       ? Math.min(rawOffset, 10_000)
       : undefined;
 
-    const listings = await prisma.lendingListing.findMany({
-      where: { lender },
-      take,
-      skip,
-      orderBy: { updatedAtLedger: 'desc' }
-    });
-    const positions = await prisma.lendingPosition.findMany({
-      where: { lender },
-      take,
-      skip,
-      orderBy: { updatedAtLedger: 'desc' }
-    });
+    const [listings, positions] = await prisma.$transaction([
+      prisma.lendingListing.findMany({
+        where: { lender },
+        take,
+        skip,
+        orderBy: { updatedAtLedger: 'desc' }
+      }),
+      prisma.lendingPosition.findMany({
+        where: { lender },
+        take,
+        skip,
+        orderBy: { updatedAtLedger: 'desc' }
+      }),
+    ]);
 
     const response = serialize({ listings, positions });
     await setCachedStats(cacheKey, response);
@@ -162,18 +171,19 @@ router.get('/stats', async (_req: Request, res: Response) => {
   }
 
   try {
-    const tvlAgg = await prisma.lendingPosition.aggregate({
-      _sum: { collateralAmount: true },
-      where: { status: 'Active' }
-    });
+    const [tvlAgg, activeLoans, volumeAgg] = await prisma.$transaction([
+      prisma.lendingPosition.aggregate({
+        _sum: { collateralAmount: true },
+        where: { status: 'Active' }
+      }),
+      prisma.lendingPosition.count({ where: { status: 'Active' } }),
+      prisma.lendingPosition.aggregate({
+        _sum: { collateralAmount: true },
+        where: {}
+      }),
+    ]);
+
     const tvl = tvlAgg._sum?.collateralAmount?.toString?.() ?? '0';
-
-    const activeLoans = await prisma.lendingPosition.count({ where: { status: 'Active' } });
-
-    const volumeAgg = await prisma.lendingPosition.aggregate({
-      _sum: { collateralAmount: true },
-      where: {}
-    });
     const totalVolume = volumeAgg._sum?.collateralAmount?.toString?.() ?? '0';
 
     const response = { tvl, activeLoans, totalVolume };

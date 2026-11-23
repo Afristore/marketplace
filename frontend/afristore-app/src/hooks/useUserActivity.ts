@@ -8,6 +8,16 @@ import {
   ActivityEvent,
 } from "@/lib/indexer";
 
+/** Drops repeated activity events, keeping the first occurrence of each event id. */
+export function dedupeActivities(items: ActivityEvent[]): ActivityEvent[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.id)) return false;
+    seen.add(item.id);
+    return true;
+  });
+}
+
 export function useUserActivity(publicKey: string | null) {
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
   const [royaltyStats, setRoyaltyStats] = useState<{
@@ -27,7 +37,7 @@ export function useUserActivity(publicKey: string | null) {
         getWalletActivity(publicKey),
         getRoyaltyStats(publicKey),
       ]);
-      setActivities(history);
+      setActivities(dedupeActivities(history));
       setRoyaltyStats(stats);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load activity");
@@ -54,7 +64,7 @@ export function useListingActivity(listingId: number | null) {
     setError(null);
     try {
       const history = await getListingActivity(listingId);
-      setActivities(history);
+      setActivities(dedupeActivities(history));
     } catch (err: unknown) {
       setError(
         err instanceof Error ? err.message : "Failed to load listing activity",

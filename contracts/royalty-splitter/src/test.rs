@@ -3,7 +3,7 @@ use super::*;
 extern crate alloc;
 
 use soroban_sdk::{
-    testutils::Address as _,
+    testutils::{Address as _, Events as _},
     token::{StellarAssetClient, TokenClient},
     vec, Address, Env,
 };
@@ -142,6 +142,16 @@ fn test_distribute_two_parties() {
 
     client.distribute(&token, &caller);
 
+    assert_eq!(
+        env.events()
+            .all()
+            .filter_by_contract(&contract_id)
+            .events()
+            .len(),
+        1,
+        "successful distribution must emit an event"
+    );
+
     let tc = TokenClient::new(&env, &token);
     assert_eq!(tc.balance(&alice), 6_000);
     assert_eq!(tc.balance(&bob), 4_000);
@@ -208,7 +218,7 @@ fn test_distribute_rounding_no_dust_trapped() {
     let bob = Address::generate(&env);
     let caller = Address::generate(&env);
 
-    // 3333 + 6667 = 10000; with balance=10 alice gets floor(3.333)=3, bob gets 6, caller gets 1
+    // With balance=10 alice receives the 1-stroop remainder after proportional payouts.
     client.initialize(
         &token,
         &vec![&env, alice.clone(), bob.clone()],
@@ -225,6 +235,9 @@ fn test_distribute_rounding_no_dust_trapped() {
         tc.balance(&alice) + tc.balance(&bob) + tc.balance(&caller),
         10
     );
+    assert_eq!(tc.balance(&alice), 4);
+    assert_eq!(tc.balance(&bob), 6);
+    assert_eq!(tc.balance(&caller), 0);
     assert_eq!(tc.balance(&contract_id), 0);
 }
 
@@ -330,7 +343,7 @@ fn test_distribute_can_be_called_multiple_times() {
 }
 
 #[test]
-fn test_distribute_dust_goes_to_caller() {
+fn test_distribute_dust_goes_to_first_beneficiary() {
     let (env, client, token, contract_id) = setup();
     let alice = Address::generate(&env);
     let bob = Address::generate(&env);
@@ -348,16 +361,16 @@ fn test_distribute_dust_goes_to_caller() {
     client.distribute(&token, &caller);
 
     let tc = TokenClient::new(&env, &token);
-    assert_eq!(tc.balance(&alice), 5_000);
+    assert_eq!(tc.balance(&alice), 5_001);
     assert_eq!(tc.balance(&bob), 5_000);
-    assert_eq!(tc.balance(&caller), 1, "dust goes to caller");
+    assert_eq!(tc.balance(&caller), 0, "caller must not receive the dust");
     assert_eq!(tc.balance(&contract_id), 0);
 }
 
 // ── Rounding remainder (dust) distribution ───────────────────────────────────
 
 /// Distributes `balance` over `split`, given as `(share_bps, expected_payout)`
-/// pairs, then asserts every exact payout, the caller's exact dust, and that
+/// pairs, then asserts every exact payout, the first beneficiary's dust, and that
 /// the full balance is accounted for with nothing left in the contract.
 fn assert_exact_split_with_dust(balance: i128, split: &[(u32, i128)], expected_dust: i128) {
     let (env, client, token, contract_id) = setup();
@@ -375,15 +388,24 @@ fn assert_exact_split_with_dust(balance: i128, split: &[(u32, i128)], expected_d
     client.distribute(&token, &caller);
 
     let tc = TokenClient::new(&env, &token);
-    let dust = tc.balance(&caller);
-    assert_eq!(dust, expected_dust, "caller must receive exactly the dust");
+    let first_beneficiary = beneficiaries.get(0).unwrap();
+    let dust = tc.balance(&first_beneficiary) - split[0].1;
+    assert_eq!(
+        dust, expected_dust,
+        "first beneficiary must receive exactly the dust"
+    );
+    assert_eq!(tc.balance(&caller), 0, "caller must not receive dust");
     // Flooring loses strictly less than one stroop per beneficiary.
     assert!(dust < split.len() as i128);
 
-    let mut accounted = dust;
-    for (beneficiary, &(_, expected_payout)) in beneficiaries.iter().zip(split) {
+    let mut accounted = 0;
+    for (index, (beneficiary, &(_, expected_payout))) in beneficiaries.iter().zip(split).enumerate()
+    {
         let received = tc.balance(&beneficiary);
-        assert_eq!(received, expected_payout);
+        assert_eq!(
+            received,
+            expected_payout + if index == 0 { expected_dust } else { 0 }
+        );
         accounted += received;
     }
     assert_eq!(accounted, balance, "no stroops may be lost");
@@ -419,7 +441,7 @@ fn test_distribute_dust_prime_balance_five_way_split() {
 }
 
 #[test]
-fn test_distribute_dust_balance_below_every_share_goes_to_caller() {
+fn test_distribute_dust_balance_below_every_share_goes_to_first_beneficiary() {
     // Every share floors to zero, so the whole balance is dust.
     assert_exact_split_with_dust(1, &[(3_333, 0), (3_333, 0), (3_334, 0)], 1);
 }

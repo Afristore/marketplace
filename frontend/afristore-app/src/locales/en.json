@@ -66,6 +66,40 @@
   "connectYourWallet": "Connect Your Wallet",
   "connectWalletDesc": "You need to connect your wallet to access settings",
   "connectWalletBtn": "Connect Wallet",
+  "navigation": {
+    "home": "Home",
+    "explore": "Explore Collections",
+    "myListings": "My Listings",
+    "profile": "Profile",
+    "settings": "Settings",
+    "help": "Help & Support"
+  },
+  "wallet": {
+    "copyAddress": "Copy Address",
+    "copied": "Copied!",
+    "copyError": "Failed to copy address"
+  },
+  "modal": {
+    "close": "Close",
+    "closeLabel": "Close modal",
+    "pressEscape": "Press Escape to close"
+  },
+  "listing": {
+    "view": "View Listing",
+    "edit": "Edit",
+    "delete": "Delete",
+    "share": "Share",
+    "makeOffer": "Make Offer",
+    "buy": "Buy Now",
+    "bid": "Place Bid",
+    "moreActions": "More actions"
+  },
+  "checkout": {
+    "title": "Checkout",
+    "proceedToPay": "Proceed to Payment",
+    "cancel": "Cancel",
+    "confirm": "Confirm Purchase"
+  },
   "lending": {
     "borrower": {
       "loading": "Loading your active debts…",

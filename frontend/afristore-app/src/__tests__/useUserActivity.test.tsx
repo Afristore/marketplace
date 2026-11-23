@@ -229,3 +229,28 @@ describe("useListingActivity", () => {
     }
   });
 });
+
+// ── deduplication ─────────────────────────────────────────────────────────────
+
+describe("useUserActivity deduplication", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("does not show repeated events with the same id", async () => {
+    mockGetWalletActivity.mockResolvedValueOnce([
+      makeActivity("1"),
+      makeActivity("1"),
+      makeActivity("2"),
+    ]);
+    mockGetRoyaltyStats.mockResolvedValueOnce(null);
+
+    function Comp() {
+      const { activities } = useUserActivity("GPUBKEY");
+      return <span data-testid="count">{activities.length}</span>;
+    }
+    render(<Comp />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("count").textContent).toBe("2"),
+    );
+  });
+});

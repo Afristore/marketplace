@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
-use soroban_sdk::{contract, contractimpl, token, Address, Env, Symbol};
+use soroban_sdk::{contract, contractclient, contractimpl, token, Address, Env, Symbol};
 
 use crate::events;
 use crate::interest::accrued_interest_usd;
@@ -8,10 +8,15 @@ use crate::oracle;
 use crate::settlement::settle;
 use crate::storage::{
     extend_instance_ttl, get_config, get_currency_symbol, get_listing, get_position, has_config,
-    is_currency_whitelisted, next_position_id, remove_listing, set_config, set_currency_symbol,
-    set_listing, set_position,
+    is_currency_whitelisted, next_listing_id, next_position_id, remove_listing, set_config,
+    set_currency_symbol, set_listing, set_position,
 };
-use crate::types::{ListingStatus, PlatformConfig, Position, PositionStatus};
+use crate::types::{Listing, ListingStatus, PlatformConfig, Position, PositionStatus};
+
+#[contractclient(name = "NftClient")]
+pub trait Erc721 {
+    fn transfer(env: Env, from: Address, to: Address, token_id: u64);
+}
 
 #[contract]
 pub struct LendingContract;
@@ -177,6 +182,73 @@ impl LendingContract {
 
     // ── Listings ──────────────────────────────────────────────────────────────
 
+    pub fn create_listing(
+        env: Env,
+        lender: Address,
+        nft_contract: Address,
+        token_id: u128,
+        declared_price_usd: i128,
+        interest_schedule_bps: soroban_sdk::Vec<u32>,
+        max_duration_days: u32,
+        min_collateral_buffer_bps: u32,
+        liquidation_threshold_bps: u32,
+    ) -> u64 {
+        lender.require_auth();
+
+        if token_id > u64::MAX as u128 {
+            panic!("token_id exceeds ERC-721 range");
+        }
+        if declared_price_usd <= 0 {
+            panic!("declared_price_usd must be greater than zero");
+        }
+        if interest_schedule_bps.is_empty() {
+            panic!("interest_schedule_bps must not be empty");
+        }
+        if max_duration_days == 0 {
+            panic!("max_duration_days must be greater than zero");
+        }
+
+        let config = get_config(&env);
+        if min_collateral_buffer_bps < config.min_buffer_bps
+            || min_collateral_buffer_bps > config.max_buffer_bps
+        {
+            panic!("min_collateral_buffer_bps is outside configured bounds");
+        }
+        if liquidation_threshold_bps < config.min_liq_threshold_bps
+            || liquidation_threshold_bps > config.max_liq_threshold_bps
+        {
+            panic!("liquidation_threshold_bps is outside configured bounds");
+        }
+
+        let nft_client = NftClient::new(&env, &nft_contract);
+        nft_client.transfer(&lender, &env.current_contract_address(), &(token_id as u64));
+
+        let listing_id = next_listing_id(&env);
+        let listing = Listing {
+            id: listing_id,
+            lender: lender.clone(),
+            nft_contract: nft_contract.clone(),
+            token_id,
+            declared_price_usd,
+            interest_schedule_bps,
+            max_duration_days,
+            min_collateral_buffer_bps,
+            liquidation_threshold_bps,
+            status: ListingStatus::Open,
+            created_at: env.ledger().timestamp(),
+        };
+        set_listing(&env, listing_id, &listing);
+        events::emit_listing_created(
+            &env,
+            listing_id,
+            lender,
+            nft_contract,
+            token_id,
+            declared_price_usd,
+        );
+        listing_id
+    }
+
     pub fn cancel_listing(env: Env, listing_id: u64) {
         extend_instance_ttl(&env);
         let listing = get_listing(&env, listing_id);
@@ -188,11 +260,11 @@ impl LendingContract {
         }
 
         // Return NFT to lender
-        let nft_client = token::Client::new(&env, &listing.nft_contract);
+        let nft_client = NftClient::new(&env, &listing.nft_contract);
         nft_client.transfer(
             &env.current_contract_address(),
             &listing.lender,
-            &(listing.token_id as i128),
+            &(listing.token_id as u64),
         );
 
         remove_listing(&env, listing_id);
@@ -226,9 +298,14 @@ impl LendingContract {
         }
 
         let config = get_config(&env);
-        let oracle_price = oracle::get_price(&env, &config.oracle_address, &collateral_currency);
+        let oracle_price = oracle::get_price_with_staleness(
+            &env,
+            &config.oracle_address,
+            &collateral_currency,
+            config.max_price_staleness_secs,
+        );
 
-        let collateral_value_usd = (collateral_amount * oracle_price) / 10_000_000;
+        let collateral_value_usd = oracle::collateral_to_usd(collateral_amount, oracle_price);
 
         let required_collateral =
             (listing.declared_price_usd * (listing.min_collateral_buffer_bps as i128)) / 10_000;
@@ -236,10 +313,6 @@ impl LendingContract {
         if collateral_value_usd < required_collateral {
             panic!("Under-collateralized");
         }
-
-        // Validate nft_contract is a valid token contract before initiating transfers
-        let nft_client = token::Client::new(&env, &listing.nft_contract);
-        let _ = nft_client.decimals();
 
         // Transfer collateral from borrower to contract
         let collateral_client = token::Client::new(&env, &collateral_currency);
@@ -250,10 +323,11 @@ impl LendingContract {
         );
 
         // Transfer NFT from contract to borrower
+        let nft_client = NftClient::new(&env, &listing.nft_contract);
         nft_client.transfer(
             &env.current_contract_address(),
             &borrower,
-            &(listing.token_id as i128),
+            &(listing.token_id as u64),
         );
 
         listing.status = ListingStatus::Filled;
@@ -310,16 +384,16 @@ impl LendingContract {
 
         // Transfer NFT from borrower back to contract, then to lender.
         let contract_address = env.current_contract_address();
-        let nft_client = token::Client::new(&env, &position.nft_contract);
+        let nft_client = NftClient::new(&env, &position.nft_contract);
         nft_client.transfer(
             &position.borrower,
             &contract_address,
-            &(position.token_id as i128),
+            &(position.token_id as u64),
         );
         nft_client.transfer(
             &contract_address,
             &position.lender,
-            &(position.token_id as i128),
+            &(position.token_id as u64),
         );
 
         // Settle collateral waterfall (no liquidator on voluntary return).
@@ -389,10 +463,15 @@ impl LendingContract {
         let is_expired = now > position.start_time + position.max_duration_secs;
 
         let is_unhealthy = if !is_expired {
-            let oracle_price =
-                oracle::get_price(&env, &config.oracle_address, &position.collateral_currency);
+            let oracle_price = oracle::get_price_with_staleness(
+                &env,
+                &config.oracle_address,
+                &position.collateral_currency,
+                config.max_price_staleness_secs,
+            );
 
-            let collateral_value_usd = (position.collateral_amount * oracle_price) / 10_000_000;
+            let collateral_value_usd =
+                oracle::collateral_to_usd(position.collateral_amount, oracle_price);
 
             let accrued = accrued_interest_usd(&position, now);
             let owed_usd = position.declared_price_usd + accrued;
@@ -435,9 +514,14 @@ impl LendingContract {
         extend_instance_ttl(&env);
         let position = get_position(&env, position_id);
         let config = get_config(&env);
-        let oracle_price =
-            oracle::get_price(&env, &config.oracle_address, &position.collateral_currency);
-        let collateral_value_usd = (position.collateral_amount * oracle_price) / 10_000_000;
+        let oracle_price = oracle::get_price_with_staleness(
+            &env,
+            &config.oracle_address,
+            &position.collateral_currency,
+            config.max_price_staleness_secs,
+        );
+        let collateral_value_usd =
+            oracle::collateral_to_usd(position.collateral_amount, oracle_price);
         let owed_usd =
             position.declared_price_usd + accrued_interest_usd(&position, env.ledger().timestamp());
 

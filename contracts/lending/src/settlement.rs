@@ -1,5 +1,6 @@
 use soroban_sdk::{token, Address, Env};
 
+use crate::interest::accrued_interest_usd;
 use crate::oracle;
 use crate::types::{PlatformConfig, Position, SettleResult};
 
@@ -11,40 +12,23 @@ const DECIMALS: i128 = 10_000_000; // 1e7
 /// oracle price (USD per 1 token, 7 decimals).
 ///
 /// formula: token_units = usd_amount * DECIMALS / oracle_price
+///
+/// Panics with a clear message if `oracle_price <= 0` or if the arithmetic
+/// overflows, instead of panicking with an opaque divide-by-zero or wrapping.
 fn usd_to_token_amount(usd_amount: i128, oracle_price: i128) -> i128 {
+    if usd_amount < 0 {
+        panic!("InvalidAmount: usd_amount must be >= 0");
+    }
+    if oracle_price <= 0 {
+        panic!("InvalidOraclePrice: oracle_price must be > 0");
+    }
     // oracle_price: how many USD (7 dec) per 1 token (7 dec)
     // => token_units = usd_amount / oracle_price * DECIMALS
     //                = usd_amount * DECIMALS / oracle_price
-    usd_amount * DECIMALS / oracle_price
-}
-
-/// Compute accrued interest in USD given the position's interest schedule and
-/// elapsed time.  The schedule is a Vec of periodic rates in bps; we treat each
-/// entry as one full period's worth of interest applied proportionally.
-///
-/// For simplicity we use a single-period model: the first entry in
-/// `interest_schedule_bps` is the rate for `max_duration_secs`.  Interest
-/// accrues linearly over elapsed time up to the full period.
-fn compute_accrued_interest(
-    declared_price_usd: i128,
-    interest_schedule_bps: &soroban_sdk::Vec<u32>,
-    elapsed_secs: u64,
-    max_duration_secs: u64,
-) -> i128 {
-    if interest_schedule_bps.is_empty() || max_duration_secs == 0 {
-        return 0;
-    }
-
-    // Use the first schedule entry as the full-period rate.
-    let rate_bps = interest_schedule_bps.get(0).unwrap_or(0) as i128;
-
-    // full_period_interest = principal * rate_bps / 10_000
-    let full_interest = declared_price_usd * rate_bps / 10_000;
-
-    // pro-rate: accrued = full_interest * elapsed / max_duration
-    // Cap elapsed at max_duration to avoid over-charging.
-    let capped_elapsed = elapsed_secs.min(max_duration_secs) as i128;
-    full_interest * capped_elapsed / (max_duration_secs as i128)
+    usd_amount
+        .checked_mul(DECIMALS)
+        .and_then(|v| v.checked_div(oracle_price))
+        .expect("usd_to_token_amount: arithmetic overflow")
 }
 
 /// Single shared settlement function used by both `return_nft()` and
@@ -69,19 +53,16 @@ pub fn settle(
     config: &PlatformConfig,
 ) -> SettleResult {
     let now = env.ledger().timestamp();
-    let elapsed = now.saturating_sub(position.start_time);
 
     // ── Oracle price ──────────────────────────────────────────────────────────
     let oracle_price =
         oracle::get_price(env, &config.oracle_address, &position.collateral_currency);
+    if oracle_price <= 0 {
+        panic!("InvalidOraclePrice: oracle_price must be > 0");
+    }
 
     // ── Waterfall math ────────────────────────────────────────────────────────
-    let accrued_interest_usd = compute_accrued_interest(
-        position.declared_price_usd,
-        &position.interest_schedule_bps,
-        elapsed,
-        position.max_duration_secs,
-    );
+    let accrued_interest_usd = accrued_interest_usd(position, now);
 
     let owed_usd = position.declared_price_usd + accrued_interest_usd;
 

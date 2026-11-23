@@ -41,6 +41,55 @@ mod mock_nft {
     }
 }
 
+mod mock_erc721_nonzero_token {
+    use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+
+    #[contract]
+    pub struct MockErc721;
+
+    #[contracttype]
+    #[derive(Clone)]
+    enum DataKey {
+        Owner(u64),
+    }
+
+    #[contractimpl]
+    impl MockErc721 {
+        pub fn mint(env: Env, to: Address, token_id: u64) {
+            env.storage()
+                .persistent()
+                .set(&DataKey::Owner(token_id), &to);
+        }
+
+        pub fn owner_of(env: Env, token_id: u64) -> Address {
+            env.storage()
+                .persistent()
+                .get(&DataKey::Owner(token_id))
+                .unwrap()
+        }
+
+        pub fn royalty_info(env: Env) -> (Address, u32) {
+            use soroban_sdk::testutils::Address as _;
+            (Address::generate(&env), 0)
+        }
+
+        pub fn transfer_from(
+            env: Env,
+            _spender: Address,
+            from: Address,
+            to: Address,
+            token_id: u64,
+        ) {
+            let key = DataKey::Owner(token_id);
+            let owner: Address = env.storage().persistent().get(&key).unwrap();
+            if owner != from {
+                panic!("not token owner");
+            }
+            env.storage().persistent().set(&key, &to);
+        }
+    }
+}
+
 use soroban_sdk::{
     bytes, symbol_short,
     testutils::Address as _,
@@ -233,6 +282,32 @@ fn test_create_listing_success() {
     assert_eq!(listing.artist, artist);
     assert_eq!(listing.price, price);
     assert_eq!(listing.status, ListingStatus::Active);
+}
+
+#[test]
+fn test_buy_erc721_with_nonzero_token_id_when_token_zero_is_unminted() {
+    let (env, client, artist, buyer, token_id, _, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let collection_id = env.register(mock_erc721_nonzero_token::MockErc721, ());
+    let collection = mock_erc721_nonzero_token::MockErc721Client::new(&env, &collection_id);
+    collection.mint(&artist, &1);
+
+    let listing_id = client.create_listing(
+        &artist,
+        &10_000_000,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1,
+        &1,
+        &valid_recipients(&env, &artist),
+    );
+
+    client.buy_artwork(&buyer, &listing_id);
+
+    assert_eq!(collection.owner_of(&1), buyer);
 }
 
 #[test]
@@ -5316,4 +5391,66 @@ fn test_reentrancy_lock_failure_and_release_guarantees_issue_1094() {
         assert!(crate::storage::acquire_auction_lock(&env, auction_id));
         crate::storage::release_auction_lock(&env, auction_id);
     });
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #27)")]
+fn test_create_listing_zero_amount_fails() {
+    let (env, client, artist, _, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    client.create_listing(
+        &artist,
+        &10_000_000,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1,
+        &0,
+        &valid_recipients(&env, &artist),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #27)")]
+fn test_create_listing_erc721_amount_greater_than_one_fails() {
+    let (env, client, artist, _, token_id, _, _) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let collection_id = env.register(mock_erc721_nonzero_token::MockErc721, ());
+    let collection = mock_erc721_nonzero_token::MockErc721Client::new(&env, &collection_id);
+    collection.mint(&artist, &1);
+
+    client.create_listing(
+        &artist,
+        &10_000_000,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1,
+        &2,
+        &valid_recipients(&env, &artist),
+    );
+}
+
+#[test]
+fn test_create_listing_erc1155_amount_greater_than_one_succeeds() {
+    let (env, client, artist, _, token_id, _, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let listing_id = client.create_listing(
+        &artist,
+        &10_000_000,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1,
+        &5,
+        &valid_recipients(&env, &artist),
+    );
+
+    assert_eq!(client.get_listing(&listing_id).amount, 5);
 }
