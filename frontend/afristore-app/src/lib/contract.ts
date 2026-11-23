@@ -7,6 +7,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import {
+  Account,
   Contract,
   SorobanRpc,
   TransactionBuilder,
@@ -15,6 +16,7 @@ import {
   scValToNative,
   Address,
   BASE_FEE,
+  StrKey,
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
 import { getConnectedPublicKey, signWithFreighter } from "./freighter";
@@ -84,20 +86,42 @@ function getRpc(): SorobanRpc.Server {
   return new SorobanRpc.Server(config.rpcUrl, { allowHttp: false });
 }
 
+const DEFAULT_CONTRACT_ID =
+  "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM";
+
 export function getContract(contractId: string = config.contractId): Contract {
-  return new Contract(contractId);
+  const id = contractId || DEFAULT_CONTRACT_ID;
+  return new Contract(id);
 }
 
 function getNetworkPassphrase(): string {
   return config.networkPassphrase;
 }
 
-const READ_ONLY_CALLER_PUBLIC_KEY =
-  "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+export const READ_ONLY_CALLER_PUBLIC_KEY =
+  "GA5WUJ54Z23KILLCUOUNAKTPBVZWKMQVO4O6EQ5GHLAERIMLLHNCSKYH";
 
-async function getReadOnlyCallerPublicKey(): Promise<string> {
+export async function getReadOnlyCallerPublicKey(): Promise<string> {
   const connectedPublicKey = await getConnectedPublicKey();
-  return connectedPublicKey ?? READ_ONLY_CALLER_PUBLIC_KEY;
+  if (
+    connectedPublicKey &&
+    StrKey.isValidEd25519PublicKey(connectedPublicKey)
+  ) {
+    return connectedPublicKey;
+  }
+  return READ_ONLY_CALLER_PUBLIC_KEY;
+}
+
+/**
+ * Creates a synthetic Account for read-only contract simulation.
+ * Does not require an on-chain funded account.
+ */
+export function createSyntheticAccount(callerPublicKey?: string): Account {
+  const validKey =
+    callerPublicKey && StrKey.isValidEd25519PublicKey(callerPublicKey)
+      ? callerPublicKey
+      : READ_ONLY_CALLER_PUBLIC_KEY;
+  return new Account(validKey, "0");
 }
 function resolveConfiguredToken(
   tokenAddress: string = DEFAULT_TOKEN.address,
@@ -132,8 +156,12 @@ export async function invokeContract(
   const rpc = getRpc();
   const contract = getContract(contractId);
 
-  // Fetch the caller's account for the sequence number.
-  const account = await rpc.getAccount(callerPublicKey);
+  // For read-only calls (readonly = true), generate a temporary synthetic
+  // account state for simulateTransaction without requiring an on-chain funded account.
+  // For state-changing calls, fetch the on-chain account for sequence numbers.
+  const account = readonly
+    ? createSyntheticAccount(callerPublicKey)
+    : await rpc.getAccount(callerPublicKey);
 
   const tx = new TransactionBuilder(account, {
     fee: BASE_FEE,
