@@ -204,6 +204,7 @@ Soroban contracts on testnet are subject to state archival: if a contract's ledg
 On each tick the crank:
 1. Calls `get_protocol_fee` on the main marketplace contract (a read-only function that loads contract state).
 2. Queries the 20 most recently deployed collections from the indexer database and calls `name` on each, keeping the freshest NFT contracts alive.
+3. Recomputes the health factor of every active lending position, the same way the lending contract does: the collateral currency is priced by calling `price(asset)` on the Reflector oracle at `LendingConfig.oracleAddress` (stale or missing quotes are skipped), and debt is principal **plus accrued interest**. Positions at or below their liquidation threshold, or overdue, are liquidated.
 
 A failed simulation is logged but never halts the bot — a temporarily unavailable contract does not interrupt the keep-alive cycle for others.
 
@@ -217,6 +218,9 @@ All options are controlled via environment variables in `indexer/.env`:
 | `STELLAR_RPC_URL` | `https://soroban-testnet.stellar.org` | Soroban RPC endpoint used for simulations |
 | `STELLAR_NETWORK_PASSPHRASE` | Test SDF passphrase | Network passphrase for transaction building |
 | `MARKETPLACE_CONTRACT_ID` | _(required)_ | Contract ID of the marketplace to keep alive |
+| `LENDING_CONTRACT_ID` | _(optional)_ | Lending contract whose positions are monitored and liquidated |
+| `CRANK_SECRET_KEY` | _(optional)_ | Crank signing key. If unset, an ephemeral testnet key is funded via Friendbot |
+| `FRIENDBOT_MAX_ATTEMPTS` | `5` | Friendbot funding attempts (exponential backoff with jitter, honours `Retry-After`) before startup fails |
 
 The bot starts automatically as part of `npm run dev` via the root `concurrently` script. It can also be run standalone:
 

@@ -13,7 +13,7 @@ const mockRedisClient = vi.hoisted(() => ({
 
 vi.mock('../redis.js', () => ({ default: mockRedisClient }));
 
-import { cacheMiddleware } from '../api/cache-middleware';
+import { bigIntReplacer, cacheMiddleware } from '../api/cache-middleware';
 
 describe('Cache Middleware', () => {
   let app: express.Application;
@@ -148,5 +148,80 @@ describe('Cache Middleware', () => {
     const res = await request(app).get('/test');
     expect(res.status).toBe(200);
     expect(res.body.message).toBe('fresh');
+  });
+
+  // ── BigInt payloads (#1245) ───────────────────────────────────────────────
+
+  describe('BigInt serialisation (#1245)', () => {
+    const prismaRow = {
+      listingId: 9007199254740993n, // > Number.MAX_SAFE_INTEGER
+      tokenId: 42n,
+      nested: { ids: [1n, 2n] },
+      price: '10.5',
+    };
+
+    function bigIntApp() {
+      const a = express();
+      a.get('/bigint', cacheMiddleware(30), (_req, res) => {
+        res.json(prismaRow);
+      });
+      return a;
+    }
+
+    it('bigIntReplacer converts bigint values to decimal strings', () => {
+      expect(JSON.parse(JSON.stringify(prismaRow, bigIntReplacer))).toEqual({
+        listingId: '9007199254740993',
+        tokenId: '42',
+        nested: { ids: ['1', '2'] },
+        price: '10.5',
+      });
+    });
+
+    it('responds 200 and caches a payload containing BigInt fields on a miss', async () => {
+      mockRedisClient.get.mockResolvedValue(null);
+
+      const res = await request(bigIntApp()).get('/bigint');
+
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toMatch(/application\/json/);
+      expect(res.body).toEqual({
+        listingId: '9007199254740993',
+        tokenId: '42',
+        nested: { ids: ['1', '2'] },
+        price: '10.5',
+      });
+      expect(mockRedisClient.setEx).toHaveBeenCalledOnce();
+      const [, ttl, cached] = mockRedisClient.setEx.mock.calls[0];
+      expect(ttl).toBe(30);
+      expect(JSON.parse(cached)).toEqual(res.body);
+    });
+
+    it('serves the same body from cache that the miss returned', async () => {
+      mockRedisClient.get.mockResolvedValueOnce(null);
+      const miss = await request(bigIntApp()).get('/bigint');
+      const cached = mockRedisClient.setEx.mock.calls[0][2];
+
+      mockRedisClient.get.mockResolvedValueOnce(cached);
+      const hit = await request(bigIntApp()).get('/bigint');
+
+      expect(hit.status).toBe(200);
+      expect(hit.body).toEqual(miss.body);
+      expect(mockRedisClient.setEx).toHaveBeenCalledOnce();
+    });
+
+    it('does not cache an unserialisable (circular) payload', async () => {
+      mockRedisClient.get.mockResolvedValue(null);
+      const a = express();
+      a.get('/circular', cacheMiddleware(30), (_req, res) => {
+        const obj: any = { a: 1 };
+        obj.self = obj;
+        res.json(obj);
+      });
+
+      const res = await request(a).get('/circular');
+
+      expect(res.status).toBe(500);
+      expect(mockRedisClient.setEx).not.toHaveBeenCalled();
+    });
   });
 });
