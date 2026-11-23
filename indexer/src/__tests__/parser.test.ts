@@ -314,3 +314,41 @@ describe('parseMarketplaceEvent & parseLendingEvent — LENDING_LISTING_CANCELLE
     expect(result!.listingId).toBe(12n);
   });
 });
+
+// ── DEPLOY_STAKING_POOL topic decoding (#1231) ─────────────────────────────────
+
+describe('parseMarketplaceEvent — publish_staking_deploy (#1231)', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mockFromXDR.mockReturnValue({});
+  });
+
+  it('decodes (stake, pool) topics to DEPLOY_STAKING_POOL with creator, nft, and pool addresses', () => {
+    mockScValToNative
+      .mockReturnValueOnce('stake')
+      .mockReturnValueOnce('pool')
+      .mockReturnValueOnce(['G_CREATOR_ADDR', 'C_NFT_ADDR', 'C_POOL_ADDR']);
+
+    const result = parseMarketplaceEvent(['topic0_xdr', 'topic1_xdr'], 'val_xdr', 500);
+    expect(result).not.toBeNull();
+    expect(result!.eventType).toBe('DEPLOY_STAKING_POOL');
+    expect(result!.actor).toBe('G_CREATOR_ADDR');
+    expect(result!.ledgerSequence).toBe(500);
+    expect(result!.data).toEqual(['G_CREATOR_ADDR', 'C_NFT_ADDR', 'C_POOL_ADDR']);
+  });
+
+  it('handles fallback raw strings for ["stake", "pool"]', () => {
+    mockFromXDR
+      .mockImplementationOnce(() => { throw new Error('bad XDR'); })
+      .mockImplementationOnce(() => { throw new Error('bad XDR'); })
+      .mockReturnValueOnce({});
+    mockScValToNative.mockReturnValueOnce(['G_CREATOR_RAW', 'C_NFT_RAW', 'C_POOL_RAW']);
+
+    const result = parseMarketplaceEvent(['stake', 'pool'], 'val_xdr', 501);
+    expect(result).not.toBeNull();
+    expect(result!.eventType).toBe('DEPLOY_STAKING_POOL');
+    expect(result!.actor).toBe('G_CREATOR_RAW');
+    expect(result!.ledgerSequence).toBe(501);
+    expect(result!.data).toEqual(['G_CREATOR_RAW', 'C_NFT_RAW', 'C_POOL_RAW']);
+  });
+});

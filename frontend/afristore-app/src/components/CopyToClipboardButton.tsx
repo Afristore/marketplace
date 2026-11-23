@@ -1,7 +1,7 @@
 'use client'
 
 import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
-import { useTranslation } from '@/lib/i18n'
+import { useTranslation } from '@/lib/i18n/useTranslation'
 
 interface CopyToClipboardButtonProps {
   text: string

@@ -1021,6 +1021,30 @@ describe("processEvent — CURRENCY_WHITELISTED & CURRENCY_REMOVED", () => {
       }),
     });
   });
+
+  it("persists staking pool mapping on DEPLOY_STAKING_POOL (#1231)", async () => {
+    const data = ["G_CREATOR", "C_NFT_ADDR", "C_POOL_ADDR"];
+
+    await processEvent(
+      makeEvent("DEPLOY_STAKING_POOL", null, "G_CREATOR", data, 730),
+    );
+
+    expect(mockPrisma.collection.upsert).toHaveBeenCalledWith({
+      where: { contractAddress: "C_POOL_ADDR" },
+      create: {
+        contractAddress: "C_POOL_ADDR",
+        kind: "staking_pool",
+        creator: "G_CREATOR",
+        name: "C_NFT_ADDR",
+        deployedAtLedger: 730,
+      },
+      update: {
+        creator: "G_CREATOR",
+        name: "C_NFT_ADDR",
+        deployedAtLedger: 730,
+      },
+    });
+  });
 });
 
 // ── window floor reset (issue #233) ──────────────────────────────────────────
