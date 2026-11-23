@@ -17,6 +17,7 @@ import {
 import { config } from "@/lib/config";
 import {
   AlertCircle,
+  CheckCircle,
   Lock,
   Unlock,
   Coins,
@@ -58,6 +59,7 @@ function StakingPageContent() {
   const [isUnstaking, setIsUnstaking] = useState(false);
   const [isClaiming, setIsClaiming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successNotice, setSuccessNotice] = useState<string | null>(null);
   const [pendingRewards, setPendingRewards] = useState(0);
   const [activeTab, setActiveTab] = useState<"unstaked" | "staked">("unstaked");
 
@@ -191,32 +193,65 @@ function StakingPageContent() {
     if (!publicKey || !poolAddress || selectedIds.size === 0) return;
     setIsStaking(true);
     setError(null);
+    setSuccessNotice(null);
+
+    const selected = collectionNfts.filter(
+      (nft) =>
+        selectedIds.has(`${nft.collectionAddress}-${nft.tokenId}`) &&
+        nft.collectionAddress &&
+        typeof nft.tokenId === "number",
+    );
+    const totalToStake = selected.length;
+    let successfulCount = 0;
+    const successfulTokenIds: number[] = [];
+
     try {
       const { stake } = await import("@/lib/staking");
-      const selected = collectionNfts.filter(
-        (nft) =>
-          selectedIds.has(`${nft.collectionAddress}-${nft.tokenId}`) &&
-          nft.collectionAddress &&
-          typeof nft.tokenId === "number",
-      );
       for (const nft of selected) {
+        const id = `${nft.collectionAddress}-${nft.tokenId}`;
         await stake(
           publicKey,
           nft.collectionAddress,
           nft.tokenId,
           poolAddress,
         );
+
+        successfulCount++;
+        successfulTokenIds.push(nft.tokenId);
+
+        // Remove successfully staked token from selectedIds as each completes
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
       }
-      setSelectedIds(new Set());
-      await refreshNFTs();
-      await fetchStakedNfts();
-      await fetchPendingRewards();
-      const { totalStaked } = await import("@/lib/staking");
-      const updatedTotal = await totalStaked(poolAddress);
-      setPoolStakedCount(updatedTotal);
+
+      setSuccessNotice(
+        `Successfully staked ${successfulCount} NFT${successfulCount > 1 ? "s" : ""} (#${successfulTokenIds.join(", #")}).`,
+      );
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Staking failed");
+      const errMsg = err instanceof Error ? err.message : "Staking failed";
+      if (successfulCount > 0) {
+        setError(
+          `Partially succeeded: staked ${successfulCount} of ${totalToStake} NFT${totalToStake > 1 ? "s" : ""} (#${successfulTokenIds.join(", #")}). Remaining aborted due to: ${errMsg}`,
+        );
+      } else {
+        setError(errMsg);
+      }
     } finally {
+      if (successfulCount > 0) {
+        await refreshNFTs();
+        await fetchStakedNfts();
+        await fetchPendingRewards();
+        try {
+          const { totalStaked } = await import("@/lib/staking");
+          const updatedTotal = await totalStaked(poolAddress);
+          setPoolStakedCount(updatedTotal);
+        } catch {
+          // ignore error updating pool total count
+        }
+      }
       setIsStaking(false);
     }
   };
@@ -484,6 +519,20 @@ function StakingPageContent() {
               </button>
             </div>
           </>
+        )}
+
+        {/* Success Notice */}
+        {successNotice && (
+          <div className="flex items-center gap-3 rounded-xl bg-mint-500/10 border border-mint-500/20 p-4">
+            <CheckCircle size={20} className="text-mint-400 shrink-0" />
+            <p className="text-sm text-mint-300">{successNotice}</p>
+            <button
+              onClick={() => setSuccessNotice(null)}
+              className="ml-auto text-mint-400/60 hover:text-mint-300 text-sm font-medium"
+            >
+              Dismiss
+            </button>
+          </div>
         )}
 
         {/* Error */}
