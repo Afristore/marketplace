@@ -5454,3 +5454,73 @@ fn test_create_listing_erc1155_amount_greater_than_one_succeeds() {
 
     assert_eq!(client.get_listing(&listing_id).amount, 5);
 }
+
+// ── Secondary sale royalty split across multiple recipients (#1304) ──
+
+#[test]
+fn test_secondary_sale_royalty_split_multi_recipients() {
+    let (env, client, artist, buyer, token_id, contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    // The collection pays a 10% royalty to the original artist on every resale.
+    let royalty_bps = 1000u32;
+    mock_nft::MockNftClient::new(&env, &collection_id).set_royalty(&artist, &royalty_bps);
+
+    let price = 10_000_000_i128;
+    let id = client.create_listing(
+        &artist,
+        &price,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &valid_recipients(&env, &artist),
+    );
+
+    // First sale: the artist is the seller, so no royalty is due.
+    client.buy_artwork(&buyer, &id);
+
+    // Resale: the buyer relists with two configured recipients (70% / 30%).
+    let new_buyer = Address::generate(&env);
+    StellarAssetClient::new(&env, &token_id).mint(&new_buyer, &100_000_000_000_i128);
+    let co_seller = Address::generate(&env);
+    let mut listing = client.get_listing(&id);
+    listing.artist = buyer.clone();
+    listing.status = ListingStatus::Active;
+    listing.owner = None;
+    listing.recipients = vec![
+        &env,
+        Recipient {
+            address: buyer.clone(),
+            percentage: 70,
+        },
+        Recipient {
+            address: co_seller.clone(),
+            percentage: 30,
+        },
+    ];
+    env.as_contract(&contract_id, || {
+        crate::storage::save_listing(&env, &listing);
+    });
+
+    let token = TokenClient::new(&env, &token_id);
+    let artist_before = token.balance(&artist);
+    let buyer_before = token.balance(&buyer);
+    let co_seller_before = token.balance(&co_seller);
+
+    client.buy_artwork(&new_buyer, &id);
+
+    // Royalty to the original artist, then the remainder split 70 / 30 with the
+    // last recipient taking the rounding remainder.
+    let royalty = price * royalty_bps as i128 / 10_000; // 1_000_000
+    let payout = price - royalty; // 9_000_000
+    let first_share = payout * 70 / 100; // 6_300_000
+    let last_share = payout - first_share; // 2_700_000
+
+    assert_eq!(token.balance(&artist), artist_before + royalty);
+    assert_eq!(token.balance(&buyer), buyer_before + first_share);
+    assert_eq!(token.balance(&co_seller), co_seller_before + last_share);
+    assert_eq!(first_share + last_share + royalty, price);
+}
