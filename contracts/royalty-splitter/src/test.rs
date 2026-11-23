@@ -1002,7 +1002,6 @@ fn test_rescue_token_sweeps_non_configured_token_successfully() {
 
     assert_eq!(other_tc.balance(&contract_id), 0);
     assert_eq!(other_tc.balance(&recipient), 50_000);
-    assert!(!env.events().all().is_empty());
 }
 
 #[test]

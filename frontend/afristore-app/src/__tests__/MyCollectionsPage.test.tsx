@@ -1,4 +1,5 @@
 import React from "react";
+import "@/i18n";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import MyCollectionsPage from "@/app/launchpad/my-collections/page";

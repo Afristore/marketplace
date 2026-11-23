@@ -2316,7 +2316,7 @@ fn deploy_splitter_emits_deploy_event_with_split_tag() {
     client.add_approved_currency(&token);
     let beneficiaries =
         soroban_sdk::Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
-    let shares = soroban_sdk::Vec::from_array(&env, [60u32, 40u32]);
+    let shares = soroban_sdk::Vec::from_array(&env, [6000u32, 4000u32]);
 
     let _splitter = client.deploy_splitter(
         &creator,
@@ -2348,7 +2348,7 @@ fn deploy_splitter_salt_isolates_addresses_across_creators_and_salts() {
     client.add_approved_currency(&token);
     let beneficiaries =
         soroban_sdk::Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
-    let shares = soroban_sdk::Vec::from_array(&env, [50u32, 50u32]);
+    let shares = soroban_sdk::Vec::from_array(&env, [5000u32, 5000u32]);
 
     let salt = BytesN::from_array(&env, &[0x52u8; 32]);
     let by_creator = client.deploy_splitter(&creator, &token, &beneficiaries, &shares, &salt);

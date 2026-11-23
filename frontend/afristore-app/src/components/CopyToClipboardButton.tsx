@@ -15,7 +15,7 @@ export function CopyToClipboardButton({
   ariaLabel,
 }: CopyToClipboardButtonProps) {
   const { copied, copy } = useCopyToClipboard()
-  const t = useTranslation()
+  const { t } = useTranslation()
 
   const handleCopy = async () => {
     await copy(text)

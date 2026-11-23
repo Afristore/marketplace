@@ -123,9 +123,18 @@ export async function invokeContract(
   callerPublicKey: string,
   method: string,
   args: xdr.ScVal[],
-  readonly = false,
+  readonlyOrOptions: boolean | { readonly?: boolean; fee?: number } = false,
   contractId: string = config.contractId,
 ): Promise<xdr.ScVal> {
+  const readonly =
+    typeof readonlyOrOptions === "boolean"
+      ? readonlyOrOptions
+      : !!readonlyOrOptions?.readonly;
+  const fee =
+    typeof readonlyOrOptions === "object" && readonlyOrOptions?.fee !== undefined
+      ? String(readonlyOrOptions.fee)
+      : BASE_FEE;
+
   const readableError = (raw: string, fallback: string): Error => {
     const mapped = mapSorobanErrorMessage(raw);
     return new Error(mapped ?? fallback);
@@ -138,7 +147,7 @@ export async function invokeContract(
   const account = await rpc.getAccount(callerPublicKey);
 
   const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
+    fee,
     networkPassphrase: getNetworkPassphrase(),
   })
     .addOperation(contract.call(method, ...args))
@@ -354,7 +363,7 @@ export async function updateListing(
   const args: xdr.ScVal[] = [
     new Address(artistPublicKey).toScVal(),
     nativeToScVal(BigInt(listingId), { type: "u64" }),
-    nativeToScVal(Buffer.from(newMetadataCid, "utf-8"), { type: "bytes" }),
+    xdr.ScVal.scvBytes(Buffer.from(newMetadataCid, "utf-8")),
     nativeToScVal(priceStroops, { type: "i128" }),
     new Address(selectedToken.address).toScVal(),
     nativeToScVal(
@@ -598,7 +607,7 @@ export async function createAuction(
 
   const args: xdr.ScVal[] = [
     new Address(creatorPublicKey).toScVal(),
-    nativeToScVal(Buffer.from(metadataCid, "utf-8"), { type: "bytes" }),
+    xdr.ScVal.scvBytes(Buffer.from(metadataCid, "utf-8")),
     new Address(selectedToken.address).toScVal(),
     nativeToScVal(reserveStroops, { type: "i128" }),
     nativeToScVal(BigInt(durationSeconds), { type: "u64" }),

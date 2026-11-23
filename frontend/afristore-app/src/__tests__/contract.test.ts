@@ -200,7 +200,7 @@ describe("getAllAuctions — indexer path and error handling", () => {
 // error, so nothing is signed or submitted. The Contract.call spy records the
 // method name and the exact ScVal arguments that were built.
 
-const SERIALIZE_ARTIST = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+const SERIALIZE_ARTIST = "GDUSNJ5OGLOZQ7X4XO2KDXMUKSNTNBHAOPYVZEERW7FQVQEIZ5BVTCRD";
 const SERIALIZE_BUYER = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
 const SERIALIZE_CO_ARTIST = "GCKFBEIYV2U22IO2BJ4KVJOIP7XPWQGQFKKWXR6DOSJBV7STMAQSMTGG";
 const SERIALIZE_COLLECTION = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
@@ -222,9 +222,9 @@ describe("contract method serialization (#1307)", () => {
   });
 
   afterEach(() => {
-    callSpy.mockRestore();
-    accountSpy.mockRestore();
-    simulateSpy.mockRestore();
+    callSpy?.mockRestore?.();
+    accountSpy?.mockRestore?.();
+    simulateSpy?.mockRestore?.();
   });
 
   /** Runs a write method and returns the method name and its ScVal args. */
