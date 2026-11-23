@@ -1,4 +1,18 @@
+import { Account, Contract, SorobanRpc, scValToNative, xdr } from "@stellar/stellar-sdk";
+import { DEFAULT_TOKEN } from "@/config/tokens";
+
+jest.mock("@/lib/config", () => ({
+  config: {
+    ...jest.requireActual("@/lib/config").config,
+    contractId: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+    rpcUrl: "https://soroban-testnet.example",
+  },
+}));
+
 import {
+  createAuction,
+  createListing,
+  buyArtwork,
   stroopsToXlm,
   xlmToStroops,
   getAllListings,
@@ -177,5 +191,138 @@ describe("getAllAuctions — indexer path and error handling", () => {
       console.error("Test failed:", error);
       throw error;
     }
+  });
+});
+
+// ── Contract method serialization (#1307) ─────────────────────
+// Each write method builds its ScVal argument list and hands it to
+// invokeContract. We stop the flow at simulation: the simulation returns an
+// error, so nothing is signed or submitted. The Contract.call spy records the
+// method name and the exact ScVal arguments that were built.
+
+const SERIALIZE_ARTIST = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+const SERIALIZE_BUYER = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
+const SERIALIZE_CO_ARTIST = "GCKFBEIYV2U22IO2BJ4KVJOIP7XPWQGQFKKWXR6DOSJBV7STMAQSMTGG";
+const SERIALIZE_COLLECTION = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC";
+
+describe("contract method serialization (#1307)", () => {
+  let callSpy: jest.SpyInstance;
+  let accountSpy: jest.SpyInstance;
+  let simulateSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    accountSpy = jest
+      .spyOn(SorobanRpc.Server.prototype, "getAccount")
+      .mockResolvedValue(new Account(SERIALIZE_ARTIST, "1") as never);
+    // Simulation fails on purpose: invokeContract throws before signing.
+    simulateSpy = jest
+      .spyOn(SorobanRpc.Server.prototype, "simulateTransaction")
+      .mockResolvedValue({ error: "serialization-test-stop" } as never);
+    callSpy = jest.spyOn(Contract.prototype, "call");
+  });
+
+  afterEach(() => {
+    callSpy.mockRestore();
+    accountSpy.mockRestore();
+    simulateSpy.mockRestore();
+  });
+
+  /** Runs a write method and returns the method name and its ScVal args. */
+  async function captureCall(run: () => Promise<unknown>) {
+    await expect(run()).rejects.toThrow();
+    expect(callSpy).toHaveBeenCalledTimes(1);
+    const [method, ...args] = callSpy.mock.calls[0] as [string, ...xdr.ScVal[]];
+    return { method, args };
+  }
+
+  it("createListing sends seven typed arguments in contract order", async () => {
+    const { method, args } = await captureCall(() =>
+      createListing(
+        SERIALIZE_ARTIST,
+        1,
+        DEFAULT_TOKEN.address,
+        SERIALIZE_COLLECTION,
+        5,
+        [
+          { address: SERIALIZE_ARTIST, percentage: 60 },
+          { address: SERIALIZE_CO_ARTIST, percentage: 40 },
+        ],
+      ),
+    );
+
+    expect(method).toBe("create_listing");
+    expect(args).toHaveLength(7);
+    expect(args.map((arg) => arg.switch().name)).toEqual([
+      "scvAddress",
+      "scvI128",
+      "scvSymbol",
+      "scvAddress",
+      "scvAddress",
+      "scvU64",
+      "scvVec",
+    ]);
+    expect(scValToNative(args[0])).toBe(SERIALIZE_ARTIST);
+    expect(scValToNative(args[1])).toBe(10_000_000n);
+    expect(scValToNative(args[2])).toBe(DEFAULT_TOKEN.symbol);
+    expect(scValToNative(args[3])).toBe(DEFAULT_TOKEN.address);
+    expect(scValToNative(args[4])).toBe(SERIALIZE_COLLECTION);
+    expect(scValToNative(args[5])).toBe(5n);
+
+    const recipients = scValToNative(args[6]) as Array<{ address: string; percentage: unknown }>;
+    expect(recipients.map((r) => r.address)).toEqual([SERIALIZE_ARTIST, SERIALIZE_CO_ARTIST]);
+    expect(recipients.map((r) => Number(r.percentage))).toEqual([60, 40]);
+  });
+
+  it("createListing defaults recipients to 100% to the artist", async () => {
+    const { args } = await captureCall(() =>
+      createListing(SERIALIZE_ARTIST, 2, DEFAULT_TOKEN.address, SERIALIZE_COLLECTION, 9),
+    );
+
+    const recipients = scValToNative(args[6]) as Array<{ address: string; percentage: unknown }>;
+    expect(recipients).toHaveLength(1);
+    expect(recipients[0].address).toBe(SERIALIZE_ARTIST);
+    expect(Number(recipients[0].percentage)).toBe(100);
+  });
+
+  it("createAuction sends seven typed arguments with the royalty as u32", async () => {
+    const cid = "QmSerializeCid";
+    const { method, args } = await captureCall(() =>
+      createAuction(
+        SERIALIZE_ARTIST,
+        cid,
+        2,
+        3600,
+        500,
+        [{ address: SERIALIZE_ARTIST, percentage: 100 }],
+        DEFAULT_TOKEN.address,
+      ),
+    );
+
+    expect(method).toBe("create_auction");
+    expect(args).toHaveLength(7);
+    expect(args.map((arg) => arg.switch().name)).toEqual([
+      "scvAddress",
+      "scvBytes",
+      "scvAddress",
+      "scvI128",
+      "scvU64",
+      "scvU32",
+      "scvVec",
+    ]);
+    expect(scValToNative(args[0])).toBe(SERIALIZE_ARTIST);
+    expect(Buffer.from(scValToNative(args[1]) as Uint8Array).toString("utf-8")).toBe(cid);
+    expect(scValToNative(args[2])).toBe(DEFAULT_TOKEN.address);
+    expect(scValToNative(args[3])).toBe(20_000_000n);
+    expect(scValToNative(args[4])).toBe(3600n);
+    expect(scValToNative(args[5])).toBe(500);
+  });
+
+  it("buyArtwork sends the buyer address and the listing id as u64", async () => {
+    const { method, args } = await captureCall(() => buyArtwork(SERIALIZE_BUYER, 42));
+
+    expect(method).toBe("buy_artwork");
+    expect(args.map((arg) => arg.switch().name)).toEqual(["scvAddress", "scvU64"]);
+    expect(scValToNative(args[0])).toBe(SERIALIZE_BUYER);
+    expect(scValToNative(args[1])).toBe(42n);
   });
 });
