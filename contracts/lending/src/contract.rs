@@ -8,10 +8,10 @@ use crate::oracle;
 use crate::settlement::settle;
 use crate::storage::{
     extend_instance_ttl, get_config, get_currency_symbol, get_listing, get_position, has_config,
-    is_currency_whitelisted, next_position_id, remove_listing, set_config, set_currency_symbol,
-    set_listing, set_position,
+    is_currency_whitelisted, next_listing_id, next_position_id, remove_listing, set_config,
+    set_currency_symbol, set_listing, set_position,
 };
-use crate::types::{ListingStatus, PlatformConfig, Position, PositionStatus};
+use crate::types::{Listing, ListingStatus, PlatformConfig, Position, PositionStatus};
 
 #[contractclient(name = "NftClient")]
 pub trait Erc721 {
@@ -181,6 +181,73 @@ impl LendingContract {
     }
 
     // ── Listings ──────────────────────────────────────────────────────────────
+
+    pub fn create_listing(
+        env: Env,
+        lender: Address,
+        nft_contract: Address,
+        token_id: u128,
+        declared_price_usd: i128,
+        interest_schedule_bps: soroban_sdk::Vec<u32>,
+        max_duration_days: u32,
+        min_collateral_buffer_bps: u32,
+        liquidation_threshold_bps: u32,
+    ) -> u64 {
+        lender.require_auth();
+
+        if token_id > u64::MAX as u128 {
+            panic!("token_id exceeds ERC-721 range");
+        }
+        if declared_price_usd <= 0 {
+            panic!("declared_price_usd must be greater than zero");
+        }
+        if interest_schedule_bps.is_empty() {
+            panic!("interest_schedule_bps must not be empty");
+        }
+        if max_duration_days == 0 {
+            panic!("max_duration_days must be greater than zero");
+        }
+
+        let config = get_config(&env);
+        if min_collateral_buffer_bps < config.min_buffer_bps
+            || min_collateral_buffer_bps > config.max_buffer_bps
+        {
+            panic!("min_collateral_buffer_bps is outside configured bounds");
+        }
+        if liquidation_threshold_bps < config.min_liq_threshold_bps
+            || liquidation_threshold_bps > config.max_liq_threshold_bps
+        {
+            panic!("liquidation_threshold_bps is outside configured bounds");
+        }
+
+        let nft_client = NftClient::new(&env, &nft_contract);
+        nft_client.transfer(&lender, &env.current_contract_address(), &(token_id as u64));
+
+        let listing_id = next_listing_id(&env);
+        let listing = Listing {
+            id: listing_id,
+            lender: lender.clone(),
+            nft_contract: nft_contract.clone(),
+            token_id,
+            declared_price_usd,
+            interest_schedule_bps,
+            max_duration_days,
+            min_collateral_buffer_bps,
+            liquidation_threshold_bps,
+            status: ListingStatus::Open,
+            created_at: env.ledger().timestamp(),
+        };
+        set_listing(&env, listing_id, &listing);
+        events::emit_listing_created(
+            &env,
+            listing_id,
+            lender,
+            nft_contract,
+            token_id,
+            declared_price_usd,
+        );
+        listing_id
+    }
 
     pub fn cancel_listing(env: Env, listing_id: u64) {
         extend_instance_ttl(&env);

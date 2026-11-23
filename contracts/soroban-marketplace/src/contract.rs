@@ -1073,11 +1073,11 @@ impl MarketplaceContract {
         }
     }
 
-    fn is_erc721_collection(env: &Env, collection: &Address) -> bool {
+    fn is_erc721_collection(env: &Env, collection: &Address, token_id: u64) -> bool {
         let res = env.try_invoke_contract::<soroban_sdk::Val, soroban_sdk::Val>(
             collection,
             &Symbol::new(env, "owner_of"),
-            soroban_sdk::vec![env, 0u64.into_val(env)],
+            soroban_sdk::vec![env, token_id.into_val(env)],
         );
         match res {
             Ok(_) => true,
@@ -1093,7 +1093,7 @@ impl MarketplaceContract {
         token_id: u64,
         amount: u64,
     ) {
-        if Self::is_erc721_collection(env, collection) {
+        if Self::is_erc721_collection(env, collection, token_id) {
             env.invoke_contract::<()>(
                 collection,
                 &soroban_sdk::Symbol::new(env, "transfer_from"),
