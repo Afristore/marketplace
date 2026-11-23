@@ -1962,11 +1962,8 @@ fn test_paused_contract_rejection_on_all_state_mutating_functions_issue_1093() {
         .unwrap();
     assert_eq!(stake_err, StakingError::ContractPaused.into());
 
-    let unstake_err = staking
-        .try_unstake_erc721(&user, &collection, &100)
-        .unwrap_err()
-        .unwrap();
-    assert_eq!(unstake_err, StakingError::ContractPaused.into());
+    let claim_err = staking.try_claim_rewards(&user).unwrap_err().unwrap();
+    assert_eq!(claim_err, StakingError::ContractPaused.into());
 
     // Query functions continue to operate
     assert_eq!(staking.total_staked(), 0);
