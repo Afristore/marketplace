@@ -1,9 +1,26 @@
 "use client";
 
 import { useState } from "react";
-import { X, CreditCard, Wallet, Loader2, CheckCircle } from "lucide-react";
+import { X, CreditCard, Wallet, Loader2, CheckCircle, AlertCircle } from "lucide-react";
 import { Listing, stroopsToXlm } from "@/lib/contract";
+import { useSafeToast } from "@/hooks/useSafeToast";
 import posthog from "posthog-js";
+
+/** Turns whatever a failed purchase threw into a sentence a buyer can act on. */
+export function purchaseErrorMessage(error: unknown): string {
+  const detail =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  if (/reject|denied|declined|cancel/i.test(detail)) {
+    return "The transaction was cancelled in your wallet. No payment was made.";
+  }
+  return detail
+    ? `Purchase failed: ${detail}`
+    : "Purchase failed. Please try again.";
+}
 
 interface CheckoutModalProps {
   isOpen: boolean;
@@ -25,6 +42,9 @@ export function CheckoutModal({
   const [method, setMethod] = useState<"crypto" | "fiat">("crypto");
   const [quantity, setQuantity] = useState(1);
   const [purchased, setPurchased] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pushToast = useSafeToast();
 
   if (!isOpen) return null;
 
@@ -35,22 +55,50 @@ export function CheckoutModal({
   const handleClose = () => {
     setPurchased(false);
     setQuantity(1);
+    setError(null);
     onClose();
   };
 
   const handleCryptoPurchase = async () => {
-    const success = await onCryptoPurchase();
-    if (success) {
+    if (submitting || isBuyingCrypto) return;
+    setSubmitting(true);
+    setError(null);
+
+    let success = false;
+    try {
+      success = await onCryptoPurchase();
+    } catch (err) {
+      const message = purchaseErrorMessage(err);
+      setError(message);
+      pushToast(message, "error");
+      return;
+    } finally {
+      setSubmitting(false);
+    }
+
+    if (!success) return;
+
+    // The purchase went through on chain. Analytics or a parent callback
+    // failing must not hide that from the buyer or crash the modal.
+    try {
       posthog.capture("Purchase Successful", {
         listing_id: listing.listing_id,
         price_xlm: totalPriceXlm,
         quantity,
         method: "crypto",
       });
-      onPurchased?.();
-      setPurchased(true);
+    } catch (err) {
+      console.error("Failed to record purchase analytics", err);
     }
+    try {
+      onPurchased?.();
+    } catch (err) {
+      console.error("onPurchased callback failed", err);
+    }
+    setPurchased(true);
   };
+
+  const busy = isBuyingCrypto || submitting;
 
   if (purchased) {
     return (
@@ -169,12 +217,23 @@ export function CheckoutModal({
               </div>
             </div>
 
+            {error && (
+              <div
+                role="alert"
+                data-testid="checkout-error"
+                className="mt-6 flex items-start gap-2 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-900"
+              >
+                <AlertCircle size={16} className="mt-0.5 shrink-0 text-red-400" />
+                <span>{error}</span>
+              </div>
+            )}
+
             <button
               onClick={handleCryptoPurchase}
-              disabled={isBuyingCrypto}
+              disabled={busy}
               className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-500 py-4 font-bold text-white shadow-lg shadow-brand-500/20 hover:bg-brand-600 transition-all disabled:opacity-50"
             >
-              {isBuyingCrypto ? (
+              {busy ? (
                 <>
                   <Loader2 className="animate-spin" size={18} /> Processing...
                 </>

@@ -55,8 +55,14 @@ pub fn settle(
     let now = env.ledger().timestamp();
 
     // ── Oracle price ──────────────────────────────────────────────────────────
-    let oracle_price =
-        oracle::get_price(env, &config.oracle_address, &position.collateral_currency);
+    // Use the platform's configured window, the same one borrow(), liquidate()
+    // and health_factor() enforce, so a quote they accept is not rejected here.
+    let oracle_price = oracle::get_price_with_staleness(
+        env,
+        &config.oracle_address,
+        &position.collateral_currency,
+        config.max_price_staleness_secs,
+    );
     if oracle_price <= 0 {
         panic!("InvalidOraclePrice: oracle_price must be > 0");
     }

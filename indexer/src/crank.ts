@@ -207,22 +207,76 @@ export async function ensureCrankKeypair(
   return keypair;
 }
 
+/**
+ * Most contracts whose TTL is extended by one transaction. A single
+ * extendFootprintTtl operation extends every entry in the transaction's
+ * read-only footprint, but the network caps the entries a transaction may read
+ * (100 on current Stellar networks), so larger lists are split into chunks.
+ */
+export const TTL_BATCH_SIZE = 25;
+
+export interface TtlBumpResult {
+  contractIds: string[];
+  success: boolean;
+  txHash?: string;
+}
+
+/**
+ * Extends the instance TTL of every contract in `contractIds` with one
+ * transaction per chunk of `batchSize`, instead of one transaction per
+ * contract. Empty and duplicate ids are skipped.
+ */
+export async function bumpContractTtls(
+  contractIds: Array<string | null | undefined>,
+  crankKeypair: Keypair,
+  server: rpc.Server = rpcServer,
+  batchSize: number = TTL_BATCH_SIZE,
+): Promise<TtlBumpResult[]> {
+  const ids = [...new Set(contractIds.filter((id): id is string => !!id))];
+  if (ids.length === 0) return [];
+
+  const size = Math.max(1, Math.floor(batchSize));
+  const results: TtlBumpResult[] = [];
+  for (let i = 0; i < ids.length; i += size) {
+    results.push(await submitTtlBatch(ids.slice(i, i + size), crankKeypair, server));
+  }
+  return results;
+}
+
+/** Extends the instance TTL of one contract. Kept for callers that bump a single contract. */
 export async function bumpContractTtl(
   contractId: string,
   crankKeypair: Keypair,
   server: rpc.Server = rpcServer,
 ) {
   if (!contractId) return;
+  await bumpContractTtls([contractId], crankKeypair, server);
+}
 
+async function submitTtlBatch(
+  contractIds: string[],
+  crankKeypair: Keypair,
+  server: rpc.Server,
+): Promise<TtlBumpResult> {
+  const failed: TtlBumpResult = { contractIds, success: false };
   try {
+    const ledgerKeys: xdr.LedgerKey[] = [];
+    for (const contractId of contractIds) {
+      try {
+        ledgerKeys.push(contractIdToLedgerKey(contractId));
+      } catch (err) {
+        // One bad address must not stop the rest of the batch from being kept alive.
+        log.error('Invalid contract id; skipping TTL bump', { contractId, err });
+      }
+    }
+    if (ledgerKeys.length === 0) return failed;
+
     const account = await server.getAccount(crankKeypair.publicKey());
     const currentLedger = (await server.getLatestLedger()).sequence;
     const extendTo = currentLedger + EXTEND_LEDGERS;
 
-    const ledgerKey = contractIdToLedgerKey(contractId);
-
     const footprint = new xdr.LedgerFootprint({
-      readOnly: [ledgerKey],
+      readOnly: ledgerKeys,
       readWrite: [],
     });
 
@@ -251,8 +305,8 @@ export async function bumpContractTtl(
     const simResult = await server.simulateTransaction(tx);
 
     if (!rpc.Api.isSimulationSuccess(simResult)) {
-      log.error('Simulation failed', { contractId });
-      return;
+      log.error('Simulation failed', { contractIds });
+      return failed;
     }
 
     const assembled = rpc.assembleTransaction(tx, simResult).build();
@@ -261,8 +315,8 @@ export async function bumpContractTtl(
     const submitResult = await server.sendTransaction(assembled);
 
     if (submitResult.status === 'ERROR') {
-      log.error('Submit error', { contractId, errorResult: submitResult.errorResult });
-      return;
+      log.error('Submit error', { contractIds, errorResult: submitResult.errorResult });
+      return failed;
     }
 
     // Poll for completion
@@ -273,12 +327,14 @@ export async function bumpContractTtl(
     }
 
     if (txResult.status === rpc.Api.GetTransactionStatus.SUCCESS) {
-      log.info('TTL bumped', { contractId, extendTo });
-    } else {
-      log.error('TTL bump failed', { contractId, txResult });
+      log.info('TTL bumped', { contracts: ledgerKeys.length, contractIds, extendTo });
+      return { contractIds, success: true, txHash: submitResult.hash };
     }
+    log.error('TTL bump failed', { contractIds, txResult });
+    return failed;
   } catch (err) {
-    log.error('Failed to bump TTL', { contractId, err });
+    log.error('Failed to bump TTL', { contractIds, err });
+    return failed;
   }
 }
 
@@ -780,22 +836,21 @@ export async function runCrank() {
     try {
       log.info('Running TTL extension cycle');
 
-      if (MARKETPLACE_CONTRACT_ID) {
-        await bumpContractTtl(MARKETPLACE_CONTRACT_ID, crankKeypair);
-      }
-
-      if (LAUNCHPAD_CONTRACT_ID) {
-        await bumpContractTtl(LAUNCHPAD_CONTRACT_ID, crankKeypair);
-      }
-
       const recentCollections = await prisma.collection.findMany({
         take: 20,
         orderBy: { deployedAtLedger: 'desc' },
       });
 
-      for (const col of recentCollections) {
-        await bumpContractTtl(col.contractAddress, crankKeypair);
-      }
+      // One batched transaction for the platform contracts and recent
+      // collections, instead of one transaction per contract.
+      await bumpContractTtls(
+        [
+          MARKETPLACE_CONTRACT_ID,
+          LAUNCHPAD_CONTRACT_ID,
+          ...recentCollections.map((col) => col.contractAddress),
+        ],
+        crankKeypair,
+      );
 
       await updatePositionHealthFactors(crankKeypair);
     } catch (err) {
