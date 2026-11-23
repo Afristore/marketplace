@@ -213,6 +213,7 @@ export function useAcceptOffer(publicKey: string | null) {
       setError(null);
       try {
         await acceptOffer(publicKey, offerId);
+        await onRefresh?.(); // #1286: invalidate offers cache on accept
         return true;
       } catch (err: unknown) {
         setError(getReadableErrorMessage(err, "Failed to accept offer"));
@@ -244,6 +245,7 @@ export function useRejectOffer(publicKey: string | null) {
       setError(null);
       try {
         await rejectOffer(publicKey, offerId);
+        await onRefresh?.(); // #1286: invalidate offers cache on reject
         return true;
       } catch (err: unknown) {
         setError(getReadableErrorMessage(err, "Failed to reject offer"));
