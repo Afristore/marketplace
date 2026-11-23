@@ -3,6 +3,11 @@ use soroban_sdk::{contractclient, contracttype, Address, Env};
 /// Default maximum allowed staleness for an oracle price quote (5 minutes).
 pub const DEFAULT_MAX_STALENESS_SECS: u64 = 300;
 
+/// Largest staleness window the platform accepts (24 hours). A wider window
+/// would let positions be opened or liquidated against prices that no longer
+/// reflect the market.
+pub const MAX_STALENESS_SECS: u64 = 86_400;
+
 /// Standard Stellar asset and USD fixed-point decimal places.
 pub const DECIMALS: u32 = 7;
 
@@ -50,11 +55,28 @@ pub fn get_price_with_staleness(
     }
 
     let now = env.ledger().timestamp();
-    if now.saturating_sub(data.timestamp) > max_staleness_secs {
+    // A quote stamped after the current ledger close cannot be trusted: with a
+    // saturating subtraction it would otherwise look perfectly fresh.
+    if data.timestamp > now {
+        panic!("Oracle price timestamp is in the future");
+    }
+    if now - data.timestamp > max_staleness_secs {
         panic!("Stale oracle price");
     }
 
     data.price
+}
+
+/// Panics unless `max_staleness_secs` is a usable window: greater than zero
+/// (a zero window rejects every quote but one from the current ledger) and no
+/// larger than `MAX_STALENESS_SECS`.
+pub fn validate_staleness_window(max_staleness_secs: u64) {
+    if max_staleness_secs == 0 {
+        panic!("Invalid staleness window: must be greater than zero");
+    }
+    if max_staleness_secs > MAX_STALENESS_SECS {
+        panic!("Invalid staleness window: must not exceed 86400 seconds");
+    }
 }
 
 /// Convert a 7-decimal Stellar asset amount into a 7-decimal USD value using a

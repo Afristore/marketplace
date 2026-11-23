@@ -91,6 +91,7 @@ import {
   contractIdToLedgerKey,
   ensureCrankKeypair,
   bumpContractTtl,
+  bumpContractTtls,
   triggerLiquidation,
   updatePositionHealthFactors,
   scanAndLiquidatePositions,
@@ -699,6 +700,59 @@ describe('Indexer crank.ts - Liquidation Scanning and Health Factor Detection', 
       expect(mockRpcServerInstance.simulateTransaction).toHaveBeenCalled();
       expect(mockRpcServerInstance.sendTransaction).toHaveBeenCalled();
       expect(mockRpcServerInstance.getTransaction).toHaveBeenCalledWith('tx_hash_12345');
+    });
+
+    it('bumpContractTtls extends many contracts with one transaction', async () => {
+      const ids = Array.from({ length: 20 }, (_, i) => StrKey.encodeContract(Buffer.alloc(32, i + 10)));
+
+      const results = await bumpContractTtls(ids, Keypair.random());
+
+      expect(mockRpcServerInstance.simulateTransaction).toHaveBeenCalledTimes(1);
+      expect(mockRpcServerInstance.sendTransaction).toHaveBeenCalledTimes(1);
+      expect(results).toEqual([{ contractIds: ids, success: true, txHash: 'tx_hash_12345' }]);
+
+      const built = mockRpcServerInstance.simulateTransaction.mock.calls[0][0];
+      expect(built.operations).toHaveLength(1);
+      expect(built.operations[0].type).toBe('extendFootprintTtl');
+      const readOnly = built.toEnvelope().v1().tx().ext().sorobanData().resources().footprint().readOnly();
+      expect(readOnly).toHaveLength(20);
+    });
+
+    it('bumpContractTtls splits large lists into chunks of batchSize', async () => {
+      const ids = Array.from({ length: 5 }, (_, i) => StrKey.encodeContract(Buffer.alloc(32, i + 40)));
+
+      const results = await bumpContractTtls(ids, Keypair.random(), undefined, 2);
+
+      expect(mockRpcServerInstance.sendTransaction).toHaveBeenCalledTimes(3);
+      expect(results.map((r) => r.contractIds.length)).toEqual([2, 2, 1]);
+    });
+
+    it('bumpContractTtls skips empty and duplicate ids and does nothing for an empty list', async () => {
+      expect(await bumpContractTtls([undefined, '', null], Keypair.random())).toEqual([]);
+      expect(mockRpcServerInstance.getAccount).not.toHaveBeenCalled();
+
+      const results = await bumpContractTtls(
+        [VALID_MARKETPLACE_CONTRACT_ID, VALID_MARKETPLACE_CONTRACT_ID, VALID_LAUNCHPAD_CONTRACT_ID],
+        Keypair.random(),
+      );
+      expect(results[0].contractIds).toEqual([VALID_MARKETPLACE_CONTRACT_ID, VALID_LAUNCHPAD_CONTRACT_ID]);
+    });
+
+    it('bumpContractTtls keeps the valid contracts in a batch with an invalid id', async () => {
+      await bumpContractTtls(['not-a-contract', VALID_MARKETPLACE_CONTRACT_ID], Keypair.random());
+
+      const built = mockRpcServerInstance.simulateTransaction.mock.calls[0][0];
+      const readOnly = built.toEnvelope().v1().tx().ext().sorobanData().resources().footprint().readOnly();
+      expect(readOnly).toHaveLength(1);
+    });
+
+    it('bumpContractTtls reports a failed batch without throwing', async () => {
+      mockRpcServerInstance.simulateTransaction.mockResolvedValueOnce({ error: 'boom' });
+
+      const results = await bumpContractTtls([VALID_MARKETPLACE_CONTRACT_ID], Keypair.random());
+
+      expect(results).toEqual([{ contractIds: [VALID_MARKETPLACE_CONTRACT_ID], success: false }]);
+      expect(mockRpcServerInstance.sendTransaction).not.toHaveBeenCalled();
     });
 
     it('contractIdToLedgerKey produces valid xdr.LedgerKey', () => {

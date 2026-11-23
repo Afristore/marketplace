@@ -104,6 +104,7 @@ impl LendingContract {
         );
 
         validate_fees(platform_fee_bps, liquidator_fee_bps);
+        oracle::validate_staleness_window(max_price_staleness_secs);
 
         let config = PlatformConfig {
             admin,

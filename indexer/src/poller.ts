@@ -16,7 +16,12 @@ import {
   networkLatestLedgerGauge,
   syncLatencyGauge,
 } from "./metrics.js";
-import { collectMarketplaceEvents, MAX_LEDGER_WINDOW } from "./event-sync.js";
+import {
+  collateralAddedAfter,
+  collectMarketplaceEvents,
+  MAX_LEDGER_WINDOW,
+  revertLendingState,
+} from "./event-sync.js";
 import { resolveMetadataCategory } from "./ipfs.js";
 import redis from "./redis.js";
 import { logger } from "./logger.js";
@@ -129,6 +134,10 @@ const server = new rpc.Server(RPC_URL);
 export async function revertLedgers(safeAtLedger: number): Promise<void> {
   log.warn("Reorg: rolling back", { safeAtLedger });
   await prisma.$transaction(async (tx) => {
+    // Read lending collateral changes from the events before they are deleted,
+    // so positions can be reverted to their collateral at the safe checkpoint.
+    const collateralAdded = await collateralAddedAfter(tx, safeAtLedger);
+
     // Remove events that occurred after the safe checkpoint
     await tx.marketplaceEvent.deleteMany({
       where: { ledgerSequence: { gt: safeAtLedger } },
@@ -262,14 +271,9 @@ export async function revertLedgers(safeAtLedger: number): Promise<void> {
       data: { status: "Active", updatedAtLedger: safeAtLedger },
     });
 
-    // Reset lending listings and positions created after safe checkpoint
-    await tx.lendingListing.deleteMany({
-      where: { createdAtLedger: { gt: safeAtLedger } },
-    });
-
-    await tx.lendingPosition.deleteMany({
-      where: { createdAtLedger: { gt: safeAtLedger } },
-    });
+    // Delete lending listings/positions created after the safe checkpoint and
+    // revert status changes made after it
+    await revertLendingState(tx, safeAtLedger, collateralAdded);
 
     await tx.whitelistedCurrency.deleteMany({
       where: { addedAtLedger: { gt: safeAtLedger } },

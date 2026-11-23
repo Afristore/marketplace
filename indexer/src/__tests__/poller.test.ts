@@ -18,7 +18,10 @@ vi.mock("../api/routes", () => ({ emitSSEEvent: vi.fn() }));
 // ── Mock Prisma ───────────────────────────────────────────────────────────────
 
 const mockTx = vi.hoisted(() => ({
-  marketplaceEvent: { deleteMany: vi.fn().mockResolvedValue({}) },
+  marketplaceEvent: {
+    deleteMany: vi.fn().mockResolvedValue({}),
+    findMany: vi.fn().mockResolvedValue([]),
+  },
   listing: {
     deleteMany: vi.fn().mockResolvedValue({}),
     findMany: vi.fn().mockResolvedValue([]),
@@ -39,8 +42,17 @@ const mockTx = vi.hoisted(() => ({
     updateMany: vi.fn().mockResolvedValue({}),
   },
   collection: { deleteMany: vi.fn().mockResolvedValue({}) },
-  lendingListing: { deleteMany: vi.fn().mockResolvedValue({}) },
-  lendingPosition: { deleteMany: vi.fn().mockResolvedValue({}) },
+  lendingListing: {
+    deleteMany: vi.fn().mockResolvedValue({}),
+    findMany: vi.fn().mockResolvedValue([]),
+    update: vi.fn().mockResolvedValue({}),
+  },
+  lendingPosition: {
+    deleteMany: vi.fn().mockResolvedValue({}),
+    findMany: vi.fn().mockResolvedValue([]),
+    count: vi.fn().mockResolvedValue(0),
+    update: vi.fn().mockResolvedValue({}),
+  },
   whitelistedCurrency: { deleteMany: vi.fn().mockResolvedValue({}) },
   syncState: { update: vi.fn().mockResolvedValue({}) },
 }));
