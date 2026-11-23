@@ -568,36 +568,98 @@ export async function getOffererOffers(
 /**
  * create_auction — Artist creates a new on-chain auction.
  *
+ * Matches the on-chain contract signature:
+ * (creator, token, collection, token_id, amount, reserve_price, duration, recipients)
+ *
  * @param creatorPublicKey   Stellar public key of the creator (must match Freighter)
- * @param metadataCid        IPFS CID string of the metadata JSON
+ * @param tokenAddress       Payment token address (defaults to DEFAULT_TOKEN.address)
+ * @param collectionAddress  NFT collection contract address
+ * @param tokenId            NFT token ID (u64)
+ * @param amount             Quantity of tokens to auction (u64, typically 1)
  * @param reservePriceXlm    Reserve price in XLM (will be converted to stroops)
  * @param durationSeconds    Auction duration in seconds
+ * @param recipients         Optional list of royalty/split recipients
  * @returns                  The new auction_id (number)
  */
 export async function createAuction(
   creatorPublicKey: string,
-  metadataCid: string,
+  tokenAddress: string,
+  collectionAddress: string,
+  tokenId: number,
+  amount: number,
   reservePriceXlm: number,
   durationSeconds: number,
-  royaltyBps: number = 0,
-  recipients: Array<{ address: string; percentage: number }> = [],
-  tokenAddress: string = DEFAULT_TOKEN.address,
+  recipients?: Array<{ address: string; percentage: number }>,
+): Promise<number>;
+export async function createAuction(
+  creatorPublicKey: string,
+  metadataCidOrToken: string,
+  reservePriceXlmOrCollection: number | string,
+  durationSecondsOrTokenId?: number,
+  royaltyBpsOrAmount?: number,
+  recipientsOrReservePrice?:
+    | Array<{ address: string; percentage: number }>
+    | number,
+  tokenAddressOrDuration?: string | number,
+  maybeRecipients?: Array<{ address: string; percentage: number }>,
+): Promise<number>;
+export async function createAuction(
+  creatorPublicKey: string,
+  arg2: string = DEFAULT_TOKEN.address,
+  arg3?: string | number,
+  arg4?: number,
+  arg5?: number,
+  arg6?: number | Array<{ address: string; percentage: number }>,
+  arg7?: number | string,
+  arg8?: Array<{ address: string; percentage: number }>,
 ): Promise<number> {
+  let tokenAddress: string;
+  let collectionAddress: string;
+  let tokenId: number;
+  let amount: number;
+  let reservePriceXlm: number;
+  let durationSeconds: number;
+  let rawRecipients: Array<{ address: string; percentage: number }> = [];
+
+  if (typeof arg3 === "string") {
+    // On-chain contract signature:
+    // (creator, token, collection, token_id, amount, reserve_price, duration, recipients)
+    tokenAddress = arg2;
+    collectionAddress = arg3;
+    tokenId = Number(arg4 ?? 0);
+    amount = Number(arg5 ?? 1);
+    reservePriceXlm = Number(arg6 ?? 0);
+    durationSeconds = Number(arg7 ?? 0);
+    rawRecipients = Array.isArray(arg8) ? arg8 : [];
+  } else {
+    // Legacy signature compatibility:
+    // (creator, metadataCid, reservePrice, duration, royaltyBps, recipients, tokenAddress)
+    tokenAddress =
+      typeof arg7 === "string" ? arg7 : DEFAULT_TOKEN.address;
+    collectionAddress = creatorPublicKey;
+    tokenId = 1;
+    amount = 1;
+    reservePriceXlm = Number(arg3 ?? 0);
+    durationSeconds = Number(arg4 ?? 0);
+    rawRecipients = Array.isArray(arg6) ? arg6 : [];
+  }
+
   const reserveStroops = xlmToStroops(reservePriceXlm);
   const selectedToken = resolveConfiguredToken(tokenAddress);
 
   const finalRecipients =
-    recipients.length > 0
-      ? recipients
+    rawRecipients.length > 0
+      ? rawRecipients
       : [{ address: creatorPublicKey, percentage: 100 }];
 
   const args: xdr.ScVal[] = [
     new Address(creatorPublicKey).toScVal(),
-    nativeToScVal(Buffer.from(metadataCid, "utf-8"), { type: "bytes" }),
     new Address(selectedToken.address).toScVal(),
+    new Address(collectionAddress).toScVal(),
+    nativeToScVal(BigInt(tokenId), { type: "u64" }),
+    nativeToScVal(BigInt(amount), { type: "u64" }),
     nativeToScVal(reserveStroops, { type: "i128" }),
     nativeToScVal(BigInt(durationSeconds), { type: "u64" }),
-    nativeToScVal(royaltyBps, { type: "u32" }),
     nativeToScVal(
       finalRecipients.map((r) => ({
         address: new Address(r.address),
