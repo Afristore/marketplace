@@ -5590,3 +5590,53 @@ fn test_secondary_sale_royalty_split_multi_recipients() {
     assert_eq!(token.balance(&co_seller), co_seller_before + last_share);
     assert_eq!(first_share + last_share + royalty, price);
 }
+
+#[test]
+fn test_sub_stroop_royalty_split_precision() {
+    let (env, client, artist, buyer, token_id, _contract_id, collection_id) = setup();
+    client.set_admin(&artist);
+    client.add_token_to_whitelist(&token_id);
+
+    let r1 = Address::generate(&env);
+    let r2 = Address::generate(&env);
+    let r3 = Address::generate(&env);
+    let recipients = vec![
+        &env,
+        Recipient {
+            address: r1.clone(),
+            percentage: 33,
+        },
+        Recipient {
+            address: r2.clone(),
+            percentage: 33,
+        },
+        Recipient {
+            address: r3.clone(),
+            percentage: 34,
+        },
+    ];
+
+    // Price = 2 stroops: (2 * 33) / 100 = 0 for r1 and r2, so r3 absorbs the full 2 stroops.
+    let price = 2_i128;
+    let id = client.create_listing(
+        &artist,
+        &price,
+        &symbol_short!("XLM"),
+        &token_id,
+        &collection_id,
+        &1u64,
+        &1u64,
+        &recipients,
+    );
+
+    let token = TokenClient::new(&env, &token_id);
+    let r1_before = token.balance(&r1);
+    let r2_before = token.balance(&r2);
+    let r3_before = token.balance(&r3);
+
+    client.buy_artwork(&buyer, &id);
+
+    assert_eq!(token.balance(&r1), r1_before);
+    assert_eq!(token.balance(&r2), r2_before);
+    assert_eq!(token.balance(&r3), r3_before + 2);
+}
