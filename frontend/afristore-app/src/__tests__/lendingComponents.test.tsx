@@ -42,8 +42,8 @@ jest.mock("@/hooks/mutations/useReturnNFT", () => ({
   }),
 }));
 
-jest.mock("@/hooks/useMarketplace", () => ({
-  useCreateListing: () => ({
+jest.mock("@/hooks/mutations/useCreateLendingListing", () => ({
+  useCreateLendingListing: () => ({
     create: mockCreate,
     isCreating: false,
     progress: "",
@@ -322,7 +322,7 @@ describe("CreateListingModal", () => {
     }
   });
 
-  it("advances through all steps and submits via useCreateListing", async () => {
+  it("advances through all steps and submits via useCreateLendingListing", async () => {
     try {
       const onSuccess = jest.fn();
       const onClose = jest.fn();
@@ -357,9 +357,15 @@ describe("CreateListingModal", () => {
       await userEvent.click(screen.getByTestId("create-listing-submit"));
 
       await waitFor(() => {
-        expect(mockCreate).toHaveBeenCalledWith(
-          expect.objectContaining({ nftTokenId: 3, price: 250 }),
-        );
+        expect(mockCreate).toHaveBeenCalledWith({
+          nftContract: "CCOLLECTION",
+          tokenId: 3,
+          declaredPriceUsd: 2_500_000_000n,
+          interestScheduleBps: [300, 350],
+          maxDurationDays: 90,
+          minCollateralBufferBps: 12000,
+          liquidationThresholdBps: 11000,
+        });
         expect(onSuccess).toHaveBeenCalledWith(42);
         expect(onClose).toHaveBeenCalled();
       });

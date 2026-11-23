@@ -915,3 +915,88 @@ export async function updateBounds(
     getLendingContractId()
   );
 }
+
+/**
+ * admin_set_fees — Admin sets the platform and liquidator fee bps. The
+ * contract rejects a combined total of 10000 bps or more; callers validate
+ * with `feesSchema` first so that never reaches the network.
+ */
+export async function setFees(
+  adminPublicKey: string,
+  platformFeeBps: number,
+  liquidatorFeeBps: number
+): Promise<void> {
+  if (isE2eMockChain()) return;
+
+  await invokeContract(
+    adminPublicKey,
+    "admin_set_fees",
+    [asU32(platformFeeBps), asU32(liquidatorFeeBps)],
+    false,
+    getLendingContractId()
+  );
+}
+
+/**
+ * Reads the current owner of an ERC-721 token via `owner_of`. Returns null
+ * when the token does not exist or the call cannot be simulated.
+ */
+export async function getNftOwner(
+  callerPublicKey: string,
+  nftContract: string,
+  tokenId: number | bigint
+): Promise<string | null> {
+  if (isE2eMockChain()) return callerPublicKey;
+
+  try {
+    const result = await invokeContract(
+      callerPublicKey,
+      "owner_of",
+      [nativeToScVal(BigInt(tokenId), { type: "u64" })],
+      true,
+      nftContract
+    );
+    return String(scValToNative(result));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * create_listing — Lender escrows an NFT in the lending contract and opens a
+ * listing. The contract moves the NFT with `transfer(lender, contract, id)`,
+ * which the lender's own signature on this transaction authorizes, so no
+ * separate NFT approval transaction is needed. Returns the new listing id.
+ */
+export async function createLendingListing(
+  lenderPublicKey: string,
+  input: {
+    nftContract: string;
+    tokenId: number | bigint;
+    declaredPriceUsd: bigint;
+    interestScheduleBps: number[];
+    maxDurationDays: number;
+    minCollateralBufferBps: number;
+    liquidationThresholdBps: number;
+  }
+): Promise<number> {
+  if (isE2eMockChain()) return 1;
+
+  const result = await invokeContract(
+    lenderPublicKey,
+    "create_listing",
+    [
+      toAddressScVal(lenderPublicKey),
+      toAddressScVal(input.nftContract),
+      nativeToScVal(BigInt(input.tokenId), { type: "u128" }),
+      nativeToScVal(input.declaredPriceUsd, { type: "i128" }),
+      xdr.ScVal.scvVec(input.interestScheduleBps.map((bps) => asU32(bps))),
+      asU32(input.maxDurationDays),
+      asU32(input.minCollateralBufferBps),
+      asU32(input.liquidationThresholdBps),
+    ],
+    false,
+    getLendingContractId()
+  );
+  return Number(scValToNative(result));
+}
