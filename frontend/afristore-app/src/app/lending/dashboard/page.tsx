@@ -54,6 +54,11 @@ function BorrowerView({ publicKey }: { publicKey: string }) {
       interestScheduleBps: position.interestScheduleBps,
       elapsedMonths: elapsedMonths(position),
       liquidationThresholdBps: position.liquidationThresholdBps,
+      startTimeSecs: Number(position.startTime),
+      maxDurationSecs:
+        position.maxDurationSecs === undefined
+          ? undefined
+          : Number(position.maxDurationSecs),
     }));
   if (error) return <PositionError error={error} retry={refetch} />;
   return <BorrowerDashboardTable debts={debts} isLoading={loading} />;

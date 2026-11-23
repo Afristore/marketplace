@@ -29,6 +29,21 @@ const CONTRACT_CODE_PATTERNS: RegExp[] = [
   /"contractCode"\s*:\s*(\d+)/i,
 ];
 
+const NAMED_ERROR_MESSAGES: Array<{ pattern: RegExp; message: string }> = [
+  {
+    pattern: /\bListingNotActive\b/i,
+    message: "This listing is no longer active.",
+  },
+  {
+    pattern: /\bUnauthorized\b/i,
+    message: "You are not authorized to perform this action.",
+  },
+  {
+    pattern: /\bListingAlreadyFilled\b/i,
+    message: "This listing has already been filled.",
+  },
+];
+
 export function extractSorobanContractCode(raw: string): number | null {
   for (const pattern of CONTRACT_CODE_PATTERNS) {
     const match = raw.match(pattern);
@@ -43,6 +58,9 @@ export function extractSorobanContractCode(raw: string): number | null {
 }
 
 export function mapSorobanErrorMessage(raw: string): string | null {
+  const named = NAMED_ERROR_MESSAGES.find(({ pattern }) => pattern.test(raw));
+  if (named) return named.message;
+
   const code = extractSorobanContractCode(raw);
   if (code === null) return null;
   const mapped = SOROBAN_ERROR_MESSAGES[code];

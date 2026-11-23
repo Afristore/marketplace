@@ -85,6 +85,19 @@ describe("errors.ts", () => {
       const result = mapSorobanErrorMessage("Error(Contract, #2)");
       expect(result).toContain("(code 2)");
     });
+
+    it("should map named Soroban errors to friendly messages", () => {
+      expect(mapSorobanErrorMessage("ListingNotActive")).toBe(
+        "This listing is no longer active."
+      );
+      expect(mapSorobanErrorMessage("Error(Contract, #7): Unauthorized")).toBe(
+        "You are not authorized to perform this action."
+      );
+      expect(mapSorobanErrorMessage("listing_already_filled")).toBeNull();
+      expect(mapSorobanErrorMessage("ListingAlreadyFilled")).toBe(
+        "This listing has already been filled."
+      );
+    });
   });
 
   describe("getReadableErrorMessage", () => {
