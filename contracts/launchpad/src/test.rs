@@ -1,6 +1,9 @@
 extern crate std;
 
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, Address, BytesN, Env, String};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Events as _, testutils::Ledger as _, Address, BytesN, Env,
+    String,
+};
 
 use crate::{CollectionKind, Error, Launchpad, LaunchpadClient};
 
@@ -2311,10 +2314,8 @@ fn deploy_splitter_emits_deploy_event_with_split_tag() {
 
     let token = Address::generate(&env);
     client.add_approved_currency(&token);
-    let beneficiaries = soroban_sdk::Vec::from_array(
-        &env,
-        [Address::generate(&env), Address::generate(&env)],
-    );
+    let beneficiaries =
+        soroban_sdk::Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
     let shares = soroban_sdk::Vec::from_array(&env, [60u32, 40u32]);
 
     let _splitter = client.deploy_splitter(
@@ -2345,10 +2346,8 @@ fn deploy_splitter_salt_isolates_addresses_across_creators_and_salts() {
     let other_creator = Address::generate(&env);
     let token = Address::generate(&env);
     client.add_approved_currency(&token);
-    let beneficiaries = soroban_sdk::Vec::from_array(
-        &env,
-        [Address::generate(&env), Address::generate(&env)],
-    );
+    let beneficiaries =
+        soroban_sdk::Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
     let shares = soroban_sdk::Vec::from_array(&env, [50u32, 50u32]);
 
     let salt = BytesN::from_array(&env, &[0x52u8; 32]);
@@ -2359,11 +2358,20 @@ fn deploy_splitter_salt_isolates_addresses_across_creators_and_salts() {
     let new_salt = BytesN::from_array(&env, &[0x53u8; 32]);
     let by_new_salt = client.deploy_splitter(&creator, &token, &beneficiaries, &shares, &new_salt);
 
-    assert_ne!(by_creator, by_other, "same salt across creators must not collide");
-    assert_ne!(by_creator, by_new_salt, "a new salt must yield a new address");
+    assert_ne!(
+        by_creator, by_other,
+        "same salt across creators must not collide"
+    );
+    assert_ne!(
+        by_creator, by_new_salt,
+        "a new salt must yield a new address"
+    );
     assert_ne!(by_other, by_new_salt);
 
     // Re-using the same creator and salt targets an address that already exists.
     let duplicate = client.try_deploy_splitter(&creator, &token, &beneficiaries, &shares, &salt);
-    assert!(duplicate.is_err(), "a repeated creator and salt must be rejected");
+    assert!(
+        duplicate.is_err(),
+        "a repeated creator and salt must be rejected"
+    );
 }

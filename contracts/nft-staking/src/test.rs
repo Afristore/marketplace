@@ -1753,8 +1753,8 @@ fn test_unstake_erc1155_fails_for_different_user() {
     assert_eq!(erc1155_balance(&env, &collection, &attacker, 0), 0);
 }
 
-/// Accrual path: unstaking after time has elapsed still succeeds and returns
-/// the escrowed tokens (the reward accrual runs without moving reward tokens).
+/// Accrual path: unstaking after time has elapsed still succeeds, returns
+/// the escrowed tokens, and transfers the exact reward tokens to user.
 #[test]
 fn test_unstake_erc1155_after_time_passes_still_returns_tokens() {
     let (env, staking, user, collection, _admin) = setup_erc1155();
@@ -1762,6 +1762,11 @@ fn test_unstake_erc1155_after_time_passes_still_returns_tokens() {
     env.ledger().set_timestamp(1000);
     mint_erc1155(&env, &collection, &user, 0, 10);
     staking.stake_erc1155(&user, &collection, &0, &4);
+
+    let reward_token = staking.get_reward_token();
+    let reward_client = TokenClient::new(&env, &reward_token);
+    assert_eq!(reward_client.balance(&user), 0);
+    let contract_bal_before = reward_client.balance(&staking.address);
 
     env.ledger().set_timestamp(2500);
     staking.unstake_erc1155(&user, &collection, &0, &4);
@@ -1772,6 +1777,65 @@ fn test_unstake_erc1155_after_time_passes_still_returns_tokens() {
     assert_eq!(staking.total_staked(), 0);
     assert_eq!(erc1155_balance(&env, &collection, &user, 0), 10);
     assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 0);
+
+    let expected_rewards = 1_500 * 1_000_000i128;
+    assert_eq!(reward_client.balance(&user), expected_rewards);
+    assert_eq!(
+        reward_client.balance(&staking.address),
+        contract_bal_before - expected_rewards
+    );
+}
+
+#[test]
+fn test_unstake_erc1155_transfers_reward_tokens_and_updates_contract_balance() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+
+    env.ledger().set_timestamp(1_000);
+    mint_erc1155(&env, &collection, &user, 1, 5);
+    staking.stake_erc1155(&user, &collection, &1, &5);
+
+    let reward_token = staking.get_reward_token();
+    let reward_client = TokenClient::new(&env, &reward_token);
+    let initial_contract_balance = reward_client.balance(&staking.address);
+    assert_eq!(reward_client.balance(&user), 0);
+
+    env.ledger().set_timestamp(3_000); // 2_000 seconds
+    staking.unstake_erc1155(&user, &collection, &1, &5);
+
+    let expected_rewards = 2_000 * 1_000_000i128;
+    assert_eq!(reward_client.balance(&user), expected_rewards);
+    assert_eq!(
+        reward_client.balance(&staking.address),
+        initial_contract_balance - expected_rewards
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #11)")]
+fn test_unstake_erc1155_fails_when_insufficient_reward_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let collection = env.register_contract(None, mock_erc1155::MockErc1155);
+    let reward_token = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
+
+    let staking_id = env.register_contract(None, crate::NftStaking);
+    let staking = NftStakingClient::new(&env, &staking_id);
+
+    // Initialized with rate, but NOT funded with any reward tokens
+    staking.init(&admin, &collection, &reward_token, &1_000_000i128);
+
+    env.ledger().set_timestamp(1_000);
+    mint_erc1155(&env, &collection, &user, 0, 5);
+    staking.stake_erc1155(&user, &collection, &0, &5);
+
+    env.ledger().set_timestamp(2_000);
+    // Unstaking attempts to transfer rewards, but contract balance is 0 => InsufficientRewardBalance (#11)
+    staking.unstake_erc1155(&user, &collection, &0, &5);
 }
 
 // ── Issue #1092: concurrent ERC-1155 stakes across distinct users ───────────
@@ -1962,11 +2026,8 @@ fn test_paused_contract_rejection_on_all_state_mutating_functions_issue_1093() {
         .unwrap();
     assert_eq!(stake_err, StakingError::ContractPaused.into());
 
-    let unstake_err = staking
-        .try_unstake_erc721(&user, &collection, &100)
-        .unwrap_err()
-        .unwrap();
-    assert_eq!(unstake_err, StakingError::ContractPaused.into());
+    let claim_err = staking.try_claim_rewards(&user).unwrap_err().unwrap();
+    assert_eq!(claim_err, StakingError::ContractPaused.into());
 
     // Query functions continue to operate
     assert_eq!(staking.total_staked(), 0);

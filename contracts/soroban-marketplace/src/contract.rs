@@ -31,8 +31,9 @@ use crate::{
 #[contract]
 pub struct MarketplaceContract;
 
-const MIN_DURATION_SECONDS: u64 = 60;
-const MAX_DURATION_SECONDS: u64 = 30 * 86_400;
+pub const MIN_DURATION_SECONDS: u64 = 60;
+pub const MAX_AUCTION_DURATION: u64 = 30 * 86_400; // 30 days / 2,592,000 seconds
+pub const MAX_DURATION_SECONDS: u64 = MAX_AUCTION_DURATION;
 
 #[contractimpl]
 impl MarketplaceContract {
