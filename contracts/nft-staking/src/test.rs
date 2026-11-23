@@ -2035,3 +2035,91 @@ fn test_paused_contract_rejection_on_all_state_mutating_functions_issue_1093() {
         .get_staked_position(&user, &collection, &100)
         .is_none());
 }
+
+// ── Issue #1209: ERC-1155 StakedPosition amount tracking & drain prevention ──
+
+#[test]
+fn test_unstake_erc1155_cannot_drain_more_than_staked_amount() {
+    let (env, staking, attacker, collection, _admin) = setup_erc1155();
+    let victim = Address::generate(&env);
+    let token_id = 7_u64;
+
+    // Victim stakes 100 tokens, attacker stakes 1 token
+    mint_erc1155(&env, &collection, &victim, token_id, 100);
+    mint_erc1155(&env, &collection, &attacker, token_id, 1);
+
+    staking.stake_erc1155(&victim, &collection, &token_id, &100);
+    staking.stake_erc1155(&attacker, &collection, &token_id, &1);
+
+    // Attacker attempts to unstake 50 tokens (exceeding their staked amount of 1)
+    let err = staking
+        .try_unstake_erc1155(&attacker, &collection, &token_id, &50)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::InvalidAmount.into());
+
+    // Pool balance and victim position remain intact
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, token_id), 101);
+    assert_eq!(erc1155_balance(&env, &collection, &attacker, token_id), 0);
+    assert_eq!(
+        staking.get_staked_position(&attacker, &collection, &token_id).unwrap().amount,
+        1
+    );
+}
+
+#[test]
+fn test_unstake_erc1155_partial_then_full_unstake() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+    let token_id = 3_u64;
+
+    mint_erc1155(&env, &collection, &user, token_id, 10);
+    staking.stake_erc1155(&user, &collection, &token_id, &10);
+    assert_eq!(
+        staking.get_staked_position(&user, &collection, &token_id).unwrap().amount,
+        10
+    );
+    assert_eq!(staking.total_staked(), 10);
+
+    // Partial unstake of 4 tokens
+    staking.unstake_erc1155(&user, &collection, &token_id, &4);
+    let pos = staking.get_staked_position(&user, &collection, &token_id).unwrap();
+    assert_eq!(pos.amount, 6);
+    assert_eq!(staking.total_staked(), 6);
+    assert_eq!(erc1155_balance(&env, &collection, &user, token_id), 4);
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, token_id), 6);
+
+    // Cannot unstake more than remaining 6
+    let err = staking
+        .try_unstake_erc1155(&user, &collection, &token_id, &7)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::InvalidAmount.into());
+
+    // Full unstake of remaining 6 removes the position
+    staking.unstake_erc1155(&user, &collection, &token_id, &6);
+    assert!(staking.get_staked_position(&user, &collection, &token_id).is_none());
+    assert_eq!(staking.total_staked(), 0);
+    assert_eq!(erc1155_balance(&env, &collection, &user, token_id), 10);
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, token_id), 0);
+}
+
+#[test]
+fn test_stake_and_unstake_erc1155_zero_amount_rejected() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+    let token_id = 5_u64;
+
+    mint_erc1155(&env, &collection, &user, token_id, 5);
+
+    let stake_err = staking
+        .try_stake_erc1155(&user, &collection, &token_id, &0)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(stake_err, StakingError::InvalidAmount.into());
+
+    staking.stake_erc1155(&user, &collection, &token_id, &5);
+    let unstake_err = staking
+        .try_unstake_erc1155(&user, &collection, &token_id, &0)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(unstake_err, StakingError::InvalidAmount.into());
+}

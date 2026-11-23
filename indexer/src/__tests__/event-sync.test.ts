@@ -184,4 +184,50 @@ describe('collectMarketplaceEvents', () => {
       collectMarketplaceEvents({ getEvents } as any, ['C1'], 1, 10)
     ).rejects.toThrow('504 Gateway Timeout');
   });
+
+  it('isolates malformed event decoding errors via dead-letter callback and continues (#1230)', async () => {
+    const malformedEvent = { topic: null, value: 'bad', ledger: 50 };
+    const validEvent = { topic: ['LISTING_CREATED'], value: 'v2', ledger: 51 };
+
+    const getEvents = vi.fn().mockResolvedValueOnce({
+      events: [malformedEvent, validEvent],
+      paginationToken: null,
+    });
+
+    const onDecodeError = vi.fn().mockResolvedValue(undefined);
+    const events = await collectMarketplaceEvents(
+      { getEvents } as any,
+      ['C1'],
+      50,
+      55,
+      onDecodeError
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].ledgerSequence).toBe(51);
+    expect(onDecodeError).toHaveBeenCalledTimes(1);
+    expect(onDecodeError).toHaveBeenCalledWith(malformedEvent, expect.any(Error));
+  });
+
+  it('does not abort if the dead-letter callback itself throws (#1230)', async () => {
+    const malformedEvent = { topic: null, value: 'bad', ledger: 60 };
+    const validEvent = { topic: ['LISTING_CREATED'], value: 'v2', ledger: 61 };
+
+    const getEvents = vi.fn().mockResolvedValueOnce({
+      events: [malformedEvent, validEvent],
+      paginationToken: null,
+    });
+
+    const onDecodeError = vi.fn().mockRejectedValue(new Error('DLQ write failed'));
+    const events = await collectMarketplaceEvents(
+      { getEvents } as any,
+      ['C1'],
+      60,
+      65,
+      onDecodeError
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].ledgerSequence).toBe(61);
+  });
 });

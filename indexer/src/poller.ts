@@ -429,6 +429,18 @@ skippedRange,
         contractIds,
         startLedger,
         effectiveLatestLedger,
+        async (rawEvent, err) => {
+          const ledger = (rawEvent as { ledger?: unknown })?.ledger;
+          await recordIndexerError(
+            {
+              eventType: "DECODE_ERROR",
+              ledgerSequence: typeof ledger === "number" ? ledger : undefined,
+              data: rawEvent,
+            },
+            err,
+            prisma,
+          );
+        },
       );
 
       let latestHash: string | null = null;
@@ -456,7 +468,16 @@ skippedRange,
 
         updateSyncMetrics(updatedState.lastLedger, networkLatestLedger);
 
-        for (const ev of newEvents) emitSSEEvent(ev);
+        for (const ev of newEvents) {
+          try {
+            emitSSEEvent(ev);
+          } catch (sseErr) {
+            log.error("Failed to emit SSE event", {
+              eventType: ev?.eventType,
+              err: sseErr,
+            });
+          }
+        }
       } else if (effectiveLatestLedger > syncState.lastLedger) {
         try {
           const ledgersRes = await server.getLedgers({
