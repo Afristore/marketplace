@@ -2261,3 +2261,109 @@ fn test_deterministic_salt_isolation_across_multiple_creators_issue_1097() {
     // Identical raw salts from different creators must produce distinct addresses
     assert_ne!(addr_a, addr_b);
 }
+
+// ── deploy_splitter event attributes and salt isolation (#1305) ──
+
+fn setup_launchpad_with_splitter(env: &Env) -> (LaunchpadClient<'_>, Address, Address) {
+    env.mock_all_auths();
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(env, &launchpad_id);
+
+    let admin = Address::generate(env);
+    let creator = Address::generate(env);
+    let fee_receiver = Address::generate(env);
+    let fee_token = Address::generate(env);
+
+    client.initialize(&admin, &fee_receiver, &0u32, &fee_token);
+
+    let wasm_splitter_bytes = wasm_bytes("royalty_splitter");
+    let wasm_splitter = env
+        .deployer()
+        .upload_contract_wasm(wasm_splitter_bytes.as_slice());
+    client.set_royalty_splitter_wasm_hash(&wasm_splitter);
+
+    (client, admin, creator)
+}
+
+fn has_splitter_event_topic(events: &soroban_sdk::testutils::ContractEvents, symbol: &str) -> bool {
+    use soroban_sdk::xdr::{ContractEventBody, ScVal};
+    events.events().iter().any(|e| {
+        if let ContractEventBody::V0(body) = &e.body {
+            body.topics.iter().any(|t| {
+                if let ScVal::Symbol(s) = t {
+                    core::str::from_utf8(s.0.as_slice()).unwrap_or("") == symbol
+                } else {
+                    false
+                }
+            })
+        } else {
+            false
+        }
+    })
+}
+
+#[test]
+fn deploy_splitter_emits_deploy_event_with_split_tag() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, creator) = setup_launchpad_with_splitter(&env);
+
+    let token = Address::generate(&env);
+    client.add_approved_currency(&token);
+    let beneficiaries = soroban_sdk::Vec::from_array(
+        &env,
+        [Address::generate(&env), Address::generate(&env)],
+    );
+    let shares = soroban_sdk::Vec::from_array(&env, [60u32, 40u32]);
+
+    let _splitter = client.deploy_splitter(
+        &creator,
+        &token,
+        &beneficiaries,
+        &shares,
+        &BytesN::from_array(&env, &[0x51u8; 32]),
+    );
+
+    let events = env.events().all();
+    assert!(
+        has_splitter_event_topic(&events, "deploy"),
+        "deploy_splitter must emit a deploy event"
+    );
+    assert!(
+        has_splitter_event_topic(&events, "split"),
+        "the deploy event must carry the splitter tag"
+    );
+}
+
+#[test]
+fn deploy_splitter_salt_isolates_addresses_across_creators_and_salts() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, creator) = setup_launchpad_with_splitter(&env);
+
+    let other_creator = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.add_approved_currency(&token);
+    let beneficiaries = soroban_sdk::Vec::from_array(
+        &env,
+        [Address::generate(&env), Address::generate(&env)],
+    );
+    let shares = soroban_sdk::Vec::from_array(&env, [50u32, 50u32]);
+
+    let salt = BytesN::from_array(&env, &[0x52u8; 32]);
+    let by_creator = client.deploy_splitter(&creator, &token, &beneficiaries, &shares, &salt);
+    // Same raw salt, different creator: the creator is mixed into the salt.
+    let by_other = client.deploy_splitter(&other_creator, &token, &beneficiaries, &shares, &salt);
+    // Same creator, different raw salt.
+    let new_salt = BytesN::from_array(&env, &[0x53u8; 32]);
+    let by_new_salt = client.deploy_splitter(&creator, &token, &beneficiaries, &shares, &new_salt);
+
+    assert_ne!(by_creator, by_other, "same salt across creators must not collide");
+    assert_ne!(by_creator, by_new_salt, "a new salt must yield a new address");
+    assert_ne!(by_other, by_new_salt);
+
+    // Re-using the same creator and salt targets an address that already exists.
+    let duplicate = client.try_deploy_splitter(&creator, &token, &beneficiaries, &shares, &salt);
+    assert!(duplicate.is_err(), "a repeated creator and salt must be rejected");
+}
