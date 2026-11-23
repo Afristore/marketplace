@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { X, Loader2 } from "lucide-react";
 import { useUpdateBounds, validateBounds } from "@/hooks/mutations/useUpdateBounds";
+import { useSetFees } from "@/hooks/mutations/useSetFees";
 import { useSafeToast } from "@/hooks/useSafeToast";
+import { feesSchema, type FeesFormValues } from "@/lib/lendingValidation";
 
 interface AdminConfigModalProps {
   isOpen: boolean;
@@ -26,7 +28,37 @@ export function AdminConfigModal({
   
   const [localError, setLocalError] = useState<string | null>(null);
 
+  const { saveFees, isSettingFees, error: feesHookError } = useSetFees(adminPublicKey);
+  const [fees, setFeesValues] = useState<FeesFormValues>({
+    platformFeeBps: "100",
+    liquidatorFeeBps: "500",
+  });
+  const [feeErrors, setFeeErrors] = useState<Partial<Record<keyof FeesFormValues, string>>>({});
+
   if (!isOpen) return null;
+
+  const setFeeField = (name: keyof FeesFormValues, value: string) => {
+    setFeesValues((prev) => ({ ...prev, [name]: value }));
+    setFeeErrors((prev) => ({ ...prev, [name]: undefined }));
+  };
+
+  const handleFeesSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    // Each fee is checked on its own and their sum must stay below 10000 bps;
+    // the sum error is attached to the liquidator fee field.
+    const parsed = feesSchema.safeParse(fees);
+    if (!parsed.success) {
+      const errors: Partial<Record<keyof FeesFormValues, string>> = {};
+      for (const issue of parsed.error.issues) {
+        const key = issue.path[0] as keyof FeesFormValues | undefined;
+        if (key && !errors[key]) errors[key] = issue.message;
+      }
+      setFeeErrors(errors);
+      return;
+    }
+    setFeeErrors({});
+    await saveFees(fees);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -148,6 +180,64 @@ export function AdminConfigModal({
                 </>
               ) : (
                 "Save Configuration"
+              )}
+            </button>
+          </form>
+
+          <form
+            onSubmit={handleFeesSubmit}
+            className="mt-8 space-y-4 border-t border-gray-100 pt-6"
+            data-testid="fees-form"
+            noValidate
+          >
+            <h3 className="font-display text-lg font-bold text-gray-900">Fees</h3>
+            <p className="text-sm text-gray-500">
+              Platform and liquidator fees together must be less than 10000 bps (100%).
+            </p>
+            {feesHookError && (
+              <div className="rounded-xl bg-red-50 p-4 text-sm text-red-600">{feesHookError}</div>
+            )}
+            {(["platformFeeBps", "liquidatorFeeBps"] as const).map((name) => (
+              <div key={name}>
+                <label
+                  htmlFor={`admin-${name}`}
+                  className="mb-2 block text-sm font-bold text-gray-700"
+                >
+                  {name === "platformFeeBps" ? "Platform Fee (bps)" : "Liquidator Fee (bps)"}
+                </label>
+                <input
+                  id={`admin-${name}`}
+                  type="number"
+                  min="0"
+                  max="10000"
+                  value={fees[name]}
+                  onChange={(e) => setFeeField(name, e.target.value)}
+                  aria-invalid={feeErrors[name] ? true : undefined}
+                  aria-describedby={feeErrors[name] ? `admin-${name}-error` : undefined}
+                  className="w-full rounded-xl border-2 border-gray-100 p-3 text-gray-900 outline-none transition focus:border-brand-500"
+                />
+                {feeErrors[name] && (
+                  <p
+                    id={`admin-${name}-error`}
+                    data-testid={`error-${name}`}
+                    className="mt-1.5 text-sm text-red-600"
+                  >
+                    {feeErrors[name]}
+                  </p>
+                )}
+              </div>
+            ))}
+            <button
+              type="submit"
+              disabled={isSettingFees}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-500 py-4 font-bold text-white shadow-lg shadow-brand-500/20 hover:bg-brand-600 transition-all disabled:opacity-50"
+            >
+              {isSettingFees ? (
+                <>
+                  <Loader2 className="animate-spin" size={18} /> Updating...
+                </>
+              ) : (
+                "Save Fees"
               )}
             </button>
           </form>
