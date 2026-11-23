@@ -1602,9 +1602,9 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
       // between the two writes cannot leave them out of sync.
       await withTransaction(tx, async (client) => {
         await client.lendingPosition.upsert({
-          where: { id },
+          where: { positionId: id },
           create: {
-            id,
+            positionId: id,
             listingId: lId,
             lender,
             borrower,
@@ -1659,7 +1659,7 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
         "0";
 
       await db.lendingPosition.updateMany({
-        where: { id: posId },
+        where: { positionId: posId },
         data: {
           status: "Returned",
           platformFee,

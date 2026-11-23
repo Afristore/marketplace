@@ -44,7 +44,10 @@ export function useDeploySplitter(creatorPublicKey: string | null) {
   return { deploy, isDeploying, error };
 }
 
-export function useSplitterRecipients(contractId: string | null) {
+export function useSplitterRecipients(
+  contractId: string | null,
+  publicKey: string | null,
+) {
   const [recipients, setRecipients] = useState<SplitterRecipient[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +57,7 @@ export function useSplitterRecipients(contractId: string | null) {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await getSplitterRecipients(contractId);
+      const data = await getSplitterRecipients(contractId, publicKey || undefined);
       setRecipients(data);
     } catch (err: unknown) {
       setError(
@@ -63,12 +66,15 @@ export function useSplitterRecipients(contractId: string | null) {
     } finally {
       setIsLoading(false);
     }
-  }, [contractId]);
+  }, [contractId, publicKey]);
 
   return { recipients, isLoading, error, refresh };
 }
 
-export function usePendingBalance(contractId: string | null) {
+export function usePendingBalance(
+  contractId: string | null,
+  publicKey: string | null,
+) {
   const [balance, setBalance] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,7 +84,7 @@ export function usePendingBalance(contractId: string | null) {
     setIsLoading(true);
     setError(null);
     try {
-      const data = await getPendingBalance(contractId);
+      const data = await getPendingBalance(contractId, publicKey || undefined);
       setBalance(data);
     } catch (err: unknown) {
       setError(
@@ -87,7 +93,7 @@ export function usePendingBalance(contractId: string | null) {
     } finally {
       setIsLoading(false);
     }
-  }, [contractId]);
+  }, [contractId, publicKey]);
 
   return { balance, isLoading, error, refresh };
 }

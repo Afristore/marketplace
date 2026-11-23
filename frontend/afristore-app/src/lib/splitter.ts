@@ -202,12 +202,15 @@ async function initializeSplitter(
 
 export async function getSplitterRecipients(
   contractId: string,
+  publicKey?: string,
 ): Promise<SplitterRecipient[]> {
   try {
-    const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+    if (!publicKey) {
+      throw new Error("Public key is required to fetch splitter recipients. Please connect your wallet.");
+    }
     const contract = new Contract(contractId);
     const rpc = getRpc();
-    const account = await rpc.getAccount(DUMMY_KEY);
+    const account = await rpc.getAccount(publicKey);
 
     const [beneficiariesResult, sharesResult] = await Promise.all([
       rpc.simulateTransaction(new TransactionBuilder(account, {
@@ -254,11 +257,14 @@ export async function getSplitterRecipients(
 
 export async function getPendingBalance(
   contractId: string,
+  publicKey?: string,
 ): Promise<number> {
-  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+  if (!publicKey) {
+    throw new Error("Public key is required to fetch pending balance. Please connect your wallet.");
+  }
   const contract = new Contract(contractId);
   const rpc = getRpc();
-  const account = await rpc.getAccount(DUMMY_KEY);
+  const account = await rpc.getAccount(publicKey);
 
   // Get the token address from the contract
   const tokenTx = new TransactionBuilder(account, {
