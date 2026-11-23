@@ -255,6 +255,13 @@ impl MarketplaceContract {
             panic_with_error!(&env, MarketplaceError::InvalidPrice);
         }
 
+        if amount == 0 {
+            panic_with_error!(&env, MarketplaceError::InvalidAmount);
+        }
+        if amount != 1 && Self::is_erc721_collection(&env, &collection, token_id) {
+            panic_with_error!(&env, MarketplaceError::InvalidAmount);
+        }
+
         let recipients_len = recipients.len();
         // Empty recipient arrays are an invalid split configuration; reject with InvalidSplit.
         if recipients_len == 0 {
