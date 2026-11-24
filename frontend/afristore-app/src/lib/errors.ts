@@ -21,6 +21,7 @@ export const SOROBAN_ERROR_MESSAGES: Record<number, string> = {
   20: "This listing has already been sold.",
   21: "This listing has been cancelled.",
   22: "The contract rejected this request for safety reasons.",
+  28: "This auction already has bids and can no longer be cancelled.",
 };
 
 const CONTRACT_CODE_PATTERNS: RegExp[] = [

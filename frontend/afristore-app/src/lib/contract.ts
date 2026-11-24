@@ -11,6 +11,7 @@ import {
   Contract,
   Keypair,
   SorobanRpc,
+  Transaction,
   TransactionBuilder,
   xdr,
   nativeToScVal,
@@ -29,6 +30,7 @@ import {
   registerE2eMockListingsOnWindow,
   e2eMockPlaceBid,
   e2eMockFinalizeAuction,
+  e2eMockCancelAuction,
   getE2eMockAuction,
 } from "./e2e-chain-mock";
 import {
@@ -113,6 +115,12 @@ function resolveConfiguredToken(
 
 // ── Invoke helper ─────────────────────────────────────────────
 
+/** Maps a raw RPC/contract error to a user-facing message, or the fallback. */
+function toReadableError(raw: string, fallback: string): Error {
+  const mapped = mapSorobanErrorMessage(raw);
+  return new Error(mapped ?? fallback);
+}
+
 /**
  * Builds, simulates, signs (via Freighter), and submits a contract
  * invocation transaction. Returns the simulation result for read-only
@@ -134,11 +142,6 @@ export async function invokeContract(
       ? String(readonlyOrOptions.fee)
       : BASE_FEE;
 
-  const readableError = (raw: string, fallback: string): Error => {
-    const mapped = mapSorobanErrorMessage(raw);
-    return new Error(mapped ?? fallback);
-  };
-
   const rpc = getRpc();
   const contract = getContract(contractId);
 
@@ -157,16 +160,13 @@ export async function invokeContract(
     .setTimeout(30)
     .build();
 
-  // Simulate to get the resource fee + footprint.
-  const simResult = await rpc.simulateTransaction(tx);
-
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
-    const raw = String(simResult.error ?? "");
-    throw readableError(raw, "Unable to simulate this transaction.");
-  }
-
   if (readonly) {
-    // For read-only calls return the simulated result directly.
+    // Read-only calls return the simulated result directly; nothing is signed.
+    const simResult = await rpc.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(simResult)) {
+      const raw = String(simResult.error ?? "");
+      throw toReadableError(raw, "Unable to simulate this transaction.");
+    }
     const retVal = (
       simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
     ).result?.retval;
@@ -174,24 +174,42 @@ export async function invokeContract(
     return retVal;
   }
 
-  // Assemble the transaction with the real resource fee.
+  const result = await submitTransaction(tx);
+  return result.returnValue ?? xdr.ScVal.scvVoid();
+}
+
+/**
+ * Simulates, assembles (resource fee, footprint and auth), signs via
+ * Freighter, submits, and polls a transaction to a terminal status.
+ * `invokeContract` uses this for contract calls; callers that build a
+ * non-contract-call operation (e.g. deploying a contract) use it directly.
+ */
+export async function submitTransaction(
+  tx: Transaction,
+): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
+  const rpc = getRpc();
+
+  const simResult = await rpc.simulateTransaction(tx);
+  if (SorobanRpc.Api.isSimulationError(simResult)) {
+    const raw = String(simResult.error ?? "");
+    throw toReadableError(raw, "Unable to simulate this transaction.");
+  }
+
   const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
-  const txXdr = preparedTx.toXDR();
+  const signedXdr = await signWithFreighter(
+    preparedTx.toXDR(),
+    getNetworkPassphrase(),
+  );
 
-  // Sign via Freighter.
-  const signedXdr = await signWithFreighter(txXdr, getNetworkPassphrase());
-
-  // Submit.
   const submitted = await rpc.sendTransaction(
     TransactionBuilder.fromXDR(signedXdr, getNetworkPassphrase()),
   );
 
   if (submitted.status === "ERROR") {
     const raw = String(submitted.errorResult ?? "");
-    throw readableError(raw, "Transaction submission failed.");
+    throw toReadableError(raw, "Transaction submission failed.");
   }
 
-  // Poll for completion.
   let getResult = await rpc.getTransaction(submitted.hash);
   while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
     await new Promise((r) => setTimeout(r, 1000));
@@ -200,12 +218,10 @@ export async function invokeContract(
 
   if (getResult.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
     const raw = JSON.stringify(getResult);
-    throw readableError(raw, "Transaction failed on-chain. Please try again.");
+    throw toReadableError(raw, "Transaction failed on-chain. Please try again.");
   }
 
-  const successResult =
-    getResult as SorobanRpc.Api.GetSuccessfulTransactionResponse;
-  return successResult.returnValue ?? xdr.ScVal.scvVoid();
+  return getResult as SorobanRpc.Api.GetSuccessfulTransactionResponse;
 }
 
 // ── ScVal parsing ─────────────────────────────────────────────
@@ -673,6 +689,29 @@ export async function finalizeAuction(
   ];
 
   await invokeContract(callerPublicKey, "finalize_auction", args);
+  return true;
+}
+
+/**
+ * cancel_auction — Creator ends their auction before any bid is placed and
+ * before its end time. The contract rejects other callers, bid-bearing
+ * auctions, and auctions that are already finalized or expired.
+ */
+export async function cancelAuction(
+  creatorPublicKey: string,
+  auctionId: number,
+): Promise<boolean> {
+  if (isE2eMockChain()) {
+    if (typeof window !== "undefined") registerE2eMockListingsOnWindow();
+    return e2eMockCancelAuction(creatorPublicKey, auctionId);
+  }
+
+  const args: xdr.ScVal[] = [
+    new Address(creatorPublicKey).toScVal(),
+    nativeToScVal(BigInt(auctionId), { type: "u64" }),
+  ];
+
+  await invokeContract(creatorPublicKey, "cancel_auction", args);
   return true;
 }
 

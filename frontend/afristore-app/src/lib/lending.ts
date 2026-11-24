@@ -14,8 +14,7 @@ import {
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
 import { invokeContract } from "./contract";
-import { getConnectedPublicKey, signWithFreighter } from "./freighter";
-import { mapSorobanErrorMessage } from "./errors";
+import { getConnectedPublicKey } from "./freighter";
 import {
   isE2eMockChain,
   e2eMockWhitelistCurrency,
@@ -278,6 +277,28 @@ export async function getTokenAllowance(
   }
 }
 
+// SAC approvals expire at an absolute ledger sequence, so the expiry is derived
+// from the latest ledger. A hardcoded value becomes already expired once the
+// network passes it, and later borrow/top-up/repay calls then fail with an
+// authorization error. The expiry must not be earlier than the current ledger.
+
+/** ~30 days of ledgers at ~5 seconds per ledger. */
+export const APPROVAL_LEDGER_BUFFER = 518_400;
+/**
+ * Conservative cap on the approval window, in ledgers (~180 days at ~5s).
+ * Keeps the expiry within the network's maximum entry TTL; verify against the
+ * network's configured limit if it changes.
+ */
+export const MAX_APPROVAL_LEDGER_BUFFER = 3_110_400;
+
+export async function getApprovalExpirationLedger(
+  rpc: SorobanRpc.Server = getRpc()
+): Promise<number> {
+  const latest = await rpc.getLatestLedger();
+  const buffer = Math.min(APPROVAL_LEDGER_BUFFER, MAX_APPROVAL_LEDGER_BUFFER);
+  return latest.sequence + buffer;
+}
+
 export async function approveToken(
   userPublicKey: string,
   tokenAddress: string,
@@ -297,59 +318,20 @@ export async function approveToken(
     return;
   }
 
-  const rpc = getRpc();
-  const account = await rpc.getAccount(userPublicKey);
-  const tokenContract = new Contract(tokenAddress);
-  const expirationLedger = 500000; // sufficiently far in future
+  const expirationLedger = await getApprovalExpirationLedger();
 
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: getNetworkPassphrase(),
-  })
-    .addOperation(
-      tokenContract.call(
-        "approve",
-        new Address(userPublicKey).toScVal(),
-        new Address(spenderAddress).toScVal(),
-        nativeToScVal(amount, { type: "i128" }),
-        nativeToScVal(expirationLedger, { type: "u32" })
-      )
-    )
-    .setTimeout(30)
-    .build();
-
-  const simResult = await rpc.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
-    const errorMsg =
-      (simResult as SorobanRpc.Api.SimulateTransactionErrorResponse).error ??
-      "Token approval simulation failed";
-    throw new Error(mapSorobanErrorMessage(errorMsg) ?? errorMsg);
-  }
-
-  const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
-  const signedXdr = await signWithFreighter(
-    preparedTx.toXDR(),
-    getNetworkPassphrase()
+  await invokeContract(
+    userPublicKey,
+    "approve",
+    [
+      new Address(userPublicKey).toScVal(),
+      new Address(spenderAddress).toScVal(),
+      nativeToScVal(amount, { type: "i128" }),
+      nativeToScVal(expirationLedger, { type: "u32" }),
+    ],
+    false,
+    tokenAddress
   );
-  const signedTx = TransactionBuilder.fromXDR(
-    signedXdr,
-    getNetworkPassphrase()
-  );
-
-  const sendResult = await rpc.sendTransaction(signedTx);
-  if (sendResult.status === "ERROR") {
-    throw new Error("Token approval transaction failed to send");
-  }
-
-  let getResult = await rpc.getTransaction(sendResult.hash);
-  while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
-    await new Promise((res) => setTimeout(res, 1000));
-    getResult = await rpc.getTransaction(sendResult.hash);
-  }
-
-  if (getResult.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
-    throw new Error("Token approval transaction failed on chain");
-  }
 }
 
 // ── Contract Read Operations ──────────────────────────────────────────────────
@@ -550,66 +532,25 @@ export async function borrow(
     return Math.floor(Date.now() / 1000);
   }
 
-  const rpc = getRpc();
-  const account = await rpc.getAccount(borrowerPublicKey);
-  const contract = new Contract(lendingContractId);
-
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: getNetworkPassphrase(),
-  })
-    .addOperation(
-      contract.call(
-        "borrow",
-        nativeToScVal(BigInt(listingId), { type: "u64" }),
-        new Address(borrowerPublicKey).toScVal(),
-        new Address(collateralCurrency).toScVal(),
-        nativeToScVal(amountBig, { type: "i128" })
-      )
-    )
-    .setTimeout(30)
-    .build();
-
-  const simResult = await rpc.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
-    const raw =
-      (simResult as SorobanRpc.Api.SimulateTransactionErrorResponse).error ??
-      "Borrow simulation failed";
-    throw new Error(mapSorobanErrorMessage(raw) ?? raw);
-  }
-
-  const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
-  const signedXdr = await signWithFreighter(
-    preparedTx.toXDR(),
-    getNetworkPassphrase()
-  );
-  const signedTx = TransactionBuilder.fromXDR(
-    signedXdr,
-    getNetworkPassphrase()
+  const retVal = await invokeContract(
+    borrowerPublicKey,
+    "borrow",
+    [
+      nativeToScVal(BigInt(listingId), { type: "u64" }),
+      new Address(borrowerPublicKey).toScVal(),
+      new Address(collateralCurrency).toScVal(),
+      nativeToScVal(amountBig, { type: "i128" }),
+    ],
+    false,
+    lendingContractId
   );
 
-  const sendResult = await rpc.sendTransaction(signedTx);
-  if (sendResult.status === "ERROR") {
-    throw new Error("Borrow transaction failed to send");
+  // invokeContract resolves to a void ScVal when the ledger result has no
+  // return value; a borrow must return the new position ID.
+  if (retVal.switch() === xdr.ScValType.scvVoid()) {
+    throw new Error("Borrow transaction succeeded but returned no position ID");
   }
-
-  let getResult = await rpc.getTransaction(sendResult.hash);
-  while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
-    await new Promise((res) => setTimeout(res, 1000));
-    getResult = await rpc.getTransaction(sendResult.hash);
-  }
-
-  if (getResult.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
-    throw new Error("Borrow transaction failed on chain");
-  }
-
-  const successRes =
-    getResult as SorobanRpc.Api.GetSuccessfulTransactionResponse;
-  const retval = successRes.returnValue;
-  if (retval) {
-    return Number(scValToNative(retval));
-  }
-  throw new Error("Borrow transaction succeeded but returned no position ID");
+  return Number(scValToNative(retVal));
 }
 
 export async function addCollateral(
@@ -649,56 +590,16 @@ export async function addCollateral(
     return;
   }
 
-  const rpc = getRpc();
-  const account = await rpc.getAccount(borrowerPublicKey);
-  const contract = new Contract(lendingContractId);
-
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: getNetworkPassphrase(),
-  })
-    .addOperation(
-      contract.call(
-        "add_collateral",
-        nativeToScVal(BigInt(positionId), { type: "u64" }),
-        nativeToScVal(amountBig, { type: "i128" })
-      )
-    )
-    .setTimeout(30)
-    .build();
-
-  const simResult = await rpc.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
-    const raw =
-      (simResult as SorobanRpc.Api.SimulateTransactionErrorResponse).error ??
-      "Add collateral simulation failed";
-    throw new Error(mapSorobanErrorMessage(raw) ?? raw);
-  }
-
-  const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
-  const signedXdr = await signWithFreighter(
-    preparedTx.toXDR(),
-    getNetworkPassphrase()
+  await invokeContract(
+    borrowerPublicKey,
+    "add_collateral",
+    [
+      nativeToScVal(BigInt(positionId), { type: "u64" }),
+      nativeToScVal(amountBig, { type: "i128" }),
+    ],
+    false,
+    lendingContractId
   );
-  const signedTx = TransactionBuilder.fromXDR(
-    signedXdr,
-    getNetworkPassphrase()
-  );
-
-  const sendResult = await rpc.sendTransaction(signedTx);
-  if (sendResult.status === "ERROR") {
-    throw new Error("Add collateral transaction failed to send");
-  }
-
-  let getResult = await rpc.getTransaction(sendResult.hash);
-  while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
-    await new Promise((res) => setTimeout(res, 1000));
-    getResult = await rpc.getTransaction(sendResult.hash);
-  }
-
-  if (getResult.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
-    throw new Error("Add collateral transaction failed on chain");
-  }
 }
 
 export async function returnNFT(
@@ -760,56 +661,14 @@ export async function returnNFT(
     return;
   }
 
-  const rpc = getRpc();
-  const account = await rpc.getAccount(borrowerPublicKey);
-  const contract = new Contract(lendingContractId);
-
   // Submits the return_nft transaction
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: getNetworkPassphrase(),
-  })
-    .addOperation(
-      contract.call(
-        "return_nft",
-        nativeToScVal(BigInt(positionId), { type: "u64" })
-      )
-    )
-    .setTimeout(30)
-    .build();
-
-  const simResult = await rpc.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
-    const raw =
-      (simResult as SorobanRpc.Api.SimulateTransactionErrorResponse).error ??
-      "Return NFT simulation failed";
-    throw new Error(mapSorobanErrorMessage(raw) ?? raw);
-  }
-
-  const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
-  const signedXdr = await signWithFreighter(
-    preparedTx.toXDR(),
-    getNetworkPassphrase()
+  await invokeContract(
+    borrowerPublicKey,
+    "return_nft",
+    [nativeToScVal(BigInt(positionId), { type: "u64" })],
+    false,
+    lendingContractId
   );
-  const signedTx = TransactionBuilder.fromXDR(
-    signedXdr,
-    getNetworkPassphrase()
-  );
-
-  const sendResult = await rpc.sendTransaction(signedTx);
-  if (sendResult.status === "ERROR") {
-    throw new Error("Return NFT transaction failed to send");
-  }
-
-  let getResult = await rpc.getTransaction(sendResult.hash);
-  while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
-    await new Promise((res) => setTimeout(res, 1000));
-    getResult = await rpc.getTransaction(sendResult.hash);
-  }
-
-  if (getResult.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
-    throw new Error("Return NFT transaction failed on chain");
-  }
 }
 
 export async function liquidate(
@@ -854,56 +713,16 @@ export async function liquidate(
     return { bountyEarned };
   }
 
-  const rpc = getRpc();
-  const account = await rpc.getAccount(liquidatorPublicKey);
-  const contract = new Contract(getLendingContractId());
-
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: getNetworkPassphrase(),
-  })
-    .addOperation(
-      contract.call(
-        "liquidate",
-        nativeToScVal(BigInt(positionId), { type: "u64" }),
-        new Address(liquidatorPublicKey).toScVal()
-      )
-    )
-    .setTimeout(30)
-    .build();
-
-  const simResult = await rpc.simulateTransaction(tx);
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
-    const raw =
-      (simResult as SorobanRpc.Api.SimulateTransactionErrorResponse).error ??
-      "Liquidate transaction simulation failed";
-    throw new Error(mapSorobanErrorMessage(raw) ?? raw);
-  }
-
-  const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
-  const signedXdr = await signWithFreighter(
-    preparedTx.toXDR(),
-    getNetworkPassphrase()
+  await invokeContract(
+    liquidatorPublicKey,
+    "liquidate",
+    [
+      nativeToScVal(BigInt(positionId), { type: "u64" }),
+      new Address(liquidatorPublicKey).toScVal(),
+    ],
+    false,
+    getLendingContractId()
   );
-  const signedTx = TransactionBuilder.fromXDR(
-    signedXdr,
-    getNetworkPassphrase()
-  );
-
-  const sendResult = await rpc.sendTransaction(signedTx);
-  if (sendResult.status === "ERROR") {
-    throw new Error("Liquidate transaction failed to send");
-  }
-
-  let getResult = await rpc.getTransaction(sendResult.hash);
-  while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
-    await new Promise((res) => setTimeout(res, 1000));
-    getResult = await rpc.getTransaction(sendResult.hash);
-  }
-
-  if (getResult.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
-    throw new Error("Liquidate transaction failed on chain");
-  }
 
   return { bountyEarned };
 }
