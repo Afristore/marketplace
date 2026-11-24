@@ -935,3 +935,121 @@ fn test_single_beneficiary_10000_bps_full_distribution_no_dust() {
         "Share must be exactly 10,000 BPS"
     );
 }
+
+// ── Issue #1218: Rescue/Sweep Non-Configured Tokens ──────────────────────────
+
+#[test]
+fn test_rescue_token_uninitialized_fails() {
+    let (env, client, token, _) = setup();
+    let recipient = Address::generate(&env);
+
+    let err = client
+        .try_rescue_token(&token, &recipient)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, SplitterError::NotInitialized.into());
+}
+
+#[test]
+fn test_rescue_token_configured_token_rejected() {
+    let (env, client, token, contract_id) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    client.initialize(
+        &token,
+        &vec![&env, alice, bob],
+        &vec![&env, 6_000_u32, 4_000_u32],
+    );
+
+    let sac = StellarAssetClient::new(&env, &token);
+    sac.mint(&contract_id, &1_000);
+
+    let err = client
+        .try_rescue_token(&token, &recipient)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, SplitterError::InvalidToken.into());
+}
+
+#[test]
+fn test_rescue_token_sweeps_non_configured_token_successfully() {
+    let (env, client, token, contract_id) = setup();
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    client.initialize(
+        &token,
+        &vec![&env, alice, bob],
+        &vec![&env, 6_000_u32, 4_000_u32],
+    );
+
+    // Deploy an unrelated token and accidentally send it to the splitter
+    let other_token_admin = Address::generate(&env);
+    let other_token = env
+        .register_stellar_asset_contract_v2(other_token_admin)
+        .address();
+    let other_sac = StellarAssetClient::new(&env, &other_token);
+    other_sac.mint(&contract_id, &50_000);
+
+    let other_tc = TokenClient::new(&env, &other_token);
+    assert_eq!(other_tc.balance(&contract_id), 50_000);
+    assert_eq!(other_tc.balance(&recipient), 0);
+
+    client.rescue_token(&other_token, &recipient);
+
+    assert_eq!(other_tc.balance(&contract_id), 0);
+    assert_eq!(other_tc.balance(&recipient), 50_000);
+}
+
+#[test]
+fn test_rescue_token_zero_balance_is_noop() {
+    let (env, client, token, contract_id) = setup();
+    let alice = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    client.initialize(&token, &vec![&env, alice], &vec![&env, 10_000_u32]);
+
+    let other_token_admin = Address::generate(&env);
+    let other_token = env
+        .register_stellar_asset_contract_v2(other_token_admin)
+        .address();
+
+    client.rescue_token(&other_token, &recipient);
+
+    let other_tc = TokenClient::new(&env, &other_token);
+    assert_eq!(other_tc.balance(&contract_id), 0);
+    assert_eq!(other_tc.balance(&recipient), 0);
+}
+
+#[test]
+#[should_panic]
+fn test_rescue_token_requires_all_beneficiaries_auth() {
+    let env = Env::default();
+    let contract_id = env.register(RoyaltySplitter, ());
+    let client = RoyaltySplitterClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin)
+        .address();
+    let other_token_admin = Address::generate(&env);
+    let other_token = env
+        .register_stellar_asset_contract_v2(other_token_admin)
+        .address();
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    client.initialize(
+        &token,
+        &vec![&env, alice, bob],
+        &vec![&env, 5_000_u32, 5_000_u32],
+    );
+
+    // Without auths from all beneficiaries, rescue_token must panic
+    client.rescue_token(&other_token, &recipient);
+}

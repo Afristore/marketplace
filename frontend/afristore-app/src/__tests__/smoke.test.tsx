@@ -21,6 +21,7 @@ jest.mock("@/context/WalletContext", () => ({
 
 // Mock next/navigation
 jest.mock("next/navigation", () => ({
+  usePathname: () => "/",
   useParams: () => ({ id: "1" }),
   useRouter: () => ({
     push: jest.fn(),

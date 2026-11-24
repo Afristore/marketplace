@@ -14,16 +14,16 @@ fn jump_ledger(env: &Env, delta: u32) {
 }
 
 fn wasm_bytes(name: &str) -> std::vec::Vec<u8> {
-    // In Cursor's sandbox, cargo builds into an isolated target dir (not `./target`).
-    // Derive the target dir from the current test binary path:
-    //   .../cargo-target/debug/deps/<test-binary>
-    let exe = std::env::current_exe().unwrap();
-    let target_dir = exe
-        .parent()
-        .and_then(|p| p.parent())
-        .and_then(|p| p.parent())
-        .unwrap()
-        .to_path_buf();
+    // Locate the artifacts built by the workspace WASM release build.
+    // The test executable's directory is not a reliable proxy for Cargo's
+    // target directory (it can also live under target/debug/build/...).
+    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join("target")
+        });
     let path = target_dir
         .join("wasm32v1-none")
         .join("release")
@@ -903,6 +903,65 @@ fn deploy_lazy_1155_empty_name_no_state_change() {
     assert_eq!(client.collection_count(), 0u64);
     assert!(client.all_collections().is_empty());
     assert!(client.collections_by_creator(&creator).is_empty());
+}
+
+// ── Empty symbol validation tests (ERC-721 only) ────────────────
+//
+// ERC-1155 collections have no `symbol` field (see `deploy_normal_1155` /
+// `deploy_lazy_1155`), so there is nothing to validate for them.
+
+#[test]
+fn deploy_normal_721_fails_on_empty_symbol() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+    let royalty_receiver = Address::generate(&env);
+
+    let result = client.try_deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Empty Symbol"),
+        &String::from_str(&env, ""),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xE1u8; 32]),
+    );
+    assert_eq!(result, Err(Ok(Error::EmptySymbol)));
+    assert_eq!(client.collection_count(), 0u64);
+
+    // A one-character symbol is still accepted.
+    client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "One Char"),
+        &String::from_str(&env, "A"),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xE2u8; 32]),
+    );
+    assert_eq!(client.collection_count(), 1u64);
+}
+
+#[test]
+fn deploy_lazy_721_fails_on_empty_symbol() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+    let creator_pubkey = BytesN::from_array(&env, &[0x09u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+
+    let result = client.try_deploy_lazy_721(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "Lazy Empty Symbol"),
+        &String::from_str(&env, ""),
+        &1_000u64,
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xE3u8; 32]),
+    );
+    assert_eq!(result, Err(Ok(Error::EmptySymbol)));
+    assert_eq!(client.collection_count(), 0u64);
 }
 
 // ── Symbol length validation tests ──────────────────────────────
@@ -2316,7 +2375,7 @@ fn deploy_splitter_emits_deploy_event_with_split_tag() {
     client.add_approved_currency(&token);
     let beneficiaries =
         soroban_sdk::Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
-    let shares = soroban_sdk::Vec::from_array(&env, [60u32, 40u32]);
+    let shares = soroban_sdk::Vec::from_array(&env, [6000u32, 4000u32]);
 
     let _splitter = client.deploy_splitter(
         &creator,
@@ -2348,7 +2407,7 @@ fn deploy_splitter_salt_isolates_addresses_across_creators_and_salts() {
     client.add_approved_currency(&token);
     let beneficiaries =
         soroban_sdk::Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
-    let shares = soroban_sdk::Vec::from_array(&env, [50u32, 50u32]);
+    let shares = soroban_sdk::Vec::from_array(&env, [5000u32, 5000u32]);
 
     let salt = BytesN::from_array(&env, &[0x52u8; 32]);
     let by_creator = client.deploy_splitter(&creator, &token, &beneficiaries, &shares, &salt);

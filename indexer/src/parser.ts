@@ -88,6 +88,20 @@ export function parseMarketplaceEvent(
     type = LENDING_SUBTOPIC_MAP[subTopic] || TOPIC_MAP[subTopic] || subTopic;
   }
 
+  // Handle multi-topic stake pool deployment event: (symbol_short!("stake"), symbol_short!("pool"))
+  if (topic === 'stake' && topics.length > 1) {
+    let subTopic = '';
+    try {
+      const rawSub = xdr.ScVal.fromXDR(topics[1], 'base64');
+      subTopic = scValToNative(rawSub);
+    } catch {
+      subTopic = topics[1];
+    }
+    if (subTopic === 'pool') {
+      type = 'DEPLOY_STAKING_POOL';
+    }
+  }
+
   if (!type && TOPIC_MAP[topic]) {
     type = TOPIC_MAP[topic];
   } else if (!type) {
@@ -133,13 +147,14 @@ export function parseMarketplaceEvent(
   else if (nativeData.admin) actor = nativeData.admin.toString();
 
 
-  // For deploy events the value is a tuple (creator, collection_address)
+  // For deploy events the value is a tuple (creator, collection_address) or (creator, nft_address, pool_address)
   // scValToNative returns an array for tuples
   if (
     type === 'DEPLOY_NORMAL_721' ||
     type === 'DEPLOY_NORMAL_1155' ||
     type === 'DEPLOY_LAZY_721' ||
-    type === 'DEPLOY_LAZY_1155'
+    type === 'DEPLOY_LAZY_1155' ||
+    type === 'DEPLOY_STAKING_POOL'
   ) {
     if (Array.isArray(nativeData) && nativeData.length >= 2) {
       actor = nativeData[0].toString(); // creator address

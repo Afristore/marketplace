@@ -3,6 +3,7 @@
  * Tests contract ABI compliance and parameter handling.
  */
 import { Address } from "@stellar/stellar-sdk";
+import type { SplitterRecipient } from "@/lib/splitter";
 
 describe("splitter.ts", () => {
   describe("getSplitterRecipients - contract ABI compliance", () => {
@@ -65,8 +66,6 @@ describe("splitter.ts", () => {
 
   describe("SplitterRecipient interface", () => {
     it("should have correct structure", () => {
-      const { SplitterRecipient } = require("@/lib/splitter");
-      
       const recipient: SplitterRecipient = {
         address: "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
         percentage: 50,

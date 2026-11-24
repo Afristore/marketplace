@@ -198,7 +198,10 @@ export function useWithdrawOffer(publicKey: string | null) {
 
 // ── useAcceptOffer ───────────────────────────────────────────
 
-export function useAcceptOffer(publicKey: string | null) {
+export function useAcceptOffer(
+  publicKey: string | null,
+  onRefresh?: () => Promise<void> | void,
+) {
   const [isAccepting, setIsAccepting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useTransientErrorToast(error);
@@ -222,7 +225,7 @@ export function useAcceptOffer(publicKey: string | null) {
         setIsAccepting(false);
       }
     },
-    [publicKey],
+    [publicKey, onRefresh],
   );
 
   return { accept, isAccepting, error };
@@ -230,7 +233,10 @@ export function useAcceptOffer(publicKey: string | null) {
 
 // ── useRejectOffer ───────────────────────────────────────────
 
-export function useRejectOffer(publicKey: string | null) {
+export function useRejectOffer(
+  publicKey: string | null,
+  onRefresh?: () => Promise<void> | void,
+) {
   const [isRejecting, setIsRejecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useTransientErrorToast(error);
@@ -254,7 +260,7 @@ export function useRejectOffer(publicKey: string | null) {
         setIsRejecting(false);
       }
     },
-    [publicKey],
+    [publicKey, onRefresh],
   );
 
   return { reject, isRejecting, error };

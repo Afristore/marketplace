@@ -1,7 +1,7 @@
 'use client'
 
 import { useCopyToClipboard } from '@/hooks/useCopyToClipboard'
-import { useTranslation } from '@/lib/i18n'
+import { useTranslation } from '@/lib/i18n/useTranslation'
 
 interface CopyToClipboardButtonProps {
   text: string
@@ -15,7 +15,7 @@ export function CopyToClipboardButton({
   ariaLabel,
 }: CopyToClipboardButtonProps) {
   const { copied, copy } = useCopyToClipboard()
-  const t = useTranslation()
+  const { t } = useTranslation()
 
   const handleCopy = async () => {
     await copy(text)

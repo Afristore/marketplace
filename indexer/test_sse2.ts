@@ -1,5 +1,6 @@
 import express from 'express';
 import request from 'supertest';
+import { logger } from './src/logger.js';
 
 const app = express();
 app.get('/events', (req, res) => {
@@ -10,12 +11,12 @@ app.get('/events', (req, res) => {
 });
 
 async function run() {
-    console.log({ msg: "Starting request" });
+    logger.info("Starting request");
     await new Promise<void>((resolve, reject) => {
         const req = request(app).get('/events');
         req.buffer(false);
         req.on('response', (res) => {
-            console.log({ msg: "Got response", status: res.status });
+            logger.info("Got response", { status: res.status });
             res.on('error', () => {}); // Ignore abort error
             req.abort();
             resolve();
@@ -26,7 +27,7 @@ async function run() {
         });
         req.end();
     });
-    console.log({ msg: "Finished successfully" });
+    logger.info("Finished successfully");
 }
 
-run().catch(console.error);
+run().catch((err) => logger.error('Request failed', { err }));

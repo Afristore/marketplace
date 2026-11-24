@@ -429,6 +429,18 @@ skippedRange,
         contractIds,
         startLedger,
         effectiveLatestLedger,
+        async (rawEvent, err) => {
+          const ledger = (rawEvent as { ledger?: unknown })?.ledger;
+          await recordIndexerError(
+            {
+              eventType: "DECODE_ERROR",
+              ledgerSequence: typeof ledger === "number" ? ledger : undefined,
+              data: rawEvent,
+            },
+            err,
+            prisma,
+          );
+        },
       );
 
       let latestHash: string | null = null;
@@ -456,7 +468,16 @@ skippedRange,
 
         updateSyncMetrics(updatedState.lastLedger, networkLatestLedger);
 
-        for (const ev of newEvents) emitSSEEvent(ev);
+        for (const ev of newEvents) {
+          try {
+            emitSSEEvent(ev);
+          } catch (sseErr) {
+            log.error("Failed to emit SSE event", {
+              eventType: ev?.eventType,
+              err: sseErr,
+            });
+          }
+        }
       } else if (effectiveLatestLedger > syncState.lastLedger) {
         try {
           const ledgersRes = await server.getLedgers({
@@ -930,22 +951,44 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
     });
   }
 
-  // Handle deploy events (no listingId — collection deployments)
+  // Handle deploy events (no listingId — collection & staking pool deployments)
   if (
     eventType === "DEPLOY_NORMAL_721" ||
     eventType === "DEPLOY_NORMAL_1155" ||
     eventType === "DEPLOY_LAZY_721" ||
-    eventType === "DEPLOY_LAZY_1155"
+    eventType === "DEPLOY_LAZY_1155" ||
+    eventType === "DEPLOY_STAKING_POOL" ||
+    eventType === "STAKING_POOL_DEPLOYED"
   ) {
     const kindMap: Record<string, string> = {
       DEPLOY_NORMAL_721: "normal_721",
       DEPLOY_NORMAL_1155: "normal_1155",
       DEPLOY_LAZY_721: "lazy_721",
       DEPLOY_LAZY_1155: "lazy_1155",
+      DEPLOY_STAKING_POOL: "staking_pool",
+      STAKING_POOL_DEPLOYED: "staking_pool",
     };
     const rawData = Array.isArray(data) ? data : [];
-    const creatorAddr = rawData[0]?.toString() || actor;
-    const contractAddr = rawData[1]?.toString() || "";
+    const creatorAddr =
+      (Array.isArray(data) ? data[0]?.toString() : data?.creator?.toString()) || actor;
+    let contractAddr = "";
+    let name: string | null = null;
+
+    if (
+      eventType === "DEPLOY_STAKING_POOL" ||
+      eventType === "STAKING_POOL_DEPLOYED"
+    ) {
+      if (Array.isArray(data)) {
+        name = data[1]?.toString() ?? null;
+        contractAddr = data[2]?.toString() || "";
+      } else if (data && typeof data === "object") {
+        name = (data.nft_address ?? data.nftAddress)?.toString() ?? null;
+        contractAddr = (data.pool_address ?? data.poolAddress)?.toString() || "";
+      }
+    } else {
+      contractAddr = rawData[1]?.toString() || "";
+    }
+
     if (contractAddr) {
       await db.collection.upsert({
         where: { contractAddress: contractAddr },
@@ -953,10 +996,12 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
           contractAddress: contractAddr,
           kind: kindMap[eventType],
           creator: creatorAddr,
+          name,
           deployedAtLedger: ledgerSequence,
         },
         update: {
           creator: creatorAddr,
+          name: name ?? undefined,
           deployedAtLedger: ledgerSequence,
         },
       });

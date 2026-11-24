@@ -256,7 +256,9 @@ describe("CountdownTimer", () => {
         />,
       );
 
-      await user.type(screen.getByPlaceholderText(/min/i), "2");
+      const input = screen.getByPlaceholderText(/min/i);
+      await user.clear(input);
+      await user.type(input, "2");
       await user.click(screen.getByRole("button", { name: /place bid/i }));
 
       expect(await screen.findByRole("alert")).toHaveTextContent("RPC timeout");
@@ -273,7 +275,9 @@ describe("CountdownTimer", () => {
 
       render(<BiddingPanel auction={makeAuction({ creator: "GCREATOR" })} />);
 
-      await user.type(screen.getByPlaceholderText(/min/i), "2");
+      const input = screen.getByPlaceholderText(/min/i);
+      await user.clear(input);
+      await user.type(input, "2");
       await user.click(screen.getByRole("button", { name: /place bid/i }));
 
       expect(await screen.findByRole("alert")).toHaveTextContent(

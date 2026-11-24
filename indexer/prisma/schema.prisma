@@ -154,6 +154,7 @@ model LendingListing {
   updatedAtLedger           Int
   @@index([lender])
   @@index([status])
+  @@index([status, declaredPriceUsd])
   @@index([updatedAtLedger])
 }
 
@@ -182,6 +183,8 @@ model LendingPosition {
   updatedAtLedger           Int
   @@index([borrower])
   @@index([lender])
+  @@index([borrower, status])
+  @@index([lender, status])
   @@index([listingId])
   @@index([status])
   @@index([healthFactor])

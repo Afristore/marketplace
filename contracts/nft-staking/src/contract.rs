@@ -175,6 +175,7 @@ impl NftStaking {
             owner: user.clone(),
             token_address: token_address.clone(),
             token_id,
+            amount: 1,
             staked_at: env.ledger().timestamp(),
             rewards_earned: 0,
         };
@@ -209,6 +210,9 @@ impl NftStaking {
         }
         user.require_auth();
         Self::require_pool_nft(&env, &token_address);
+        if amount == 0 {
+            panic_with_error!(&env, StakingError::InvalidAmount);
+        }
 
         let position_key = DataKey::StakedPosition(user.clone(), token_address.clone(), token_id);
 
@@ -233,6 +237,7 @@ impl NftStaking {
             owner: user.clone(),
             token_address: token_address.clone(),
             token_id,
+            amount,
             staked_at: env.ledger().timestamp(),
             rewards_earned: 0,
         };
@@ -326,16 +331,20 @@ impl NftStaking {
         Self::require_pool_nft(&env, &token_address);
 
         let position_key = DataKey::StakedPosition(user.clone(), token_address.clone(), token_id);
-        let position = load_staked_position(&env, &position_key)
+        let mut position = load_staked_position(&env, &position_key)
             .unwrap_or_else(|| panic_with_error!(&env, StakingError::NotStaked));
 
         if position.owner != user {
             panic_with_error!(&env, StakingError::Unauthorized);
         }
+        if amount == 0 || amount > position.amount {
+            panic_with_error!(&env, StakingError::InvalidAmount);
+        }
 
         let rate = Self::rewards_per_second(&env);
         let elapsed = env.ledger().timestamp() - position.staked_at;
-        let pending = position.rewards_earned + (elapsed as i128) * rate;
+        let pending =
+            position.rewards_earned + (elapsed as i128) * rate * (position.amount as i128);
 
         if pending > 0 {
             let reward_token_addr = get_reward_token(&env)
@@ -361,8 +370,15 @@ impl NftStaking {
             ],
         );
 
-        remove_staked_position(&env, &position_key);
-        remove_user_stake(&env, &user, &position_key);
+        position.amount -= amount;
+        if position.amount == 0 {
+            remove_staked_position(&env, &position_key);
+            remove_user_stake(&env, &user, &position_key);
+        } else {
+            position.rewards_earned = 0;
+            position.staked_at = env.ledger().timestamp();
+            save_staked_position(&env, &position_key, &position);
+        }
         set_total_staked(&env, get_total_staked(&env).saturating_sub(amount));
 
         UnstakedEvent {
@@ -391,7 +407,8 @@ impl NftStaking {
             if let Some(position) = load_staked_position(&env, &key) {
                 let elapsed = env.ledger().timestamp() - position.staked_at;
                 // Collect all pending rewards: previously accrued + newly elapsed.
-                let claimable = position.rewards_earned + (elapsed as i128) * rate;
+                let claimable =
+                    position.rewards_earned + (elapsed as i128) * rate * (position.amount as i128);
                 total_rewards += claimable;
                 positions.push_back((key, position));
             }
@@ -464,7 +481,8 @@ impl NftStaking {
             if let Some(position) = load_staked_position(&env, &key) {
                 let elapsed = env.ledger().timestamp() - position.staked_at;
                 // rewards_earned holds only the pending (not-yet-claimed) portion.
-                total += (elapsed as i128) * rate + position.rewards_earned;
+                total +=
+                    (elapsed as i128) * rate * (position.amount as i128) + position.rewards_earned;
             }
         }
         total
