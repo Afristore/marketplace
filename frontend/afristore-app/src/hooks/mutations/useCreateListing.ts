@@ -27,6 +27,11 @@ import { useCallback, useState } from "react";
 import { useSafeToast } from "@/hooks/useSafeToast";
 import { useTransientErrorToast } from "@/hooks/useTransientErrorToast";
 import { createListing } from "@/lib/contract";
+import {
+  ArtworkMetadata,
+  uploadImageToIPFS,
+  uploadMetadataToIPFS,
+} from "@/lib/ipfs";
 import { getReadableErrorMessage } from "@/lib/errors";
 import { assertSupportedTokenAddress } from "@/lib/token-support";
 import { trackEvent } from "@/providers/PostHogProvider";
@@ -37,6 +42,14 @@ export interface CreateListingInput {
   price: number;
   amount?: number;
   tokenAddress?: string;
+  /**
+   * Artwork metadata to pin to IPFS. Omit to rely on the NFT's existing
+   * token URI (which is what the indexer resolves `metadata_cid` from).
+   */
+  artwork?: Omit<ArtworkMetadata, "image" | "artist"> & {
+    artistName: string;
+    imageFile: File;
+  };
 }
 
 /**
@@ -58,6 +71,7 @@ export function useCreateListing(artistPublicKey: string | null) {
   const [isCreating, setIsCreating] = useState(false);
   const [progress, setProgress] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  const [metadataCid, setMetadataCid] = useState<string | null>(null);
   useTransientErrorToast(error);
 
   const create = useCallback(
@@ -69,6 +83,7 @@ export function useCreateListing(artistPublicKey: string | null) {
 
       setIsCreating(true);
       setError(null);
+      setMetadataCid(null);
 
       try {
         setProgress("Validating payment token…");
@@ -76,6 +91,22 @@ export function useCreateListing(artistPublicKey: string | null) {
           input.tokenAddress,
           "listing",
         );
+
+        // Pin artwork before the on-chain call so a failed upload never
+        // leaves a listing behind with no metadata.
+        // ponytail: create_listing has no CID argument; attaching the CID to
+        // the listing is indexer-side (#136). The CID is exposed for that.
+        if (input.artwork) {
+          const { imageFile, artistName, ...fields } = input.artwork;
+          setProgress("Uploading image to IPFS…");
+          const image = await uploadImageToIPFS(imageFile, fields.title);
+          setProgress("Uploading metadata to IPFS…");
+          const meta = await uploadMetadataToIPFS(
+            { ...fields, artist: artistName, image: `ipfs://${image.cid}` },
+            fields.title,
+          );
+          setMetadataCid(meta.cid);
+        }
 
         // Build → simulate → sign → submit → confirm, all inside
         // createListing → invokeContract.
@@ -86,6 +117,7 @@ export function useCreateListing(artistPublicKey: string | null) {
           token.address,
           input.collectionAddress,
           input.nftTokenId,
+          input.amount ?? 1,
         );
 
         trackEvent.listingCreated(
@@ -113,5 +145,5 @@ export function useCreateListing(artistPublicKey: string | null) {
     [artistPublicKey, pushToast],
   );
 
-  return { create, isCreating, progress, error };
+  return { create, isCreating, progress, error, metadataCid };
 }

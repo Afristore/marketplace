@@ -18,6 +18,7 @@ import {
   xlmToStroops,
   getAllListings,
   getAllAuctions,
+  pollTransaction,
 } from "../lib/contract";
 
 jest.mock("@/lib/e2e-chain-mock", () => ({
@@ -371,5 +372,32 @@ describe("read-only simulation with unfunded accounts (#1171)", () => {
     expect(accountSpy).not.toHaveBeenCalled();
     expect(simulateSpy).toHaveBeenCalledTimes(1);
     expect(scValToNative(retval)).toBe(7n);
+  });
+});
+
+describe("pollTransaction (#1335)", () => {
+  const NOT_FOUND = { status: SorobanRpc.Api.GetTransactionStatus.NOT_FOUND };
+
+  it("returns as soon as the transaction leaves NOT_FOUND", async () => {
+    const success = { status: SorobanRpc.Api.GetTransactionStatus.SUCCESS };
+    const getTransaction = jest
+      .fn()
+      .mockResolvedValueOnce(NOT_FOUND)
+      .mockResolvedValueOnce(success);
+    await expect(
+      pollTransaction({ getTransaction } as any, "abc", { intervalMs: 0 }),
+    ).resolves.toBe(success);
+    expect(getTransaction).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws with the hash after the attempt limit instead of hanging", async () => {
+    const getTransaction = jest.fn().mockResolvedValue(NOT_FOUND);
+    await expect(
+      pollTransaction({ getTransaction } as any, "deadbeef", {
+        attempts: 3,
+        intervalMs: 0,
+      }),
+    ).rejects.toThrow(/deadbeef.*3 attempts/);
+    expect(getTransaction).toHaveBeenCalledTimes(3);
   });
 });

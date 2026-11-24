@@ -130,10 +130,12 @@ function addrString(x: unknown): string {
  * the fetch boundary so callers never see the raw wire value.
  */
 function normalizeListing(raw: unknown): Listing {
-  const l = raw as Listing & { price: unknown };
+  const l = raw as Listing & { price: unknown; amount?: unknown };
   const price =
     typeof l.price === "bigint" ? l.price : BigInt(l.price as string | number);
-  return { ...l, price };
+  // Indexer may serialise amount as a string; default to 1 (ERC-721).
+  const amount = l.amount == null ? 1 : Number(l.amount);
+  return { ...l, price, amount };
 }
 
 function isRoyaltyStatsResponse(v: unknown): v is RoyaltyStatsResponse {

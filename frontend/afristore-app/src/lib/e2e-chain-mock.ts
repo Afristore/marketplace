@@ -175,6 +175,7 @@ export function e2eMockCreateListing(
     artist: artistPublicKey,
     collection: collectionAddress,
     token_id: nftTokenId,
+    amount: 1,
     price: priceStroops,
     currency: DEFAULT_TOKEN.symbol,
     token: tokenAddress,

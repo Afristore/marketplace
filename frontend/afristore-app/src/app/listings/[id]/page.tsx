@@ -212,6 +212,7 @@ export default async function ListingPage({ params }: PageProps) {
         artist: m.artist,
         collection: m.artist,
         token_id: Number(id),
+        amount: 1,
         metadata_cid: `mock_cid_${id}`,
         price: BigInt(m.price) * BigInt(10_000_000),
         currency: "XLM",

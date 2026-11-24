@@ -77,7 +77,11 @@ import {
   useCreateListing,
   useBuyArtwork,
   useCancelListing,
+  useUpdateListing,
+  metadataChanged,
 } from "@/hooks/useMarketplace";
+import { renderHook } from "@testing-library/react";
+import { uploadImageToIPFS, uploadMetadataToIPFS } from "@/lib/ipfs";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -340,6 +344,87 @@ describe("useCreateListing", () => {
       console.error("Test failed:", error);
       throw error;
     }
+  });
+});
+
+describe("listing metadata (#1333, #1334)", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  const currentMetadata = {
+    title: "Sunrise",
+    description: "Warm",
+    artist: "Ada",
+    image: "ipfs://QmOld",
+    year: "2024",
+    category: "Painting",
+  };
+  const baseUpdate = {
+    listingId: 7,
+    title: "Sunrise",
+    description: "Warm",
+    artistName: "Ada",
+    year: "2024",
+    category: "Painting",
+    price: 20,
+    originalTokenAddress: "CTOKEN",
+    tokenAddress: "CTOKEN",
+    currentMetadata,
+    currentMetadataCid: "QmOldMeta",
+  };
+
+  it("uploads image + metadata and forwards amount on create", async () => {
+    mockCreateListing.mockResolvedValueOnce(5);
+    const { result } = renderHook(() => useCreateListing("GARTIST"));
+    const imageFile = new File(["x"], "a.png", { type: "image/png" });
+    await act(async () => {
+      await result.current.create({
+        collectionAddress: "C",
+        nftTokenId: 1,
+        price: 10,
+        amount: 3,
+        tokenAddress: "CTOKEN",
+        artwork: { ...baseUpdate, imageFile },
+      });
+    });
+    expect(uploadImageToIPFS).toHaveBeenCalledWith(imageFile, "Sunrise");
+    expect(uploadMetadataToIPFS).toHaveBeenCalledWith(
+      expect.objectContaining({ artist: "Ada", image: "ipfs://QmImage" }),
+      "Sunrise",
+    );
+    expect(mockCreateListing.mock.calls[0][5]).toBe(3);
+    expect(result.current.metadataCid).toBe("QmMeta");
+  });
+
+  it("detects only real metadata edits", () => {
+    expect(metadataChanged(baseUpdate)).toBe(false);
+    expect(metadataChanged({ ...baseUpdate, title: "Dusk" })).toBe(true);
+  });
+
+  it("keeps the pinned CID and skips IPFS on a price-only edit", async () => {
+    mockUpdateListing.mockResolvedValueOnce(true);
+    const { result } = renderHook(() => useUpdateListing("GARTIST"));
+    await act(async () => {
+      await result.current.update(baseUpdate);
+    });
+    expect(uploadMetadataToIPFS).not.toHaveBeenCalled();
+    expect(mockUpdateListing.mock.calls[0][2]).toBe("QmOldMeta");
+  });
+
+  it("re-pins edited metadata instead of blank fields", async () => {
+    mockUpdateListing.mockResolvedValueOnce(true);
+    const { result } = renderHook(() => useUpdateListing("GARTIST"));
+    await act(async () => {
+      await result.current.update({ ...baseUpdate, title: "Dusk" });
+    });
+    expect(uploadMetadataToIPFS).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Dusk",
+        artist: "Ada",
+        description: "Warm",
+        image: "ipfs://QmOld",
+      }),
+      "Dusk",
+    );
   });
 });
 
