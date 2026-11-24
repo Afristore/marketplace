@@ -382,13 +382,15 @@ export async function getStakingPoolConfig(
         rewardRate: mock.rewardRate,
       };
     }
-    const DUMMY_KEY =
-      "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+    const simulationAccount = await getConnectedPublicKey();
+    if (!simulationAccount) {
+      throw new Error("Connect a wallet to query staking pool details.");
+    }
 
     const [nftVal, tokenVal, rateVal] = await Promise.all([
-      invokeStakingContract(DUMMY_KEY, "get_nft_address", [], true, poolContractId),
-      invokeStakingContract(DUMMY_KEY, "get_reward_token", [], true, poolContractId),
-      invokeStakingContract(DUMMY_KEY, "get_reward_rate", [], true, poolContractId),
+      invokeStakingContract(simulationAccount, "get_nft_address", [], true, poolContractId),
+      invokeStakingContract(simulationAccount, "get_reward_token", [], true, poolContractId),
+      invokeStakingContract(simulationAccount, "get_reward_rate", [], true, poolContractId),
     ]);
 
     return {

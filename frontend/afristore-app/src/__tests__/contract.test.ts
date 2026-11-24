@@ -235,7 +235,7 @@ describe("contract method serialization (#1307)", () => {
     return { method, args };
   }
 
-  it("createListing sends seven typed arguments in contract order", async () => {
+  it("createListing sends eight typed arguments in contract order", async () => {
     const { method, args } = await captureCall(() =>
       createListing(
         SERIALIZE_ARTIST,
@@ -243,6 +243,7 @@ describe("contract method serialization (#1307)", () => {
         DEFAULT_TOKEN.address,
         SERIALIZE_COLLECTION,
         5,
+        3,
         [
           { address: SERIALIZE_ARTIST, percentage: 60 },
           { address: SERIALIZE_CO_ARTIST, percentage: 40 },
@@ -251,13 +252,14 @@ describe("contract method serialization (#1307)", () => {
     );
 
     expect(method).toBe("create_listing");
-    expect(args).toHaveLength(7);
+    expect(args).toHaveLength(8);
     expect(args.map((arg) => arg.switch().name)).toEqual([
       "scvAddress",
       "scvI128",
       "scvSymbol",
       "scvAddress",
       "scvAddress",
+      "scvU64",
       "scvU64",
       "scvVec",
     ]);
@@ -267,8 +269,9 @@ describe("contract method serialization (#1307)", () => {
     expect(scValToNative(args[3])).toBe(DEFAULT_TOKEN.address);
     expect(scValToNative(args[4])).toBe(SERIALIZE_COLLECTION);
     expect(scValToNative(args[5])).toBe(5n);
+    expect(scValToNative(args[6])).toBe(3n);
 
-    const recipients = scValToNative(args[6]) as Array<{ address: string; percentage: unknown }>;
+    const recipients = scValToNative(args[7]) as Array<{ address: string; percentage: unknown }>;
     expect(recipients.map((r) => r.address)).toEqual([SERIALIZE_ARTIST, SERIALIZE_CO_ARTIST]);
     expect(recipients.map((r) => Number(r.percentage))).toEqual([60, 40]);
   });
@@ -278,7 +281,8 @@ describe("contract method serialization (#1307)", () => {
       createListing(SERIALIZE_ARTIST, 2, DEFAULT_TOKEN.address, SERIALIZE_COLLECTION, 9),
     );
 
-    const recipients = scValToNative(args[6]) as Array<{ address: string; percentage: unknown }>;
+    expect(scValToNative(args[6])).toBe(1n);
+    const recipients = scValToNative(args[7]) as Array<{ address: string; percentage: unknown }>;
     expect(recipients).toHaveLength(1);
     expect(recipients[0].address).toBe(SERIALIZE_ARTIST);
     expect(Number(recipients[0].percentage)).toBe(100);

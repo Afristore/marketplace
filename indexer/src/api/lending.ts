@@ -30,10 +30,23 @@ async function setCachedStats(cacheKey: string, data: any, ttl: number = LENDING
   }
 }
 
+function parsePagination(limit: unknown, offset: unknown): { take: number; skip: number } {
+  const parsedLimit = Number.parseInt(String(limit ?? ''), 10);
+  const parsedOffset = Number.parseInt(String(offset ?? ''), 10);
+
+  return {
+    take: Math.min(Math.max(1, parsedLimit || 20), 100),
+    skip: Number.isFinite(parsedOffset) && parsedOffset >= 0
+      ? Math.min(parsedOffset, 10_000)
+      : 0,
+  };
+}
+
 // GET /listings?collection=&currency=&limit=&offset=
 router.get('/listings', async (req: Request, res: Response) => {
   const { collection, currency, limit, offset } = req.query;
-  const cacheKey = `lending:listings:${collection}:${currency}:${limit}:${offset}`;
+  const { take, skip } = parsePagination(limit, offset);
+  const cacheKey = `lending:listings:${collection}:${currency}:${take}:${skip}`;
 
   const cached = await getCachedStats(cacheKey);
   if (cached) {
@@ -44,12 +57,6 @@ router.get('/listings', async (req: Request, res: Response) => {
     const where: any = { status: 'Open' };
     if (collection) where.nftContract = String(collection);
     if (currency) where.currency = String(currency);
-
-    const take = Number(limit) > 0 ? Math.min(Number(limit), 1000) : 50;
-    const rawOffset = Number(offset || 0);
-    const skip = Number.isFinite(rawOffset) && rawOffset > 0
-      ? Math.min(rawOffset, 10_000)
-      : undefined;
 
     const [results, total] = await prisma.$transaction([
       prisma.lendingListing.findMany({
@@ -123,7 +130,8 @@ router.get('/positions/:borrower', async (req: Request, res: Response) => {
 router.get('/loans/:lender', async (req: Request, res: Response) => {
   const lender = req.params.lender as string;
   const { limit, offset } = req.query;
-  const cacheKey = `lending:loans:${lender}:${limit}:${offset}`;
+  const { take, skip } = parsePagination(limit, offset);
+  const cacheKey = `lending:loans:${lender}:${take}:${skip}`;
 
   const cached = await getCachedStats(cacheKey);
   if (cached) {
@@ -131,12 +139,6 @@ router.get('/loans/:lender', async (req: Request, res: Response) => {
   }
 
   try {
-    const take = Number(limit) > 0 ? Math.min(Number(limit), 1000) : 50;
-    const rawOffset = Number(offset || 0);
-    const skip = Number.isFinite(rawOffset) && rawOffset > 0
-      ? Math.min(rawOffset, 10_000)
-      : undefined;
-
     const [listings, positions] = await prisma.$transaction([
       prisma.lendingListing.findMany({
         where: { lender },
