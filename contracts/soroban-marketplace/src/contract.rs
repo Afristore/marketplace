@@ -739,6 +739,47 @@ impl MarketplaceContract {
         .publish(&env);
     }
 
+    /// Creator ends their auction early. Only allowed while the auction is
+    /// still Active, has no bids, and has not yet reached its end time.
+    pub fn cancel_auction(env: Env, creator: Address, auction_id: u64) {
+        if crate::storage::is_paused(&env) {
+            panic_with_error!(&env, MarketplaceError::ContractPaused);
+        }
+        creator.require_auth();
+
+        let mut auction = load_auction(&env, auction_id)
+            .unwrap_or_else(|| panic_with_error!(&env, MarketplaceError::AuctionNotFound));
+
+        if auction.creator != creator {
+            panic_with_error!(&env, MarketplaceError::Unauthorized);
+        }
+        if auction.status == AuctionStatus::Finalized {
+            panic_with_error!(&env, MarketplaceError::AuctionAlreadyFinalized);
+        }
+        if auction.status != AuctionStatus::Active {
+            panic_with_error!(&env, MarketplaceError::AuctionNotActive);
+        }
+        // Bids are escrowed in this contract and there is no refund path here,
+        // so an auction that already has a bid must run to finalization.
+        if auction.highest_bidder.is_some() {
+            panic_with_error!(&env, MarketplaceError::AuctionHasBids);
+        }
+        if env.ledger().timestamp() >= auction.end_time {
+            panic_with_error!(&env, MarketplaceError::AuctionExpired);
+        }
+
+        // create_auction does not escrow the NFT (it moves in finalize_auction),
+        // so cancelling only needs to update the status.
+        auction.status = AuctionStatus::Cancelled;
+        save_auction(&env, &auction);
+
+        AuctionCancelledEvent {
+            auction_id,
+            creator,
+        }
+        .publish(&env);
+    }
+
     pub fn make_offer(
         env: Env,
         offerer: Address,
