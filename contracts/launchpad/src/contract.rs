@@ -212,6 +212,11 @@ impl Launchpad {
             return Err(Error::EmptyName);
         }
 
+        // Validate symbol is not empty
+        if symbol.is_empty() {
+            return Err(Error::EmptySymbol);
+        }
+
         // Validate symbol is not too long (max 10)
         if symbol.len() > 10 {
             return Err(Error::SymbolTooLong);
@@ -338,6 +343,11 @@ impl Launchpad {
         // Validate name is not empty
         if name.is_empty() {
             return Err(Error::EmptyName);
+        }
+
+        // Validate symbol is not empty
+        if symbol.is_empty() {
+            return Err(Error::EmptySymbol);
         }
 
         // Validate symbol is not too long (max 10)

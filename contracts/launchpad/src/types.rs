@@ -14,6 +14,9 @@ pub enum Error {
     EmptyName = 8,
     SymbolTooLong = 9,
     InvalidFee = 10,
+    /// The ERC-721 collection symbol was empty. Appended after `InvalidFee`
+    /// so existing discriminants are unchanged.
+    EmptySymbol = 11,
 }
 
 /// Which of the four collection types was deployed.
