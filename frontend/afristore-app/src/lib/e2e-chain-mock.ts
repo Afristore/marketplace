@@ -271,6 +271,18 @@ export function e2eMockFinalizeAuction(
   return true;
 }
 
+export function e2eMockCancelAuction(
+  callerPublicKey: string,
+  auctionId: number,
+): boolean {
+  const auction = auctions.get(auctionId);
+  if (!auction) {
+    throw new Error(`Auction #${auctionId} not found`);
+  }
+  auction.status = "Cancelled";
+  return true;
+}
+
 // ── Staking pool mocks ─────────────────────────────────────────
 
 export interface E2eMockStakingPoolConfig {

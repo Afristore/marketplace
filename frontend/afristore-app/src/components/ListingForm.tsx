@@ -268,9 +268,10 @@ export function ListingForm({
 
             <div className="sm:col-span-2 space-y-2">
               <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
-                Amount (ERC-1155 Quantity)
+                Amount (ERC-1155 Quantity) *
               </label>
               <input
+                required
                 type="number"
                 min={1}
                 value={form.amount}
@@ -283,6 +284,10 @@ export function ListingForm({
                 className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
                 placeholder="Number of copies to list (default: 1)"
               />
+              <p className="text-xs text-gray-500 font-inter">
+                ERC-721 collections require a quantity of 1. ERC-1155
+                collections can list more than one copy.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -305,22 +310,6 @@ export function ListingForm({
                   {selectedToken.symbol}
                 </span>
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
-                Amount *
-              </label>
-              <input
-                required
-                type="number"
-                min={1}
-                value={form.amount}
-                onChange={(e) =>
-                  setForm({ ...form, amount: parseInt(e.target.value) || 1 })
-                }
-                className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
-              />
             </div>
 
             <div className="space-y-2">
