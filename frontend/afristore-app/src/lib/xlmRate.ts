@@ -7,6 +7,8 @@
 //   3. DEFAULT_XLM_USD_RATE      compile-time safety fallback
 // ─────────────────────────────────────────────────────────────
 
+import { useEffect, useState } from "react";
+
 /** Compile-time safety fallback — only used when all live sources fail. */
 export const DEFAULT_XLM_USD_RATE = 0.12;
 
@@ -86,4 +88,31 @@ export function getStaticXlmUsdRate(): number {
 export function __resetCache(): void {
   _cachedRate = null;
   _cacheExpiry = 0;
+}
+
+/**
+ * React hook returning the XLM/USD rate.
+ *
+ * Starts from the synchronous env-var / default rate so the first render never
+ * waits on the network, then swaps in the live quote once `fetchXlmUsdRate()`
+ * resolves. A failed fetch keeps the fallback rate.
+ */
+export function useXlmRate(): number {
+  const [rate, setRate] = useState<number>(getStaticXlmUsdRate);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchXlmUsdRate()
+      .then((live) => {
+        if (!cancelled) setRate(live);
+      })
+      .catch(() => {
+        // fetchXlmUsdRate already falls back internally; keep the current rate.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return rate;
 }
