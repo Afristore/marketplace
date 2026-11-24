@@ -19,9 +19,10 @@ import {
   redeemLazy1155,
   parseLazy721VoucherJson,
   parseLazy1155VoucherJson,
+  resolveCallerPublicKey,
 } from "../lib/launchpad";
 import { invokeContract } from "../lib/contract";
-import { Address, xdr, scValToNative } from "@stellar/stellar-sdk";
+import { Address, StrKey, xdr, scValToNative } from "@stellar/stellar-sdk";
 
 // Mock invokeContract
 jest.mock("../lib/contract", () => ({
@@ -419,6 +420,20 @@ describe("Launchpad Client", () => {
         console.error("Test failed:", error);
         throw error;
       }
+    });
+  });
+
+  describe("resolveCallerPublicKey (#1257)", () => {
+    it("returns the connected public key when provided", () => {
+      expect(resolveCallerPublicKey(mockCreator)).toBe(mockCreator);
+    });
+
+    it("falls back to a valid ephemeral Stellar public key when disconnected", () => {
+      const resolved = resolveCallerPublicKey(null);
+      expect(StrKey.isValidEd25519PublicKey(resolved)).toBe(true);
+      expect(resolved).not.toBe(
+        "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN",
+      );
     });
   });
 });

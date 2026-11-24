@@ -13,6 +13,7 @@ import {
   createAuction,
   createListing,
   buyArtwork,
+  invokeContract,
   stroopsToXlm,
   xlmToStroops,
   getAllListings,
@@ -328,5 +329,47 @@ describe("contract method serialization (#1307)", () => {
     expect(args.map((arg) => arg.switch().name)).toEqual(["scvAddress", "scvU64"]);
     expect(scValToNative(args[0])).toBe(SERIALIZE_BUYER);
     expect(scValToNative(args[1])).toBe(42n);
+  });
+});
+
+describe("read-only simulation with unfunded accounts (#1171)", () => {
+  let accountSpy: jest.SpyInstance;
+  let simulateSpy: jest.SpyInstance;
+
+  beforeEach(() => {
+    accountSpy = jest
+      .spyOn(SorobanRpc.Server.prototype, "getAccount")
+      .mockRejectedValue(new Error("Account not found (404)"));
+    simulateSpy = jest
+      .spyOn(SorobanRpc.Server.prototype, "simulateTransaction")
+      .mockResolvedValue({
+        result: { retval: xdr.ScVal.scvU64(new xdr.Uint64(7)) },
+      } as never);
+  });
+
+  afterEach(() => {
+    accountSpy.mockRestore();
+    simulateSpy.mockRestore();
+  });
+
+  it("succeeds for readonly calls with an unfunded caller without calling getAccount", async () => {
+    const retval = await invokeContract(
+      SERIALIZE_BUYER,
+      "listing_count",
+      [],
+      true,
+    );
+
+    expect(accountSpy).not.toHaveBeenCalled();
+    expect(simulateSpy).toHaveBeenCalledTimes(1);
+    expect(scValToNative(retval)).toBe(7n);
+  });
+
+  it("falls back to an ephemeral key when callerPublicKey is empty on readonly calls", async () => {
+    const retval = await invokeContract("", "listing_count", [], true);
+
+    expect(accountSpy).not.toHaveBeenCalled();
+    expect(simulateSpy).toHaveBeenCalledTimes(1);
+    expect(scValToNative(retval)).toBe(7n);
   });
 });

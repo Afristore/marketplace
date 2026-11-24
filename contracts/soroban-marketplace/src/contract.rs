@@ -1076,7 +1076,7 @@ impl MarketplaceContract {
             payout -= fee;
         }
         let len = recipients.len();
-        let mut ds = 0;
+        let mut ds: i128 = 0;
         for i in 0..len {
             let r = recipients.get(i).unwrap();
             let amt = if i == len - 1 {
@@ -1084,8 +1084,11 @@ impl MarketplaceContract {
             } else {
                 (payout * r.percentage as i128) / 100
             };
-            token.transfer(&env.current_contract_address(), &r.address, &amt);
             ds += amt;
+            assert!(ds <= payout, "distributed amount exceeds payout");
+            if amt > 0 {
+                token.transfer(&env.current_contract_address(), &r.address, &amt);
+            }
         }
     }
 

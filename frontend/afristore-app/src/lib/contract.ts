@@ -7,7 +7,9 @@
 // ─────────────────────────────────────────────────────────────
 
 import {
+  Account,
   Contract,
+  Keypair,
   SorobanRpc,
   TransactionBuilder,
   xdr,
@@ -94,12 +96,9 @@ function getNetworkPassphrase(): string {
   return config.networkPassphrase;
 }
 
-const READ_ONLY_CALLER_PUBLIC_KEY =
-  "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
-
 async function getReadOnlyCallerPublicKey(): Promise<string> {
   const connectedPublicKey = await getConnectedPublicKey();
-  return connectedPublicKey ?? READ_ONLY_CALLER_PUBLIC_KEY;
+  return connectedPublicKey ?? Keypair.random().publicKey();
 }
 function resolveConfiguredToken(
   tokenAddress: string = DEFAULT_TOKEN.address,
@@ -143,8 +142,12 @@ export async function invokeContract(
   const rpc = getRpc();
   const contract = getContract(contractId);
 
-  // Fetch the caller's account for the sequence number.
-  const account = await rpc.getAccount(callerPublicKey);
+  // For read-only simulations, build a synthetic Account state so unfunded
+  // or ephemeral callers do not fail with a 404 from rpc.getAccount.
+  const sourcePublicKey = callerPublicKey || Keypair.random().publicKey();
+  const account = readonly
+    ? new Account(sourcePublicKey, "0")
+    : await rpc.getAccount(callerPublicKey);
 
   const tx = new TransactionBuilder(account, {
     fee,
