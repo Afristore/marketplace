@@ -902,6 +902,65 @@ fn deploy_lazy_1155_empty_name_no_state_change() {
     assert!(client.collections_by_creator(&creator).is_empty());
 }
 
+// ── Empty symbol validation tests (ERC-721 only) ────────────────
+//
+// ERC-1155 collections have no `symbol` field (see `deploy_normal_1155` /
+// `deploy_lazy_1155`), so there is nothing to validate for them.
+
+#[test]
+fn deploy_normal_721_fails_on_empty_symbol() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+    let royalty_receiver = Address::generate(&env);
+
+    let result = client.try_deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Empty Symbol"),
+        &String::from_str(&env, ""),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xE1u8; 32]),
+    );
+    assert_eq!(result, Err(Ok(Error::EmptySymbol)));
+    assert_eq!(client.collection_count(), 0u64);
+
+    // A one-character symbol is still accepted.
+    client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "One Char"),
+        &String::from_str(&env, "A"),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xE2u8; 32]),
+    );
+    assert_eq!(client.collection_count(), 1u64);
+}
+
+#[test]
+fn deploy_lazy_721_fails_on_empty_symbol() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+    let creator_pubkey = BytesN::from_array(&env, &[0x09u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+
+    let result = client.try_deploy_lazy_721(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "Lazy Empty Symbol"),
+        &String::from_str(&env, ""),
+        &1_000u64,
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xE3u8; 32]),
+    );
+    assert_eq!(result, Err(Ok(Error::EmptySymbol)));
+    assert_eq!(client.collection_count(), 0u64);
+}
+
 // ── Symbol length validation tests ──────────────────────────────
 
 /// Symbol of exactly max length (10) succeeds; symbol of 11+ fails.
