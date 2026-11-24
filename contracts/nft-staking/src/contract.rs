@@ -343,7 +343,8 @@ impl NftStaking {
 
         let rate = Self::rewards_per_second(&env);
         let elapsed = env.ledger().timestamp() - position.staked_at;
-        let pending = position.rewards_earned + (elapsed as i128) * rate;
+        let pending =
+            position.rewards_earned + (elapsed as i128) * rate * (position.amount as i128);
 
         if pending > 0 {
             let reward_token_addr = get_reward_token(&env)
@@ -406,7 +407,8 @@ impl NftStaking {
             if let Some(position) = load_staked_position(&env, &key) {
                 let elapsed = env.ledger().timestamp() - position.staked_at;
                 // Collect all pending rewards: previously accrued + newly elapsed.
-                let claimable = position.rewards_earned + (elapsed as i128) * rate;
+                let claimable =
+                    position.rewards_earned + (elapsed as i128) * rate * (position.amount as i128);
                 total_rewards += claimable;
                 positions.push_back((key, position));
             }
@@ -479,7 +481,8 @@ impl NftStaking {
             if let Some(position) = load_staked_position(&env, &key) {
                 let elapsed = env.ledger().timestamp() - position.staked_at;
                 // rewards_earned holds only the pending (not-yet-claimed) portion.
-                total += (elapsed as i128) * rate + position.rewards_earned;
+                total +=
+                    (elapsed as i128) * rate * (position.amount as i128) + position.rewards_earned;
             }
         }
         total

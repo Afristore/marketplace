@@ -14,16 +14,16 @@ fn jump_ledger(env: &Env, delta: u32) {
 }
 
 fn wasm_bytes(name: &str) -> std::vec::Vec<u8> {
-    // In Cursor's sandbox, cargo builds into an isolated target dir (not `./target`).
-    // Derive the target dir from the current test binary path:
-    //   .../cargo-target/debug/deps/<test-binary>
-    let exe = std::env::current_exe().unwrap();
-    let target_dir = exe
-        .parent()
-        .and_then(|p| p.parent())
-        .and_then(|p| p.parent())
-        .unwrap()
-        .to_path_buf();
+    // Locate the artifacts built by the workspace WASM release build.
+    // The test executable's directory is not a reliable proxy for Cargo's
+    // target directory (it can also live under target/debug/build/...).
+    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join("target")
+        });
     let path = target_dir
         .join("wasm32v1-none")
         .join("release")
