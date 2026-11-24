@@ -4,6 +4,7 @@ import { useState } from "react";
 import { X, CreditCard, Wallet, Loader2, CheckCircle, AlertCircle } from "lucide-react";
 import { Listing, stroopsToXlm } from "@/lib/contract";
 import { useSafeToast } from "@/hooks/useSafeToast";
+import { useXlmRate } from "@/lib/xlmRate";
 import posthog from "posthog-js";
 
 /** Turns whatever a failed purchase threw into a sentence a buyer can act on. */
@@ -20,6 +21,20 @@ export function purchaseErrorMessage(error: unknown): string {
   return detail
     ? `Purchase failed: ${detail}`
     : "Purchase failed. Please try again.";
+}
+
+/**
+ * How many of a listing a buyer can purchase in one checkout. A listing is one
+ * specific token (`collection` + `token_id`) and the purchase call takes no
+ * quantity, so only one can ever be bought; the modal locks the counter to it.
+ */
+export function maxPurchasableQuantity(_listing: Listing): number {
+  return 1;
+}
+
+/** Fiat estimate shown at checkout, as a fixed two-decimal string. */
+export function estimateFiat(totalPriceXlm: number, xlmUsdRate: number): string {
+  return (totalPriceXlm * xlmUsdRate).toFixed(2);
 }
 
 interface CheckoutModalProps {
@@ -45,12 +60,15 @@ export function CheckoutModal({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pushToast = useSafeToast();
+  const xlmRate = useXlmRate();
 
   if (!isOpen) return null;
 
   const priceXlm = Number(stroopsToXlm(listing.price));
+  const maxQuantity = maxPurchasableQuantity(listing);
+  const quantityLocked = maxQuantity <= 1;
   const totalPriceXlm = priceXlm * quantity;
-  const estimatedFiat = (totalPriceXlm * 0.12).toFixed(2);
+  const estimatedFiat = estimateFiat(totalPriceXlm, xlmRate);
 
   const handleClose = () => {
     setPurchased(false);
@@ -165,7 +183,9 @@ export function CheckoutModal({
               <div className="flex items-center gap-3 mt-1">
                 <button
                   onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                  className="rounded-lg bg-gray-200 px-3 py-1 text-sm font-bold hover:bg-gray-300 transition"
+                  disabled={quantityLocked || quantity <= 1}
+                  aria-label="Decrease quantity"
+                  className="rounded-lg bg-gray-200 px-3 py-1 text-sm font-bold hover:bg-gray-300 transition disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   -
                 </button>
@@ -173,12 +193,22 @@ export function CheckoutModal({
                   {quantity}
                 </span>
                 <button
-                  onClick={() => setQuantity((q) => q + 1)}
-                  className="rounded-lg bg-gray-200 px-3 py-1 text-sm font-bold hover:bg-gray-300 transition"
+                  onClick={() => setQuantity((q) => Math.min(maxQuantity, q + 1))}
+                  disabled={quantityLocked || quantity >= maxQuantity}
+                  aria-label="Increase quantity"
+                  className="rounded-lg bg-gray-200 px-3 py-1 text-sm font-bold hover:bg-gray-300 transition disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   +
                 </button>
               </div>
+              {quantityLocked && (
+                <p
+                  data-testid="quantity-locked-note"
+                  className="mt-1 text-xs text-gray-400"
+                >
+                  Unique token: quantity is fixed at 1.
+                </p>
+              )}
             </div>
             <div className="text-right">
               <p className="text-sm text-gray-500">Total Price</p>
