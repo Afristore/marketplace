@@ -2179,3 +2179,42 @@ fn test_stake_and_unstake_erc1155_zero_amount_rejected() {
         .unwrap();
     assert_eq!(unstake_err, StakingError::InvalidAmount.into());
 }
+
+// ── Issue #1212: reject zero amounts ────────────────────────────────────────
+// `amount` is a `u64`, so negative amounts are unrepresentable; zero is the
+// only invalid value.
+
+#[test]
+fn test_stake_erc1155_rejects_zero_amount() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+    mint_erc1155(&env, &collection, &user, 0, 10);
+
+    let err = staking
+        .try_stake_erc1155(&user, &collection, &0, &0)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::InvalidAmount.into());
+
+    assert!(staking
+        .get_staked_position(&user, &collection, &0)
+        .is_none());
+    assert_eq!(erc1155_balance(&env, &collection, &user, 0), 10);
+}
+
+#[test]
+fn test_unstake_erc1155_rejects_zero_amount() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+    mint_erc1155(&env, &collection, &user, 0, 10);
+    staking.stake_erc1155(&user, &collection, &0, &4);
+
+    let err = staking
+        .try_unstake_erc1155(&user, &collection, &0, &0)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::InvalidAmount.into());
+
+    assert!(staking
+        .get_staked_position(&user, &collection, &0)
+        .is_some());
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 4);
+}

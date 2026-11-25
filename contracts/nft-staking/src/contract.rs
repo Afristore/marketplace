@@ -208,6 +208,9 @@ impl NftStaking {
         if Self::is_paused(env.clone()) {
             panic_with_error!(&env, StakingError::ContractPaused);
         }
+        if amount == 0 {
+            panic_with_error!(&env, StakingError::InvalidAmount);
+        }
         user.require_auth();
         Self::require_pool_nft(&env, &token_address);
         if amount == 0 {
@@ -327,6 +330,9 @@ impl NftStaking {
         amount: u64,
     ) {
         extend_instance_ttl(&env);
+        if amount == 0 {
+            panic_with_error!(&env, StakingError::InvalidAmount);
+        }
         user.require_auth();
         Self::require_pool_nft(&env, &token_address);
 
