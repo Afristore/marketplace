@@ -43,10 +43,8 @@ export function useAuctions() {
     try {
       try {
         const raw = await fetchAuctions();
-        if (raw.length >= 0) {
-          setAuctions(raw);
-          return;
-        }
+        setAuctions(raw);
+        return;
       } catch {
         // Indexer unreachable — fall through to on-chain
       }
@@ -84,10 +82,8 @@ export function useArtistAuctions(artistPublicKey: string | null) {
     try {
       try {
         const raw = await fetchAuctions({ creator: artistPublicKey });
-        if (raw && raw.length >= 0) {
-          setAuctions(raw as Auction[]);
-          return;
-        }
+        setAuctions(raw);
+        return;
       } catch (e) {
         console.warn("[indexer] useArtistAuctions fallback:", e);
       }

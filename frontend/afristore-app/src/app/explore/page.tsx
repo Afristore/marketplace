@@ -93,15 +93,8 @@ export default function ExplorePage() {
 
       const res = await fetchListings(opts);
       const rows = Array.isArray(res.listings) ? res.listings : [];
-      if (rows.length > 0 || typeof res.total === "number") {
-        setListings(rows);
-        setTotal(typeof res.total === "number" ? res.total : rows.length);
-      } else {
-        // Fallback to on-chain scan only when indexer response is malformed
-        const all = await getAllListings();
-        setListings(all.slice(start, start + PAGE_SIZE));
-        setTotal(all.length);
-      }
+      setListings(rows);
+      setTotal(typeof res.total === "number" ? res.total : rows.length);
     } catch {
       try {
         const all = await getAllListings();

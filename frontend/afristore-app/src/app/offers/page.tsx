@@ -8,7 +8,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useWalletContext } from "@/context/WalletContext";
 import { useOffererOffers, useWithdrawOffer } from "@/hooks/useOffers";
-import { stroopsToXlm, Offer } from "@/lib/contract";
+import { Offer } from "@/lib/contract";
 import {
   ShoppingBag,
   Clock,
@@ -21,7 +21,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { WalletGuard } from "@/components/WalletGuard";
-import { SUPPORTED_TOKENS } from "@/config/tokens";
+import { resolveOfferTokenDisplay } from "@/config/tokens";
 import { clsx } from "clsx";
 import { useToast } from "@/components/ToastProvider";
 
@@ -45,12 +45,6 @@ export default function OffersPage() {
 
   const filtered =
     tab === "all" ? offers : offers.filter((o: Offer) => o.status === tab);
-
-  const getTokenSymbol = (address: string) => {
-    return (
-      SUPPORTED_TOKENS.find((t) => t.address === address)?.symbol || "Tokens"
-    );
-  };
 
   const tabs: { key: Tab; label: string; icon: any }[] = [
     { key: "all", label: "All Offers", icon: History },
@@ -292,14 +286,34 @@ export default function OffersPage() {
                       <p className="text-[10px] font-bold text-white/40 uppercase tracking-widest">
                         Offer Amount
                       </p>
-                      <div className="flex items-baseline gap-2">
-                        <span className="font-display text-4xl font-bold text-white">
-                          {stroopsToXlm(o.amount)}
-                        </span>
-                        <span className="text-[11px] font-bold text-brand-400 uppercase tracking-widest">
-                          {getTokenSymbol(o.token)}
-                        </span>
-                      </div>
+                      {(() => {
+                        const tokenDisplay = resolveOfferTokenDisplay(
+                          o.amount,
+                          o.token,
+                        );
+                        if (tokenDisplay.isUnknown) {
+                          return (
+                            <div className="flex flex-col gap-1">
+                              <span className="font-mono text-xs sm:text-sm font-semibold text-terracotta-400 break-all">
+                                {tokenDisplay.symbol}
+                              </span>
+                              <span className="text-[11px] text-white/40 font-mono">
+                                Amount: {tokenDisplay.rawAmount}
+                              </span>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="flex items-baseline gap-2">
+                            <span className="font-display text-4xl font-bold text-white">
+                              {tokenDisplay.formattedAmount}
+                            </span>
+                            <span className="text-[11px] font-bold text-brand-400 uppercase tracking-widest">
+                              {tokenDisplay.symbol}
+                            </span>
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     <div className="mt-auto space-y-6">

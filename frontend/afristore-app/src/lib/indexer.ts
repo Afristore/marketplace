@@ -676,40 +676,43 @@ export async function fetchListings(options: {
   if (options.maxPrice) params.set("maxPrice", options.maxPrice);
   if (options.search) params.set("search", options.search);
   const q = params.toString();
-  try {
-    const raw = await fetchWithRetry<unknown>(`/listings${q ? `?${q}` : ''}`);
-    if (raw == null) return { listings: [] };
-    // If paginated, indexer returns { listings, total }
-    if (typeof raw === 'object' && !Array.isArray(raw) && (raw as Record<string, unknown>).listings) {
-      const r = raw as { listings: unknown; total?: number };
-      return {
-        listings: Array.isArray(r.listings) ? r.listings.map(normalizeListing) : [],
-        total: r.total,
-      };
-    }
-    if (Array.isArray(raw)) return { listings: raw.map(normalizeListing) };
-    return { listings: [] };
-  } catch (e) {
-    console.warn('[indexer] fetchListings:', e instanceof Error ? e.message : e);
-    return { listings: [] };
+  const raw = await fetchWithRetry<unknown>(`/listings${q ? `?${q}` : ""}`);
+  if (raw == null) return { listings: [] };
+  // If paginated, indexer returns { listings, total }
+  if (
+    typeof raw === "object" &&
+    !Array.isArray(raw) &&
+    (raw as Record<string, unknown>).listings
+  ) {
+    const r = raw as { listings: unknown; total?: number };
+    return {
+      listings: Array.isArray(r.listings)
+        ? r.listings.map(normalizeListing)
+        : [],
+      total: r.total,
+    };
   }
+  if (Array.isArray(raw)) return { listings: raw.map(normalizeListing) };
+  return { listings: [] };
 }
 
 /**
  * Fetch auctions from the indexer with optional filters.
  * Throws if the indexer is unreachable so callers can fall back to on-chain.
  */
-export async function fetchAuctions(options: {
-  creator?: string;
-  status?: string;
-} = {}): Promise<Auction[]> {
+export async function fetchAuctions(
+  options: {
+    creator?: string;
+    status?: string;
+  } = {},
+): Promise<Auction[]> {
   const params = new URLSearchParams();
   if (options.creator) params.set("creator", options.creator);
   if (options.status) params.set("status", options.status);
   const q = params.toString();
-  const raw = await fetchWithRetry<unknown>(`/auctions${q ? `?${q}` : ''}`);
+  const raw = await fetchWithRetry<unknown>(`/auctions${q ? `?${q}` : ""}`);
   if (Array.isArray(raw)) return raw.map(normalizeAuction);
-  return [];
+  throw new Error("Invalid response from auction indexer");
 }
 
 /**

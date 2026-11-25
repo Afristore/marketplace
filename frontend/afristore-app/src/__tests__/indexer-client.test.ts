@@ -14,6 +14,8 @@ import {
   fetchMarketplaceStats,
   fetchListingById,
   getOwnedTokens,
+  fetchListings,
+  fetchAuctions,
 } from "@/lib/indexer";
 
 jest.mock("axios");
@@ -401,5 +403,51 @@ describe("preferences and stats error handling", () => {
       console.error("Test failed:", error);
       throw error;
     }
+  });
+});
+
+describe("fetchListings and fetchAuctions error propagation (#1346)", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockedAxios.get.mockReset();
+  });
+
+  it("propagates network/server errors from fetchListings to enable on-chain fallback", async () => {
+    mockedAxios.get.mockRejectedValueOnce(new Error("Connection refused"));
+    await expect(fetchListings()).rejects.toThrow("Connection refused");
+  });
+
+  it("returns legitimately empty listings without throwing on valid empty response", async () => {
+    mockedAxios.get.mockResolvedValueOnce({
+      data: { listings: [], total: 0 },
+      status: 200,
+    });
+    const res = await fetchListings();
+    expect(res.listings).toEqual([]);
+    expect(res.total).toBe(0);
+  });
+
+  it("propagates network/server errors from fetchAuctions to enable on-chain fallback", async () => {
+    mockedAxios.get.mockRejectedValueOnce(new Error("Auction indexer unreachable"));
+    await expect(fetchAuctions()).rejects.toThrow("Auction indexer unreachable");
+  });
+
+  it("throws an error when fetchAuctions receives a non-array response", async () => {
+    mockedAxios.get.mockResolvedValueOnce({
+      data: { error: "internal failure" },
+      status: 200,
+    });
+    await expect(fetchAuctions()).rejects.toThrow(
+      "Invalid response from auction indexer",
+    );
+  });
+
+  it("returns auctions array when fetchAuctions receives a valid array", async () => {
+    mockedAxios.get.mockResolvedValueOnce({
+      data: [],
+      status: 200,
+    });
+    const res = await fetchAuctions();
+    expect(res).toEqual([]);
   });
 });
