@@ -19,6 +19,10 @@ import {
   getDefaultSupportedToken,
 } from "@/lib/token-support";
 import { getReadableErrorMessage } from "@/lib/errors";
+import {
+  validateArtworkFile,
+  ARTWORK_ACCEPT_ATTRIBUTE,
+} from "@/lib/fileValidation";
 import posthog from "posthog-js";
 
 export const ART_CATEGORIES = [
@@ -86,6 +90,7 @@ export function ListingForm({
   const [isFetchingMetadata, setIsFetchingMetadata] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [metadataError, setMetadataError] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const tokenOptions = listing
@@ -189,6 +194,12 @@ export function ListingForm({
   };
 
   const handleFile = (file: File) => {
+    const error = validateArtworkFile(file);
+    if (error) {
+      setFileError(error);
+      return;
+    }
+    setFileError(null);
     setSelectedFile(file);
     setPreview(URL.createObjectURL(file));
   };
@@ -231,6 +242,7 @@ export function ListingForm({
                 setArtwork(emptyArtwork);
                 setSelectedFile(null);
                 setPreview(null);
+                setFileError(null);
               }}
               className="flex-1 rounded-2xl bg-brand-500 px-6 py-4 text-lg font-bold text-white hover:bg-brand-600 shadow-lg shadow-brand-500/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
             >
@@ -268,7 +280,7 @@ export function ListingForm({
             onDrop={(e) => {
               e.preventDefault();
               const file = e.dataTransfer.files[0];
-              if (file && file.type.startsWith("image/")) handleFile(file);
+              if (file) handleFile(file);
             }}
             onDragOver={(e) => e.preventDefault()}
             onClick={() => fileRef.current?.click()}
@@ -301,7 +313,7 @@ export function ListingForm({
               ref={fileRef}
               aria-label="Artwork image"
               type="file"
-              accept="image/*"
+              accept={ARTWORK_ACCEPT_ATTRIBUTE}
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];
@@ -309,6 +321,15 @@ export function ListingForm({
               }}
             />
           </div>
+
+          {fileError && (
+            <p
+              role="alert"
+              className="rounded-2xl bg-red-50 px-6 py-4 text-sm font-bold text-red-600 border border-red-100"
+            >
+              {fileError}
+            </p>
+          )}
 
           <div className="grid gap-6 sm:grid-cols-2">
             <div className="sm:col-span-2 space-y-2">
