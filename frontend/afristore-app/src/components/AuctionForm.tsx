@@ -13,6 +13,10 @@ import { GuardButton } from "./WalletGuard";
 import { DEFAULT_TOKEN } from "@/config/tokens";
 import { useSupportedTokens } from "@/hooks/useSupportedTokens";
 import { getDefaultSupportedToken } from "@/lib/token-support";
+import {
+  validateArtworkFile,
+  ARTWORK_ACCEPT_ATTRIBUTE,
+} from "@/lib/fileValidation";
 import { ART_CATEGORIES } from "./ListingForm";
 
 interface AuctionFormProps {
@@ -29,6 +33,7 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [successId, setSuccessId] = useState<number | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
   const [form, setForm] = useState({
     title: "",
     description: "",
@@ -59,6 +64,12 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
   }, [availableTokens, form.tokenAddress]);
 
   const handleFile = (file: File) => {
+    const error = validateArtworkFile(file);
+    if (error) {
+      setFileError(error);
+      return;
+    }
+    setFileError(null);
     setSelectedFile(file);
     setPreview(URL.createObjectURL(file));
   };
@@ -66,7 +77,7 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith("image/")) handleFile(file);
+    if (file) handleFile(file);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -179,7 +190,7 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
                   Select Artwork
                 </p>
                 <p className="mt-1 text-sm text-brand-400 font-inter">
-                  PNG, JPG, GIF or WEBP — max 50 MB
+                  PNG, JPEG, WebP or SVG — max 10 MB
                 </p>
               </div>
             )}
@@ -187,7 +198,7 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
               ref={fileRef}
               aria-label="Artwork image"
               type="file"
-              accept="image/*"
+              accept={ARTWORK_ACCEPT_ATTRIBUTE}
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];
@@ -195,6 +206,15 @@ export function AuctionForm({ onSuccess, onCancel }: AuctionFormProps) {
               }}
             />
           </div>
+
+          {fileError && (
+            <p
+              role="alert"
+              className="rounded-2xl bg-red-50 px-6 py-4 text-sm font-bold text-red-600 border border-red-100"
+            >
+              {fileError}
+            </p>
+          )}
 
           {/* Fields */}
           <div className="grid gap-6 sm:grid-cols-2">

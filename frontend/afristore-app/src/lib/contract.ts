@@ -252,14 +252,15 @@ function parseRecipient(obj: any): Recipient {
   };
 }
 
-function parseListingFromScVal(raw: unknown): Listing {
+export function parseListingFromScVal(raw: unknown): Listing {
   const obj = scValToNative(raw as xdr.ScVal) as Record<string, unknown>;
 
   return {
     listing_id: Number(obj["listing_id"]),
     artist: (obj["artist"] as Address).toString(),
     collection: (obj["collection"] as any).toString(),
-    token_id: Number(obj["nft_token_id"]),
+    // The Rust Listing struct serializes this field as `token_id` (#1331).
+    token_id: Number(obj["token_id"]),
     amount: Number(obj["amount"] ?? 1),
     price: BigInt(obj["price"] as bigint),
     currency: String(obj["currency"]),
@@ -271,14 +272,15 @@ function parseListingFromScVal(raw: unknown): Listing {
   };
 }
 
-function parseAuctionFromScVal(raw: unknown): Auction {
+export function parseAuctionFromScVal(raw: unknown): Auction {
   const obj = scValToNative(raw as xdr.ScVal) as Record<string, unknown>;
 
   return {
     auction_id: Number(obj["auction_id"]),
     creator: (obj["creator"] as Address).toString(),
     collection: (obj["collection"] as any).toString(),
-    token_id: Number(obj["nft_token_id"]),
+    // The Rust Auction struct serializes this field as `token_id` (#1331).
+    token_id: Number(obj["token_id"]),
     amount: Number(obj["amount"] ?? 1),
     token: (obj["token"] as any).toString(),
     reserve_price: BigInt(obj["reserve_price"] as bigint),
@@ -289,7 +291,8 @@ function parseAuctionFromScVal(raw: unknown): Auction {
     end_time: Number(obj["end_time"]),
     status: String(obj["status"]) as AuctionStatus,
     recipients: (obj["recipients"] as any[]).map(parseRecipient),
-    created_at: Number(obj["created_at"] || 0),
+    // Auction has no created_at on-chain; default to 0 (#1331).
+    created_at: 0,
   };
 }
 

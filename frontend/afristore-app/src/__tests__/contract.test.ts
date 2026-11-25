@@ -1,4 +1,12 @@
-import { Account, Contract, SorobanRpc, scValToNative, xdr } from "@stellar/stellar-sdk";
+import {
+  Account,
+  Address,
+  Contract,
+  SorobanRpc,
+  nativeToScVal,
+  scValToNative,
+  xdr,
+} from "@stellar/stellar-sdk";
 import { DEFAULT_TOKEN } from "@/config/tokens";
 
 jest.mock("@/lib/config", () => ({
@@ -18,6 +26,8 @@ import {
   xlmToStroops,
   getAllListings,
   getAllAuctions,
+  parseAuctionFromScVal,
+  parseListingFromScVal,
   pollTransaction,
 } from "../lib/contract";
 
@@ -399,5 +409,114 @@ describe("pollTransaction (#1335)", () => {
       }),
     ).rejects.toThrow(/deadbeef.*3 attempts/);
     expect(getTransaction).toHaveBeenCalledTimes(3);
+  });
+});
+
+// ── ScVal struct parsing (#1331) ──────────────────────────────
+// The Rust Listing/Auction structs serialize the NFT id as `token_id`
+// (not `nft_token_id`), and Auction has no `created_at`. These fixtures are
+// real ScVals fed through the production scValToNative path, guarding the
+// documented on-chain fallback reads used when the indexer is unavailable.
+
+describe("ScVal struct parsing (#1331)", () => {
+  const mapEntry = (key: string, val: xdr.ScVal) =>
+    new xdr.ScMapEntry({ key: xdr.ScVal.scvSymbol(key), val });
+
+  const recipientEntry = (address: string, percentage: number) =>
+    xdr.ScVal.scvMap([
+      mapEntry("address", new Address(address).toScVal()),
+      mapEntry("percentage", nativeToScVal(percentage, { type: "u32" })),
+    ]);
+
+  /** Mirrors how the contract serializes a `Listing` struct. */
+  function listingScVal(): xdr.ScVal {
+    return xdr.ScVal.scvMap([
+      mapEntry("listing_id", nativeToScVal(42n, { type: "u64" })),
+      mapEntry("artist", new Address(SERIALIZE_ARTIST).toScVal()),
+      mapEntry("price", nativeToScVal(250_000_000n, { type: "i128" })),
+      mapEntry("currency", nativeToScVal("XLM", { type: "symbol" })),
+      mapEntry("token", new Address(DEFAULT_TOKEN.address).toScVal()),
+      mapEntry("collection", new Address(SERIALIZE_COLLECTION).toScVal()),
+      mapEntry("token_id", nativeToScVal(7n, { type: "u64" })),
+      mapEntry("amount", nativeToScVal(3n, { type: "u64" })),
+      mapEntry(
+        "recipients",
+        xdr.ScVal.scvVec([
+          recipientEntry(SERIALIZE_ARTIST, 60),
+          recipientEntry(SERIALIZE_CO_ARTIST, 40),
+        ]),
+      ),
+      mapEntry("status", nativeToScVal("Active", { type: "symbol" })),
+      mapEntry("owner", xdr.ScVal.scvVoid()), // Option::None
+      mapEntry("created_at", nativeToScVal(1_700_000_000, { type: "u32" })),
+    ]);
+  }
+
+  /** Mirrors how the contract serializes an `Auction` struct. */
+  function auctionScVal(): xdr.ScVal {
+    return xdr.ScVal.scvMap([
+      mapEntry("auction_id", nativeToScVal(11n, { type: "u64" })),
+      mapEntry("creator", new Address(SERIALIZE_ARTIST).toScVal()),
+      mapEntry("token", new Address(DEFAULT_TOKEN.address).toScVal()),
+      mapEntry("collection", new Address(SERIALIZE_COLLECTION).toScVal()),
+      mapEntry("token_id", nativeToScVal(9n, { type: "u64" })),
+      mapEntry("amount", nativeToScVal(1n, { type: "u64" })),
+      mapEntry("reserve_price", nativeToScVal(5_000_000n, { type: "i128" })),
+      mapEntry("highest_bid", nativeToScVal(8_000_000n, { type: "i128" })),
+      mapEntry("highest_bidder", new Address(SERIALIZE_BUYER).toScVal()),
+      mapEntry("end_time", nativeToScVal(1_800_000_000n, { type: "u64" })),
+      mapEntry("status", nativeToScVal("Active", { type: "symbol" })),
+      mapEntry(
+        "recipients",
+        xdr.ScVal.scvVec([recipientEntry(SERIALIZE_ARTIST, 100)]),
+      ),
+    ]);
+  }
+
+  it("parseListingFromScVal reads token_id (not nft_token_id) and created_at", () => {
+    expect(parseListingFromScVal(listingScVal())).toEqual({
+      listing_id: 42,
+      artist: SERIALIZE_ARTIST,
+      collection: SERIALIZE_COLLECTION,
+      token_id: 7,
+      amount: 3,
+      price: 250_000_000n,
+      currency: "XLM",
+      token: DEFAULT_TOKEN.address,
+      recipients: [
+        { address: SERIALIZE_ARTIST, percentage: 60 },
+        { address: SERIALIZE_CO_ARTIST, percentage: 40 },
+      ],
+      status: "Active",
+      owner: null,
+      created_at: 1_700_000_000,
+    });
+  });
+
+  it("parseAuctionFromScVal reads token_id and defaults created_at to 0", () => {
+    expect(parseAuctionFromScVal(auctionScVal())).toEqual({
+      auction_id: 11,
+      creator: SERIALIZE_ARTIST,
+      collection: SERIALIZE_COLLECTION,
+      token_id: 9,
+      amount: 1,
+      token: DEFAULT_TOKEN.address,
+      reserve_price: 5_000_000n,
+      highest_bid: 8_000_000n,
+      highest_bidder: SERIALIZE_BUYER,
+      end_time: 1_800_000_000,
+      status: "Active",
+      recipients: [{ address: SERIALIZE_ARTIST, percentage: 100 }],
+      created_at: 0,
+    });
+  });
+
+  it("never yields token_id: NaN on the on-chain fallback", () => {
+    expect(Number.isNaN(parseListingFromScVal(listingScVal()).token_id)).toBe(
+      false,
+    );
+    expect(Number.isNaN(parseAuctionFromScVal(auctionScVal()).token_id)).toBe(
+      false,
+    );
   });
 });
