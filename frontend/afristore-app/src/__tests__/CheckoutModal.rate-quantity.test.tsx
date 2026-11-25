@@ -104,4 +104,20 @@ describe("CheckoutModal quantity (#1289)", () => {
     await userEvent.click(screen.getByLabelText("Increase quantity"));
     expect(screen.getByText("Pay 10 XLM")).toBeInTheDocument();
   });
+
+  it("tells the buyer an ERC-1155 bundle transfers every listed copy", () => {
+    render(
+      <CheckoutModal
+        isOpen={true}
+        onClose={jest.fn()}
+        listing={{ ...listing, amount: 5 }}
+        onCryptoPurchase={jest.fn()}
+        isBuyingCrypto={false}
+      />,
+    );
+    expect(screen.getByTestId("quantity-locked-note")).toHaveTextContent(
+      "transfers all 5 copies",
+    );
+    expect(screen.getByText("Pay 10 XLM")).toBeInTheDocument();
+  });
 });

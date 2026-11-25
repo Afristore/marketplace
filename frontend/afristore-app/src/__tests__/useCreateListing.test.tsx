@@ -70,6 +70,7 @@ describe("useCreateListing", () => {
       "CTOKEN",
       "CCOLLECTION",
       7,
+      1, // amount defaults to 1 (ERC-721) when the form omits it
     );
     expect(mockListingCreated).toHaveBeenCalledWith(99, "100", "XLM");
     await waitFor(() =>

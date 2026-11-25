@@ -210,6 +210,21 @@ export interface UpdateListingInput {
   tokenAddress: string;
   imageFile?: File; // Optional: only if updating the image
   currentMetadata: ArtworkMetadata;
+  /** CID currently on the listing; reused when the metadata is unchanged. */
+  currentMetadataCid?: string;
+}
+
+/** True when the submitted artwork fields differ from what is pinned. */
+export function metadataChanged(input: UpdateListingInput): boolean {
+  const m = input.currentMetadata;
+  return (
+    !!input.imageFile ||
+    input.title !== m.title ||
+    input.description !== m.description ||
+    input.artistName !== m.artist ||
+    input.year !== m.year ||
+    input.category !== m.category
+  );
 }
 
 export function useUpdateListing(artistPublicKey: string | null) {
@@ -241,41 +256,40 @@ export function useUpdateListing(artistPublicKey: string | null) {
           "listing",
         );
 
-        let imageCid = input.currentMetadata.image;
+        // Price/recipient-only edits keep the pinned metadata untouched.
+        let metadataCid = input.currentMetadataCid ?? "";
+        if (metadataChanged(input)) {
+          let imageCid = input.currentMetadata.image;
+          if (input.imageFile) {
+            setProgress("Uploading new image to IPFS…");
+            const imageResult = await uploadImageToIPFS(
+              input.imageFile,
+              input.title,
+            );
+            imageCid = `ipfs://${imageResult.cid}`;
+          }
 
-        // Step 1: Upload new image to IPFS if provided.
-        if (input.imageFile) {
-          setProgress("Uploading new image to IPFS…");
-          const imageResult = await uploadImageToIPFS(
-            input.imageFile,
+          setProgress("Uploading new metadata to IPFS…");
+          const metadataResult = await uploadMetadataToIPFS(
+            {
+              title: input.title,
+              description: input.description,
+              artist: input.artistName,
+              image: imageCid,
+              year: input.year,
+              category: input.category,
+            },
             input.title,
           );
-          imageCid = `ipfs://${imageResult.cid}`;
+          metadataCid = metadataResult.cid;
         }
-
-        // Step 2: Build new metadata JSON.
-        const metadata: ArtworkMetadata = {
-          title: input.title,
-          description: input.description,
-          artist: input.artistName,
-          image: imageCid,
-          year: input.year,
-          category: input.category,
-        };
-
-        // Step 3: Upload metadata to IPFS.
-        setProgress("Uploading new metadata to IPFS…");
-        const metadataResult = await uploadMetadataToIPFS(
-          metadata,
-          input.title,
-        );
 
         // Step 4: Call the Soroban contract.
         setProgress("Updating on-chain listing…");
         const success = await updateListing(
           artistPublicKey,
           input.listingId,
-          metadataResult.cid,
+          metadataCid,
           input.price,
           token.address,
         );

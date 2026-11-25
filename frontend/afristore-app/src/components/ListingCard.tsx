@@ -148,6 +148,14 @@ export function ListingCard({ listing, onPurchased }: ListingCardProps) {
               <span className="text-lg font-bold">
                 {formatPrice(listing.price)} XLM
               </span>
+              {listing.amount > 1 && (
+                <span
+                  data-testid="listing-amount"
+                  className="rounded-full bg-brand-50 px-2 py-0.5 text-xs font-semibold"
+                >
+                  × {listing.amount} copies
+                </span>
+              )}
             </div>
 
             {listing.status === "Active" && (

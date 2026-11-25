@@ -84,6 +84,7 @@ function makeAuction(overrides = {}) {
     metadata_cid: "Qm",
     collection: "CCOLLECTION",
     token_id: 1,
+    amount: 1,
     token: "CTOKEN",
     created_at: 100,
     recipients: [],

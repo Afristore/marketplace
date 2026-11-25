@@ -137,6 +137,7 @@ function makeListing(overrides: Partial<Listing> = {}): Listing {
     metadata_cid: "QmTestCid",
     collection: "CCOLLECTION",
     token_id: 1,
+    amount: 1,
     price: 10_000_000n, // 1 XLM
     currency: "XLM",
     token: "CTOKEN",
