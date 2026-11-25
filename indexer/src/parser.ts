@@ -42,7 +42,7 @@ const TOPIC_MAP: Record<string, string> = {
   'currency_removed': 'CURRENCY_REMOVED',
   'CurrencyRemoved': 'CURRENCY_REMOVED',
   'CURRENCY_REMOVED': 'CURRENCY_REMOVED',
-  'pos_open': 'POSITION_OPENED',
+  'pos_open': 'LENDING_POSITION_OPENED',
   'col_add': 'COLLATERAL_ADDED',
   'pos_ret': 'POSITION_RETURNED',
 };
@@ -50,7 +50,7 @@ const TOPIC_MAP: Record<string, string> = {
 const LENDING_SUBTOPIC_MAP: Record<string, string> = {
   'lst_crtd': 'LENDING_LISTING_CREATED',
   'lst_cncl': 'LENDING_LISTING_CANCELLED',
-  'pos_open': 'POSITION_OPENED',
+  'pos_open': 'LENDING_POSITION_OPENED',
   'col_add': 'LENDING_COLLATERAL_ADDED',
   'pos_ret': 'POSITION_RETURNED',
   'pos_liq': 'POSITION_LIQUIDATED',
