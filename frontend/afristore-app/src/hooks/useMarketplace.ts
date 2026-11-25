@@ -16,11 +16,7 @@ import {
 } from "@/lib/contract";
 import { fetchListings, fetchArtistListings } from "@/lib/indexer";
 import { config } from "@/lib/config";
-import {
-  uploadImageToIPFS,
-  uploadMetadataToIPFS,
-  ArtworkMetadata,
-} from "@/lib/ipfs";
+import { ArtworkMetadata } from "@/lib/ipfs";
 import { getReadableErrorMessage } from "@/lib/errors";
 import { useTransientErrorToast } from "./useTransientErrorToast";
 import { assertSupportedTokenAddress } from "@/lib/token-support";
@@ -256,32 +252,10 @@ export function useUpdateListing(artistPublicKey: string | null) {
           "listing",
         );
 
-        // Price/recipient-only edits keep the pinned metadata untouched.
-        let metadataCid = input.currentMetadataCid ?? "";
         if (metadataChanged(input)) {
-          let imageCid = input.currentMetadata.image;
-          if (input.imageFile) {
-            setProgress("Uploading new image to IPFS…");
-            const imageResult = await uploadImageToIPFS(
-              input.imageFile,
-              input.title,
-            );
-            imageCid = `ipfs://${imageResult.cid}`;
-          }
-
-          setProgress("Uploading new metadata to IPFS…");
-          const metadataResult = await uploadMetadataToIPFS(
-            {
-              title: input.title,
-              description: input.description,
-              artist: input.artistName,
-              image: imageCid,
-              year: input.year,
-              category: input.category,
-            },
-            input.title,
+          throw new Error(
+            "Metadata changes require a dedicated on-chain metadata update; update_listing only supports price and recipient changes.",
           );
-          metadataCid = metadataResult.cid;
         }
 
         // Step 4: Call the Soroban contract.
@@ -289,7 +263,6 @@ export function useUpdateListing(artistPublicKey: string | null) {
         const success = await updateListing(
           artistPublicKey,
           input.listingId,
-          metadataCid,
           input.price,
           token.address,
         );
