@@ -4,9 +4,8 @@ import { useEffect, useState, useMemo } from "react";
 import { useWalletContext } from "@/context/WalletContext";
 import { WalletGuard } from "@/components/WalletGuard";
 import {
-  EnrichedListing,
   useArtistListings,
-  useMarketplace,
+  useOwnedListings,
 } from "@/hooks/useMarketplace";
 import { useUserActivity } from "@/hooks/useUserActivity";
 import { ListingCard } from "@/components/ListingCard";
@@ -41,20 +40,22 @@ export default function ProfilePage() {
     isLoading: loadingActivity,
   } = useUserActivity(publicKey);
 
-  // Contract state
-  const { listings: allListings, isLoading: loadingAll } = useMarketplace();
+  // Listings owned by this wallet (any status — purchases are "Sold") and
+  // listings this wallet created as an artist.
+  const { listings: ownedListings, isLoading: loadingOwned } =
+    useOwnedListings(publicKey);
   const { listings: myArtistListings, isLoading: loadingArtist } =
     useArtistListings(publicKey);
 
-  const isGlobalLoading = loadingAll || loadingArtist || loadingActivity;
+  const isGlobalLoading = loadingOwned || loadingArtist || loadingActivity;
 
-  // Derive "Purchased"
+  // Derive "Purchased": artworks this wallet owns but did not create.
   const purchasedArtworks = useMemo(() => {
     if (!publicKey) return [];
-    return allListings.filter(
+    return ownedListings.filter(
       (l) => l.owner === publicKey && l.artist !== publicKey,
     );
-  }, [allListings, publicKey]);
+  }, [ownedListings, publicKey]);
 
   const soldArtworks = useMemo(() => {
     return myArtistListings.filter((l) => l.status === "Sold");
