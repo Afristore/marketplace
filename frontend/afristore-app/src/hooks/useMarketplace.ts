@@ -14,13 +14,13 @@ import {
   Listing,
   stroopsToXlm,
 } from "@/lib/contract";
-import { fetchListings, fetchArtistListings } from "@/lib/indexer";
-import { config } from "@/lib/config";
 import {
-  uploadImageToIPFS,
-  uploadMetadataToIPFS,
-  ArtworkMetadata,
-} from "@/lib/ipfs";
+  fetchListings,
+  fetchArtistListings,
+  fetchOwnedListings,
+} from "@/lib/indexer";
+import { config } from "@/lib/config";
+import { ArtworkMetadata } from "@/lib/ipfs";
 import { getReadableErrorMessage } from "@/lib/errors";
 import { useTransientErrorToast } from "./useTransientErrorToast";
 import { assertSupportedTokenAddress } from "@/lib/token-support";
@@ -138,6 +138,47 @@ export function useArtistListings(artistPublicKey: string | null) {
   return { listings, isLoading, error, refresh };
 }
 
+// ── useOwnedListings ──────────────────────────────────────────
+
+/**
+ * Listings currently owned by `ownerPublicKey`, including `Sold` ones.
+ *
+ * Purchases flip a listing to `Sold` and set `owner` to the buyer, so the
+ * Active-only feed from `useMarketplace()` can never contain a wallet's
+ * purchases. Query the indexer by owner instead.
+ */
+export function useOwnedListings(ownerPublicKey: string | null) {
+  const [listings, setListings] = useState<Listing[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
+
+  const refresh = useCallback(async () => {
+    if (!ownerPublicKey) {
+      setListings([]);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const rows = await fetchOwnedListings(ownerPublicKey);
+      setListings(
+        [...rows].sort((a, b) => Number(b.created_at) - Number(a.created_at)),
+      );
+    } catch (err: unknown) {
+      setError(getReadableErrorMessage(err, "Failed to load owned artworks"));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [ownerPublicKey]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  return { listings, isLoading, error, refresh };
+}
+
 // ── useCreateListing ──────────────────────────────────────────
 // Extracted into hooks/mutations/useCreateListing.ts (issue #737) to
 // follow the hooks/mutations/* convention. Re-exported here so existing
@@ -210,6 +251,21 @@ export interface UpdateListingInput {
   tokenAddress: string;
   imageFile?: File; // Optional: only if updating the image
   currentMetadata: ArtworkMetadata;
+  /** CID currently on the listing; reused when the metadata is unchanged. */
+  currentMetadataCid?: string;
+}
+
+/** True when the submitted artwork fields differ from what is pinned. */
+export function metadataChanged(input: UpdateListingInput): boolean {
+  const m = input.currentMetadata;
+  return (
+    !!input.imageFile ||
+    input.title !== m.title ||
+    input.description !== m.description ||
+    input.artistName !== m.artist ||
+    input.year !== m.year ||
+    input.category !== m.category
+  );
 }
 
 export function useUpdateListing(artistPublicKey: string | null) {
@@ -241,41 +297,17 @@ export function useUpdateListing(artistPublicKey: string | null) {
           "listing",
         );
 
-        let imageCid = input.currentMetadata.image;
-
-        // Step 1: Upload new image to IPFS if provided.
-        if (input.imageFile) {
-          setProgress("Uploading new image to IPFS…");
-          const imageResult = await uploadImageToIPFS(
-            input.imageFile,
-            input.title,
+        if (metadataChanged(input)) {
+          throw new Error(
+            "Metadata changes require a dedicated on-chain metadata update; update_listing only supports price and recipient changes.",
           );
-          imageCid = `ipfs://${imageResult.cid}`;
         }
-
-        // Step 2: Build new metadata JSON.
-        const metadata: ArtworkMetadata = {
-          title: input.title,
-          description: input.description,
-          artist: input.artistName,
-          image: imageCid,
-          year: input.year,
-          category: input.category,
-        };
-
-        // Step 3: Upload metadata to IPFS.
-        setProgress("Uploading new metadata to IPFS…");
-        const metadataResult = await uploadMetadataToIPFS(
-          metadata,
-          input.title,
-        );
 
         // Step 4: Call the Soroban contract.
         setProgress("Updating on-chain listing…");
         const success = await updateListing(
           artistPublicKey,
           input.listingId,
-          metadataResult.cid,
           input.price,
           token.address,
         );

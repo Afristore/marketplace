@@ -1,44 +1,25 @@
 import { ImageResponse } from "next/og";
-import { getListing, getAuction, stroopsToXlm } from "@/lib/contract";
-import { fetchMetadata, cidToGatewayUrl } from "@/lib/ipfs";
+import { stroopsToXlm } from "@/lib/contract";
+import { cidToGatewayUrl } from "@/lib/ipfs";
+import { resolveArtwork, parseArtworkId } from "@/lib/resolveArtwork";
 
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const listingId = parseInt(id);
 
-  if (isNaN(listingId)) {
+  if (parseArtworkId(id) === null) {
     return new Response("Invalid listing ID", { status: 400 });
   }
 
   try {
-    // Try to fetch listing first
-    let listing = null;
-    let auction = null;
-    let metadata = null;
-
-    try {
-      listing = await getListing(listingId);
-    } catch (e) {
-      // Try auction if listing fails
-      try {
-        auction = await getAuction(listingId);
-      } catch (e) {
-        // Neither found
-      }
-    }
-
-    if (!listing && !auction) {
+    // Same resolution as the listing page: real indexer/on-chain data only.
+    const resolved = await resolveArtwork(id);
+    if (!resolved) {
       throw new Error("Listing not found");
     }
-
-    // Fetch metadata
-    const cid = listing?.metadata_cid || auction?.metadata_cid;
-    if (cid) {
-      metadata = await fetchMetadata(cid);
-    }
+    const { listing, auction, metadata } = resolved;
 
     const artist = listing?.artist || auction?.creator;
     const price = listing

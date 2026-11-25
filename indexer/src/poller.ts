@@ -80,10 +80,14 @@ function setupSignalHandlers() {
   process.on("SIGINT", () => onSignal("SIGINT"));
 }
 
-async function gracefulShutdown() {
+export async function gracefulShutdown(
+  prismaClient: { $disconnect?: () => Promise<void> } | null = prisma,
+) {
   log.info("Closing resources: Prisma + Redis");
   const cleanup = Promise.allSettled([
-    prisma.$disconnect(),
+    prismaClient && typeof prismaClient.$disconnect === "function"
+      ? prismaClient.$disconnect()
+      : Promise.resolve(),
     // redis may not be connected in some test environments
     redis && typeof redis.disconnect === "function"
       ? redis.disconnect()
@@ -1626,6 +1630,7 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
       break;
     }
 
+    case "LENDING_POSITION_OPENED":
     case "POSITION_OPENED": {
       const id = BigInt(data.position_id ?? listingId ?? 0);
       const lId = BigInt(data.listing_id ?? 0);

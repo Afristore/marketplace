@@ -74,6 +74,7 @@ const dummyListing: Listing = {
   metadata_cid: "QmTestCID",
   collection: "CAAA",
   token_id: 1,
+  amount: 1,
   price: 250_000_000n, // 25 XLM
   currency: "XLM",
   token: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
@@ -215,7 +216,14 @@ describe("ListingForm", () => {
       await user.click(updateBtn);
 
       await waitFor(() => {
-        expect(mockUpdate).toHaveBeenCalled();
+        // #1334: edits carry the pinned metadata, not blank strings.
+        expect(mockUpdate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: "Ancient Mask",
+            description: "Carved wooden mask",
+            currentMetadataCid: "QmTestCID",
+          }),
+        );
         expect(screen.getByText(/Listing #42 Updated!/i)).toBeInTheDocument();
         expect(onSuccess).toHaveBeenCalledWith(42);
       });

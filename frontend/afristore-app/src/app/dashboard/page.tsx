@@ -336,7 +336,7 @@ export default function DashboardPage() {
             ) : tab === "auction" ? (
               <div className="w-full">
                 <AuctionForm
-                  onSuccess={() => setTab("listings")}
+                  onSuccess={() => setTab("auctions")}
                   onCancel={() => setTab("listings")}
                 />
               </div>

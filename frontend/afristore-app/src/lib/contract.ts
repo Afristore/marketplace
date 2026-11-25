@@ -57,6 +57,8 @@ export interface Listing {
   metadata_cid?: string;
   collection: string;
   token_id: number;
+  /** ERC-1155 copies listed; 1 for ERC-721. */
+  amount: number;
   price: bigint;
   currency: string;
   token: string;
@@ -74,6 +76,8 @@ export interface Auction {
   metadata_cid?: string;
   collection: string;
   token_id: number;
+  /** ERC-1155 copies auctioned; 1 for ERC-721. */
+  amount: number;
   token: string;
   reserve_price: bigint;
   highest_bid: bigint;
@@ -210,11 +214,7 @@ export async function submitTransaction(
     throw toReadableError(raw, "Transaction submission failed.");
   }
 
-  let getResult = await rpc.getTransaction(submitted.hash);
-  while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
-    await new Promise((r) => setTimeout(r, 1000));
-    getResult = await rpc.getTransaction(submitted.hash);
-  }
+  const getResult = await pollTransaction(rpc, submitted.hash);
 
   if (getResult.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
     const raw = JSON.stringify(getResult);
@@ -222,6 +222,25 @@ export async function submitTransaction(
   }
 
   return getResult as SorobanRpc.Api.GetSuccessfulTransactionResponse;
+}
+
+/**
+ * Polls getTransaction until it leaves NOT_FOUND. Throws (with the hash)
+ * after `attempts` polls so callers never hang on an unresponsive RPC.
+ */
+export async function pollTransaction(
+  rpc: Pick<SorobanRpc.Server, "getTransaction">,
+  hash: string,
+  { attempts = 30, intervalMs = 1500 }: { attempts?: number; intervalMs?: number } = {},
+): Promise<SorobanRpc.Api.GetTransactionResponse> {
+  for (let i = 0; i < attempts; i++) {
+    const res = await rpc.getTransaction(hash);
+    if (res.status !== SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) return res;
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error(
+    `Transaction ${hash} was not confirmed after ${attempts} attempts. Check its status before retrying.`,
+  );
 }
 
 // ── ScVal parsing ─────────────────────────────────────────────
@@ -241,6 +260,7 @@ function parseListingFromScVal(raw: unknown): Listing {
     artist: (obj["artist"] as Address).toString(),
     collection: (obj["collection"] as any).toString(),
     token_id: Number(obj["nft_token_id"]),
+    amount: Number(obj["amount"] ?? 1),
     price: BigInt(obj["price"] as bigint),
     currency: String(obj["currency"]),
     token: (obj["token"] as any).toString(),
@@ -259,6 +279,7 @@ function parseAuctionFromScVal(raw: unknown): Auction {
     creator: (obj["creator"] as Address).toString(),
     collection: (obj["collection"] as any).toString(),
     token_id: Number(obj["nft_token_id"]),
+    amount: Number(obj["amount"] ?? 1),
     token: (obj["token"] as any).toString(),
     reserve_price: BigInt(obj["reserve_price"] as bigint),
     highest_bid: BigInt(obj["highest_bid"] as bigint),
@@ -368,12 +389,12 @@ export async function cancelListing(
 }
 
 /**
- * update_listing — Artist updates an active listing with new metadata or price.
+ * update_listing — Artist updates an active listing price, token, and recipients.
+ * Metadata remains immutable here because the contract ABI has no metadata CID argument.
  */
 export async function updateListing(
   artistPublicKey: string,
   listingId: number,
-  newMetadataCid: string,
   newPrice: number,
   newTokenAddress: string,
   newRecipients: Array<{ address: string; percentage: number }> = [],
@@ -384,7 +405,6 @@ export async function updateListing(
   const args: xdr.ScVal[] = [
     new Address(artistPublicKey).toScVal(),
     nativeToScVal(BigInt(listingId), { type: "u64" }),
-    xdr.ScVal.scvBytes(Buffer.from(newMetadataCid, "utf-8")),
     nativeToScVal(priceStroops, { type: "i128" }),
     new Address(selectedToken.address).toScVal(),
     nativeToScVal(

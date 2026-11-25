@@ -24,9 +24,9 @@ export function purchaseErrorMessage(error: unknown): string {
 }
 
 /**
- * How many of a listing a buyer can purchase in one checkout. A listing is one
- * specific token (`collection` + `token_id`) and the purchase call takes no
- * quantity, so only one can ever be bought; the modal locks the counter to it.
+ * How many of a listing a buyer can purchase in one checkout. buy_artwork takes
+ * no quantity: it sells the whole listing (all `listing.amount` ERC-1155 copies)
+ * for `listing.price`, so the counter is locked to one purchase.
  */
 export function maxPurchasableQuantity(_listing: Listing): number {
   return 1;
@@ -206,7 +206,9 @@ export function CheckoutModal({
                   data-testid="quantity-locked-note"
                   className="mt-1 text-xs text-gray-400"
                 >
-                  Unique token: quantity is fixed at 1.
+                  {listing.amount > 1
+                    ? `Bundle listing: this purchase transfers all ${listing.amount} copies.`
+                    : "Unique token: quantity is fixed at 1."}
                 </p>
               )}
             </div>

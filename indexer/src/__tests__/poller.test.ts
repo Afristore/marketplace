@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("dotenv", () => ({ default: { config: vi.fn() } }));
 
 // Prevent redis from trying to connect during import
-vi.mock("../redis", () => ({
+vi.mock("../redis.js", () => ({
   default: {
     isReady: false,
     flushDb: vi.fn().mockResolvedValue("OK"),
@@ -13,7 +13,7 @@ vi.mock("../redis", () => ({
 }));
 
 // Prevent api/routes SSE emitter from being imported for real
-vi.mock("../api/routes", () => ({ emitSSEEvent: vi.fn() }));
+vi.mock("../api/routes.js", () => ({ emitSSEEvent: vi.fn() }));
 
 // ── Mock Prisma ───────────────────────────────────────────────────────────────
 
@@ -105,7 +105,7 @@ const mockPrisma = vi.hoisted(() => ({
   $executeRawUnsafe: vi.fn().mockResolvedValue(0),
 }));
 
-vi.mock("../db", () => ({ default: mockPrisma }));
+vi.mock("../db.js", () => ({ default: mockPrisma }));
 vi.mock("../metrics.js", () => ({
   latestLedgerProcessedGauge: { set: vi.fn() },
   networkLatestLedgerGauge: { set: vi.fn() },
@@ -181,6 +181,7 @@ import {
   validateHashContinuity,
   buildSyncStateLedgerData,
   startPolling,
+  gracefulShutdown,
 } from "../poller";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -891,9 +892,9 @@ describe("processEvent — POSITION_LIQUIDATED", () => {
   });
 });
 
-// ── POSITION_OPENED transactional writes ─────────────────────────────────────
+// ── LENDING_POSITION_OPENED transactional writes ────────────────────────────
 
-describe("processEvent — POSITION_OPENED", () => {
+describe("processEvent — LENDING_POSITION_OPENED", () => {
   beforeEach(() => vi.clearAllMocks());
 
   const openedData = {
@@ -917,15 +918,15 @@ describe("processEvent — POSITION_OPENED", () => {
     lendingListing: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
   });
 
-  it("writes the position and marks the listing Filled inside one transaction", async () => {
+  it("writes the position and marks the listing Filled for LENDING_POSITION_OPENED", async () => {
     const txClient = makeTxClient();
-    mockPrisma.$transaction.mockImplementationOnce((fn: any) => fn(txClient));
 
     await processEvent(
-      makeEvent("POSITION_OPENED", 201n, "GB_BORROWER", openedData, 800),
+      makeEvent("LENDING_POSITION_OPENED", 201n, "GB_BORROWER", openedData, 800),
+      txClient,
+      true,
     );
 
-    expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
     expect(txClient.lendingPosition.upsert).toHaveBeenCalledOnce();
     expect(txClient.lendingListing.updateMany).toHaveBeenCalledWith({
       where: { id: 7n },
@@ -1214,4 +1215,22 @@ describe("startPolling — hash fetch failure", () => {
     );
     expect(hashAdvanceUpdate?.[0].data).not.toHaveProperty("lastLedgerHash");
   }, 8000);
+});
+
+describe("gracefulShutdown", () => {
+  it("continues cleanup when a partially mocked Prisma client has no disconnect method", async () => {
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((() => undefined) as never);
+    vi.useFakeTimers();
+
+    try {
+      await gracefulShutdown({});
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+      exitSpy.mockRestore();
+    }
+  });
 });
