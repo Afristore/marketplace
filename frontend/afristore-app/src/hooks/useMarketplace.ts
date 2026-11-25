@@ -14,7 +14,11 @@ import {
   Listing,
   stroopsToXlm,
 } from "@/lib/contract";
-import { fetchListings, fetchArtistListings } from "@/lib/indexer";
+import {
+  fetchListings,
+  fetchArtistListings,
+  fetchOwnedListings,
+} from "@/lib/indexer";
 import { config } from "@/lib/config";
 import {
   uploadImageToIPFS,
@@ -130,6 +134,47 @@ export function useArtistListings(artistPublicKey: string | null) {
       setIsLoading(false);
     }
   }, [artistPublicKey]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  return { listings, isLoading, error, refresh };
+}
+
+// ── useOwnedListings ──────────────────────────────────────────
+
+/**
+ * Listings currently owned by `ownerPublicKey`, including `Sold` ones.
+ *
+ * Purchases flip a listing to `Sold` and set `owner` to the buyer, so the
+ * Active-only feed from `useMarketplace()` can never contain a wallet's
+ * purchases. Query the indexer by owner instead.
+ */
+export function useOwnedListings(ownerPublicKey: string | null) {
+  const [listings, setListings] = useState<Listing[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
+
+  const refresh = useCallback(async () => {
+    if (!ownerPublicKey) {
+      setListings([]);
+      return;
+    }
+    setIsLoading(true);
+    setError(null);
+    try {
+      const rows = await fetchOwnedListings(ownerPublicKey);
+      setListings(
+        [...rows].sort((a, b) => Number(b.created_at) - Number(a.created_at)),
+      );
+    } catch (err: unknown) {
+      setError(getReadableErrorMessage(err, "Failed to load owned artworks"));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [ownerPublicKey]);
 
   useEffect(() => {
     refresh();
