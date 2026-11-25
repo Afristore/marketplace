@@ -117,3 +117,53 @@ export function getTokenConfigByAddress(
 ): TokenConfig | undefined {
   return SUPPORTED_TOKENS.find((token) => token.address === address);
 }
+
+/**
+ * Format a token amount in base units according to its configured decimal places.
+ * Handles fractional scaling, signs, and trims trailing fractional zeros for clean display.
+ */
+export function formatTokenAmount(amount: bigint, decimals: number = 7): string {
+  if (decimals <= 0) return amount.toString();
+  const scale = 10n ** BigInt(decimals);
+  const whole = amount / scale;
+  const frac = amount % scale;
+
+  const absWhole = whole < 0n ? -whole : whole;
+  const absFrac = frac < 0n ? -frac : frac;
+  const sign = whole < 0n || frac < 0n ? "-" : "";
+
+  const fracStr = absFrac.toString().padStart(decimals, "0").replace(/0+$/, "");
+  return fracStr ? `${sign}${absWhole}.${fracStr}` : `${sign}${absWhole}`;
+}
+
+export interface FormattedOfferAmount {
+  formattedAmount: string;
+  symbol: string;
+  isUnknown: boolean;
+  rawAmount: string;
+}
+
+/**
+ * Resolves the token config and formats the amount with its decimals and symbol.
+ * If the token is not in SUPPORTED_TOKENS, marks isUnknown and includes "Unknown token (<address>)".
+ */
+export function resolveOfferTokenDisplay(
+  amount: bigint,
+  tokenAddress: string,
+): FormattedOfferAmount {
+  const token = getTokenConfigByAddress(tokenAddress);
+  if (!token) {
+    return {
+      formattedAmount: amount.toString(),
+      symbol: `Unknown token (${tokenAddress})`,
+      isUnknown: true,
+      rawAmount: amount.toString(),
+    };
+  }
+  return {
+    formattedAmount: formatTokenAmount(amount, token.decimals),
+    symbol: token.symbol,
+    isUnknown: false,
+    rawAmount: amount.toString(),
+  };
+}

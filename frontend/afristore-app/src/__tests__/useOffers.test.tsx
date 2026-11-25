@@ -186,6 +186,55 @@ describe("useIncomingOffers", () => {
       expect(screen.getByTestId("count").textContent).toBe("1"),
     );
   });
+
+  it("sorts pending offers first within each listing group and prioritizes pending groups", async () => {
+    mockGetArtistListings.mockResolvedValueOnce([1, 2]);
+    mockGetListing
+      .mockResolvedValueOnce(makeListing(1))
+      .mockResolvedValueOnce(makeListing(2));
+
+    mockGetListingOffers
+      .mockResolvedValueOnce([10])
+      .mockResolvedValueOnce([20, 21]);
+
+    mockGetOffer
+      .mockResolvedValueOnce({
+        ...makeOffer(10),
+        status: "Rejected",
+        created_at: 100,
+      })
+      .mockResolvedValueOnce({
+        ...makeOffer(20),
+        status: "Accepted",
+        created_at: 200,
+      })
+      .mockResolvedValueOnce({
+        ...makeOffer(21),
+        status: "Pending",
+        created_at: 150,
+      });
+
+    function Comp() {
+      const { offersByListing } = useIncomingOffers("GOWNER");
+      return (
+        <div>
+          <span data-testid="count">{offersByListing.length}</span>
+          <span data-testid="first-listing">
+            {offersByListing[0]?.listing.listing_id}
+          </span>
+          <span data-testid="first-offer-status">
+            {offersByListing[0]?.offers[0]?.status}
+          </span>
+        </div>
+      );
+    }
+    render(<Comp />);
+    await waitFor(() =>
+      expect(screen.getByTestId("count").textContent).toBe("2"),
+    );
+    expect(screen.getByTestId("first-listing").textContent).toBe("2");
+    expect(screen.getByTestId("first-offer-status").textContent).toBe("Pending");
+  });
 });
 
 // ── useWithdrawOffer ──────────────────────────────────────────────────────────

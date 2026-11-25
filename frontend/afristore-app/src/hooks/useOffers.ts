@@ -140,15 +140,29 @@ export function useIncomingOffers(ownerPublicKey: string | null) {
             const offers = await Promise.all(
               offerIds.map((id) => getOffer(id)),
             );
+            const sortedOffers = [...offers].sort((a, b) => {
+              if (a.status === "Pending" && b.status !== "Pending") return -1;
+              if (a.status !== "Pending" && b.status === "Pending") return 1;
+              return b.created_at - a.created_at;
+            });
             result.push({
               listing,
-              offers: offers.sort((a, b) => b.created_at - a.created_at),
+              offers: sortedOffers,
             });
           } catch {
             // Skip listings whose offers fail to load.
           }
         }),
       );
+
+      // Prioritize listing groups with pending offers needing review
+      result.sort((a, b) => {
+        const aPending = a.offers.some((o) => o.status === "Pending");
+        const bPending = b.offers.some((o) => o.status === "Pending");
+        if (aPending && !bPending) return -1;
+        if (!aPending && bPending) return 1;
+        return b.listing.listing_id - a.listing.listing_id;
+      });
 
       setOffersByListing(result);
     } catch (err: unknown) {
