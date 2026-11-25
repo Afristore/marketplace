@@ -389,12 +389,12 @@ export async function cancelListing(
 }
 
 /**
- * update_listing — Artist updates an active listing with new metadata or price.
+ * update_listing — Artist updates an active listing price, token, and recipients.
+ * Metadata remains immutable here because the contract ABI has no metadata CID argument.
  */
 export async function updateListing(
   artistPublicKey: string,
   listingId: number,
-  newMetadataCid: string,
   newPrice: number,
   newTokenAddress: string,
   newRecipients: Array<{ address: string; percentage: number }> = [],
@@ -405,7 +405,6 @@ export async function updateListing(
   const args: xdr.ScVal[] = [
     new Address(artistPublicKey).toScVal(),
     nativeToScVal(BigInt(listingId), { type: "u64" }),
-    xdr.ScVal.scvBytes(Buffer.from(newMetadataCid, "utf-8")),
     nativeToScVal(priceStroops, { type: "i128" }),
     new Address(selectedToken.address).toScVal(),
     nativeToScVal(
