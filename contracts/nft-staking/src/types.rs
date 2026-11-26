@@ -16,6 +16,7 @@ pub enum StakingError {
     InvalidToken = 10,
     InsufficientRewardBalance = 11,
     RewardRateTooHigh = 12,
+    InvalidAmount = 13,
 }
 
 #[contracttype]
@@ -24,6 +25,7 @@ pub struct StakedPosition {
     pub owner: Address,
     pub token_address: Address,
     pub token_id: u64,
+    pub amount: u64,
     pub staked_at: u64,
     pub rewards_earned: i128,
 }

@@ -177,6 +177,110 @@ describe("CheckoutModal", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("shows an error instead of crashing when the crypto purchase throws", async () => {
+    const onPurchased = jest.fn();
+    const onCryptoPurchase = jest
+      .fn()
+      .mockRejectedValue(new Error("insufficient balance"));
+    const user = userEvent.setup();
+
+    render(
+      <ToastProvider>
+        <CheckoutModal
+          isOpen={true}
+          onClose={jest.fn()}
+          listing={sampleListing}
+          onCryptoPurchase={onCryptoPurchase}
+          onPurchased={onPurchased}
+          isBuyingCrypto={false}
+        />
+      </ToastProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: /pay.*xlm/i }));
+
+    expect(await screen.findByTestId("checkout-error")).toHaveTextContent(
+      /purchase failed: insufficient balance/i,
+    );
+    // Toast is shown as well
+    const alerts = await screen.findAllByRole("alert");
+    expect(alerts.length).toBeGreaterThanOrEqual(2);
+    expect(onPurchased).not.toHaveBeenCalled();
+    expect(screen.queryByText(/purchase successful/i)).not.toBeInTheDocument();
+    // The buyer can try again
+    expect(screen.getByRole("button", { name: /pay.*xlm/i })).toBeEnabled();
+  });
+
+  it("explains a wallet rejection without a toast provider mounted", async () => {
+    const onCryptoPurchase = jest.fn().mockRejectedValue("User declined access");
+    const user = userEvent.setup();
+
+    render(
+      <CheckoutModal
+        isOpen={true}
+        onClose={jest.fn()}
+        listing={sampleListing}
+        onCryptoPurchase={onCryptoPurchase}
+        isBuyingCrypto={false}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /pay.*xlm/i }));
+
+    expect(await screen.findByTestId("checkout-error")).toHaveTextContent(
+      /cancelled in your wallet/i,
+    );
+  });
+
+  it("clears the previous error on retry and succeeds", async () => {
+    const onCryptoPurchase = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce(true);
+    const user = userEvent.setup();
+
+    render(
+      <CheckoutModal
+        isOpen={true}
+        onClose={jest.fn()}
+        listing={sampleListing}
+        onCryptoPurchase={onCryptoPurchase}
+        isBuyingCrypto={false}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /pay.*xlm/i }));
+    expect(await screen.findByTestId("checkout-error")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /pay.*xlm/i }));
+    expect(await screen.findByText(/purchase successful/i)).toBeInTheDocument();
+    expect(screen.queryByTestId("checkout-error")).not.toBeInTheDocument();
+  });
+
+  it("still shows success when the onPurchased callback throws", async () => {
+    const consoleError = jest.spyOn(console, "error").mockImplementation(() => {});
+    const onPurchased = jest.fn(() => {
+      throw new Error("refresh failed");
+    });
+    const user = userEvent.setup();
+
+    render(
+      <CheckoutModal
+        isOpen={true}
+        onClose={jest.fn()}
+        listing={sampleListing}
+        onCryptoPurchase={jest.fn().mockResolvedValue(true)}
+        onPurchased={onPurchased}
+        isBuyingCrypto={false}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /pay.*xlm/i }));
+    expect(await screen.findByText(/purchase successful/i)).toBeInTheDocument();
+    expect(onPurchased).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it("shows a loading spinner when isBuyingCrypto is true", () => {
     render(
       <CheckoutModal

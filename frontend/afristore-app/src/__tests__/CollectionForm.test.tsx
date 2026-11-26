@@ -135,4 +135,44 @@ describe("CollectionForm", () => {
     render(<CollectionForm />);
     expect(screen.getByText(/max supply/i)).toBeInTheDocument();
   });
+
+  it("validates symbol against /^[A-Z0-9]{1,10}$/ and displays an error when invalid", async () => {
+    const user = userEvent.setup();
+    render(<CollectionForm />);
+
+    const nameInput = screen.getByPlaceholderText(/african legends/i);
+    const symbolInput = screen.getByPlaceholderText(/AFRL/i);
+    await user.type(nameInput, "Valid Collection");
+    // Symbol with invalid characters like spaces or symbols
+    await user.type(symbolInput, "A B");
+
+    await user.click(screen.getByRole("button", { name: /deploy|launch/i }));
+    await waitFor(() => {
+      expect(
+        screen.getByText(/symbol must be 1 to 10 uppercase letters or numbers/i),
+      ).toBeInTheDocument();
+    });
+    expect(mockDeploy).not.toHaveBeenCalled();
+  });
+
+  it("sanitizes collection name input before deployment", async () => {
+    mockDeploy.mockResolvedValueOnce(null);
+    const user = userEvent.setup();
+    render(<CollectionForm />);
+
+    const nameInput = screen.getByPlaceholderText(/african legends/i);
+    const symbolInput = screen.getByPlaceholderText(/AFRL/i);
+    await user.type(nameInput, "   Wild   Animals   ");
+    await user.type(symbolInput, "WILD");
+
+    await user.click(screen.getByRole("button", { name: /deploy|launch/i }));
+    await waitFor(() => {
+      expect(mockDeploy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "Wild Animals",
+          symbol: "WILD",
+        }),
+      );
+    });
+  });
 });

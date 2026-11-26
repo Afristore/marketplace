@@ -65,6 +65,7 @@ function makeAuction(overrides = {}) {
     metadata_cid: "Qm",
     collection: "CCOLLECTION",
     token_id: 1,
+    amount: 1,
     token: "CTOKEN",
     created_at: 100,
     recipients: [],
@@ -179,11 +180,14 @@ describe("BiddingPanel", () => {
       const bidInput = screen.getByPlaceholderText(/min/i);
       const placeBidButton = screen.getByRole("button", { name: /place bid/i });
 
-      // Button should be disabled initially (no input)
+      // Bid input is pre-filled with minimum valid bid (1 XLM reserve)
+      expect(bidInput).toHaveValue(1);
+
+      // When cleared, button should be disabled
+      await user.clear(bidInput);
       expect(placeBidButton).toBeDisabled();
 
       // Enter an amount below the minimum (0.5 XLM < 1 XLM reserve)
-      await user.clear(bidInput);
       await user.type(bidInput, "0.5");
 
       // Verify validation message appears
@@ -317,5 +321,25 @@ describe("BiddingPanel", () => {
     expect(
       screen.getByText("Auction is not yet eligible for finalization"),
     ).toBeInTheDocument();
+  });
+
+  it("pre-fills bid input with minimumNextBid and shows minimum increment helper badge", () => {
+    // Current highest bid: 20 XLM -> 5% increment is 1 XLM -> min next bid is 21 XLM
+    render(
+      <BiddingPanel
+        auction={makeAuction({
+          reserve_price: 10_000_000n, // 1 XLM
+          highest_bid: 200_000_000n, // 20 XLM
+          highest_bidder: "GBIDDER",
+        })}
+      />,
+    );
+
+    const bidInput = screen.getByPlaceholderText(/min/i);
+    expect(bidInput).toHaveValue(21);
+
+    const badge = screen.getByTestId("min-increment-badge");
+    expect(badge).toBeInTheDocument();
+    expect(badge.textContent).toContain("Min Increment: +1 XLM (5%)");
   });
 });

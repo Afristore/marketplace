@@ -74,17 +74,48 @@ export function BiddingPanel({
     auction.end_time,
   );
 
-  const [bidAmount, setBidAmount] = useState("");
+  const currentBidXlm = parseFloat(stroopsToXlm(auction.highest_bid));
+  const reserveXlm = parseFloat(stroopsToXlm(auction.reserve_price));
+
+  // Minimum required increment is 5% above the current highest bid (minimum 1 stroop)
+  const minIncrementStroops = useMemo(() => {
+    if (auction.highest_bid <= 0n) return 0n;
+    const inc = (auction.highest_bid * 5n) / 100n;
+    return inc > 0n ? inc : 1n;
+  }, [auction.highest_bid]);
+
+  const minIncrementXlm = useMemo(
+    () =>
+      minIncrementStroops > 0n
+        ? parseFloat(stroopsToXlm(minIncrementStroops))
+        : 0,
+    [minIncrementStroops],
+  );
+
+  const minNextBidStroops = useMemo(
+    () =>
+      auction.highest_bid > 0n
+        ? auction.highest_bid + minIncrementStroops
+        : auction.reserve_price,
+    [auction.highest_bid, auction.reserve_price, minIncrementStroops],
+  );
+
+  const minimumNextBid = useMemo(
+    () => parseFloat(stroopsToXlm(minNextBidStroops)),
+    [minNextBidStroops],
+  );
+  const minimumBid = minimumNextBid;
+
+  const [bidAmount, setBidAmount] = useState(() =>
+    minimumNextBid > 0 ? String(minimumNextBid) : "",
+  );
   const [bidSuccess, setBidSuccess] = useState(false);
   const [outbidNotice, setOutbidNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const currentBidXlm = parseFloat(stroopsToXlm(auction.highest_bid));
-  const reserveXlm = parseFloat(stroopsToXlm(auction.reserve_price));
-  const minimumBid = Math.max(
-    currentBidXlm > 0 ? currentBidXlm + 0.0000001 : reserveXlm,
-    reserveXlm,
-  );
+  useEffect(() => {
+    setBidAmount(minimumNextBid > 0 ? String(minimumNextBid) : "");
+  }, [auction.auction_id, auction.highest_bid, minimumNextBid]);
 
   const isOwn = publicKey === auction.creator;
   const isActive = auction.status === "Active";
@@ -101,8 +132,10 @@ export function BiddingPanel({
       return `Bid must be at least ${reserveXlm} XLM (reserve price)`;
     if (currentBidXlm > 0 && amount <= currentBidXlm)
       return `Bid must be higher than current bid (${stroopsToXlm(auction.highest_bid)} XLM)`;
+    if (amount < minimumNextBid)
+      return `Bid must be at least ${minimumNextBid} XLM (minimum 5% increment)`;
     return null;
-  }, [bidAmount, reserveXlm, currentBidXlm, auction.highest_bid]);
+  }, [bidAmount, reserveXlm, currentBidXlm, minimumNextBid, auction.highest_bid]);
 
   const handleBid = async () => {
     const amount = parseFloat(bidAmount);
@@ -281,9 +314,19 @@ export function BiddingPanel({
       {canBid && (
         <div className="space-y-3">
           <div>
-            <label className="mb-1 block text-sm font-medium text-gray-700">
-              Your Bid (XLM)
-            </label>
+            <div className="mb-1 flex items-center justify-between">
+              <label className="block text-sm font-medium text-gray-700">
+                Your Bid (XLM)
+              </label>
+              <span
+                data-testid="min-increment-badge"
+                className="inline-flex items-center rounded-full bg-brand-100 px-2.5 py-0.5 text-xs font-semibold text-brand-700 border border-brand-200"
+              >
+                {auction.highest_bid > 0n
+                  ? `Min Increment: +${minIncrementXlm} XLM (5%)`
+                  : `Min Required: ${reserveXlm} XLM`}
+              </span>
+            </div>
             <div className="relative">
               <input
                 type="number"
@@ -295,7 +338,7 @@ export function BiddingPanel({
                   setBidSuccess(false);
                 }}
                 placeholder={`Min ${minimumBid.toFixed(2)} XLM`}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 pr-14 text-sm focus:border-brand-500 focus:outline-none"
+                className="w-full rounded-lg border border-gray-200 px-3 py-2.5 pr-14 text-sm focus:border-brand-500 focus:bg-white focus:outline-none transition-all"
               />
               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-gray-400">
                 XLM

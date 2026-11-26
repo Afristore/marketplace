@@ -9,6 +9,7 @@ import { useWalletContext } from "@/context/WalletContext";
 import { useArtistListings, useCancelListing } from "@/hooks/useMarketplace";
 import { ListingForm } from "@/components/ListingForm";
 import { AuctionForm } from "@/components/AuctionForm";
+import { ArtistAuctionsList } from "@/components/ArtistAuctionsList";
 import { stroopsToXlm, Listing } from "@/lib/contract";
 import { OwnedNFTGallery } from "@/components/OwnedNFTGallery";
 import { OwnedToken } from "@/lib/indexer";
@@ -21,12 +22,15 @@ import {
   Activity,
   TrendingUp,
   Gavel,
+  AlertTriangle,
+  Loader2,
 } from "lucide-react";
 import { WalletGuard } from "@/components/WalletGuard";
 import { SUPPORTED_TOKENS } from "@/config/tokens";
 import { clsx } from "clsx";
+import { useSafeToast } from "@/hooks/useSafeToast";
 
-type Tab = "listings" | "list" | "edit" | "auction";
+type Tab = "listings" | "list" | "edit" | "auction" | "auctions";
 
 const STATUS_COLOR: Record<string, string> = {
   Active: "text-green-600 bg-green-50",
@@ -36,13 +40,39 @@ const STATUS_COLOR: Record<string, string> = {
 
 export default function DashboardPage() {
   const { publicKey } = useWalletContext();
+  const pushToast = useSafeToast();
   const { listings, isLoading, refresh } = useArtistListings(publicKey);
   const { cancel, isCancelling } = useCancelListing(publicKey);
   const [tab, setTab] = useState<Tab>("listings");
   const [editingListing, setEditingListing] = useState<Listing | null>(null);
+  const [listingToCancel, setListingToCancel] = useState<Listing | null>(null);
   const [selectedNFTToList, setSelectedNFTToList] = useState<OwnedToken | null>(
     null,
   );
+
+  const handleConfirmCancel = async () => {
+    if (!listingToCancel) return;
+    try {
+      const ok = await cancel(listingToCancel.listing_id);
+      if (ok) {
+        pushToast(
+          `Listing #${listingToCancel.listing_id} cancelled successfully.`,
+          "success",
+        );
+        setListingToCancel(null);
+        await refresh();
+      } else {
+        pushToast(
+          `Failed to cancel listing #${listingToCancel.listing_id}.`,
+          "error",
+        );
+      }
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Failed to cancel listing";
+      pushToast(msg, "error");
+    }
+  };
 
   const activeCnt = listings.filter(
     (l: Listing) => l.status === "Active",
@@ -247,6 +277,28 @@ export default function DashboardPage() {
                 <div className="absolute inset-x-4 bottom-0 h-1.5 rounded-t-full bg-brand-500 shadow-[0_-5px_15px_rgba(226,125,96,0.6)] animate-slide-in-right" />
               )}
             </button>
+            <button
+              onClick={() => setTab("auctions")}
+              className={clsx(
+                "group relative flex items-center gap-3 px-6 sm:px-8 py-5 text-sm font-bold transition-all duration-500 whitespace-nowrap",
+                tab === "auctions"
+                  ? "text-brand-400"
+                  : "text-white/40 hover:text-white",
+              )}
+            >
+              <Gavel
+                size={18}
+                className={clsx(
+                  "transition-all duration-500 group-hover:scale-125",
+                  tab === "auctions" &&
+                    "text-brand-400 drop-shadow-[0_0_8px_rgba(226,125,96,0.5)]",
+                )}
+              />
+              My Auctions
+              {tab === "auctions" && (
+                <div className="absolute inset-x-4 bottom-0 h-1.5 rounded-t-full bg-brand-500 shadow-[0_-5px_15px_rgba(226,125,96,0.6)] animate-slide-in-right" />
+              )}
+            </button>
             {tab === "edit" && (
               <button className="group relative flex items-center gap-3 px-6 sm:px-8 py-5 text-sm font-bold transition-all duration-500 whitespace-nowrap text-terracotta-400">
                 <Edit2
@@ -284,9 +336,13 @@ export default function DashboardPage() {
             ) : tab === "auction" ? (
               <div className="w-full">
                 <AuctionForm
-                  onSuccess={() => setTab("listings")}
+                  onSuccess={() => setTab("auctions")}
                   onCancel={() => setTab("listings")}
                 />
+              </div>
+            ) : tab === "auctions" ? (
+              <div className="w-full">
+                <ArtistAuctionsList artistPublicKey={publicKey} />
               </div>
             ) : tab === "edit" ? (
               <div className="w-full">
@@ -393,10 +449,7 @@ export default function DashboardPage() {
                                   Edit
                                 </button>
                                 <button
-                                  onClick={async () => {
-                                    await cancel(l.listing_id);
-                                    refresh();
-                                  }}
+                                  onClick={() => setListingToCancel(l)}
                                   disabled={isCancelling}
                                   className="flex flex-1 sm:flex-none justify-center items-center gap-2 rounded-xl bg-white/5 hover:bg-terracotta-500/20 px-4 py-2 text-sm font-bold text-terracotta-400 border border-white/10 hover:border-terracotta-500/30 transition-all shadow-sm disabled:opacity-50"
                                 >
@@ -416,6 +469,92 @@ export default function DashboardPage() {
           </div>
         </div>
       </WalletGuard>
+
+      {/* Confirmation Modal for Listing Cancellation */}
+      {listingToCancel && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-midnight-950/80 backdrop-blur-md animate-fade-in"
+        >
+          <div className="relative w-full max-w-md rounded-[2.5rem] bg-midnight-900 border border-white/10 p-6 sm:p-8 shadow-2xl">
+            <div className="flex items-center gap-4 mb-6">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-terracotta-500/10 text-terracotta-400 border border-terracotta-500/20">
+                <AlertTriangle size={24} />
+              </div>
+              <div>
+                <h3 className="font-display text-xl font-bold text-white">
+                  Cancel Listing
+                </h3>
+                <p className="text-xs text-white/40">
+                  Confirm on-chain listing cancellation
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-white/5 border border-white/10 p-4 mb-6 space-y-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-white/40">Listing ID</span>
+                <span className="font-mono font-bold text-white">
+                  #{listingToCancel.listing_id}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-white/40">Token ID</span>
+                <span className="font-mono text-mint-400">
+                  #{listingToCancel.token_id}
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-white/40">Price</span>
+                <span className="font-display font-bold text-white">
+                  {stroopsToXlm(listingToCancel.price)}{" "}
+                  {getTokenSymbol(listingToCancel.token)}
+                </span>
+              </div>
+              {listingToCancel.metadata_cid && (
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-white/40">Metadata CID</span>
+                  <span className="font-mono text-[10px] text-white/60 truncate max-w-[180px]">
+                    {listingToCancel.metadata_cid}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <p className="text-xs text-brand-300/60 leading-relaxed mb-6">
+              Are you sure you want to cancel this listing? This will close the
+              listing on-chain and remove it from the active marketplace.
+            </p>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setListingToCancel(null)}
+                disabled={isCancelling}
+                className="flex-1 rounded-2xl bg-white/5 hover:bg-white/10 py-3 text-xs font-bold text-white border border-white/10 transition-colors disabled:opacity-50"
+              >
+                Keep Listing
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmCancel}
+                disabled={isCancelling}
+                className="flex-1 flex items-center justify-center gap-2 rounded-2xl bg-terracotta-500 hover:bg-terracotta-600 py-3 text-xs font-bold text-white transition-all shadow-lg hover:shadow-terracotta-500/25 disabled:opacity-50"
+              >
+                {isCancelling ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    Cancelling…
+                  </>
+                ) : (
+                  "Confirm Cancel"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

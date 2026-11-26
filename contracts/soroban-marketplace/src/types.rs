@@ -33,6 +33,10 @@ pub enum MarketplaceError {
     /// Token attempted at purchase time but is no longer whitelisted
     TokenNotWhitelisted = 25,
     InvalidAuctionDuration = 26,
+    /// Amount does not match the collection standard: ERC-721 requires exactly 1, and every listing requires at least 1
+    InvalidAmount = 27,
+    /// Auction already has a bid, so the creator can no longer cancel it
+    AuctionHasBids = 28,
 }
 
 #[contracttype]

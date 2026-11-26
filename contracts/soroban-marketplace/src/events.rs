@@ -9,6 +9,7 @@ pub const LISTING_CANCELLED: Symbol = symbol_short!("lst_cncl");
 pub const LISTING_UPDATED: Symbol = symbol_short!("lst_updt");
 pub const BID_PLACED: Symbol = symbol_short!("bid_plcd");
 pub const AUCTION_RESOLVED: Symbol = symbol_short!("auc_rslv");
+pub const AUCTION_CANCELLED: Symbol = symbol_short!("auc_cncl");
 pub const OFFER_MADE: Symbol = symbol_short!("ofr_made");
 pub const OFFER_ACCEPTED: Symbol = symbol_short!("ofr_accp");
 pub const OFFER_REJECTED: Symbol = symbol_short!("ofr_rjct");
@@ -94,6 +95,13 @@ pub struct AuctionFinalizedEvent {
     pub amount: i128,
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuctionCancelledEvent {
+    pub auction_id: u64,
+    pub creator: Address,
+}
+
 impl ListingCreatedEvent {
     #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
@@ -133,6 +141,13 @@ impl AuctionFinalizedEvent {
     #[allow(deprecated)]
     pub fn publish(self, env: &Env) {
         env.events().publish((AUCTION_RESOLVED,), self);
+    }
+}
+
+impl AuctionCancelledEvent {
+    #[allow(deprecated)]
+    pub fn publish(self, env: &Env) {
+        env.events().publish((AUCTION_CANCELLED,), self);
     }
 }
 

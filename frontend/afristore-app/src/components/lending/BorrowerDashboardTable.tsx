@@ -8,7 +8,7 @@
 
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArrowDownUp,
   ArrowUpDown,
@@ -19,7 +19,7 @@ import {
   Wallet,
 } from "lucide-react";
 import clsx from "clsx";
-import { useTranslation } from "react-i18next";
+import { useTranslation } from "@/lib/i18n/useTranslation";
 import {
   calculateAccruedInterest,
   calculateHealthFactor,
@@ -47,6 +47,9 @@ export interface BorrowerDebt {
   liquidationThresholdBps: number;
   /** Indexed oracle health factor; null means no quote is available yet. */
   healthFactorBps?: bigint | null;
+  startTimeSecs?: number;
+  maxDurationSecs?: number;
+  expiresAtSecs?: number;
 }
 
 export type HealthFactorSortOrder = "asc" | "desc";
@@ -82,6 +85,47 @@ function formatHealthFactor(hf: bigint | null): string {
   return `${whole}.${frac}%`;
 }
 
+export function getLiquidationDeadlineSecs(
+  debt: Pick<
+    BorrowerDebt,
+    "startTimeSecs" | "maxDurationSecs" | "expiresAtSecs"
+  >,
+): number | null {
+  if (debt.expiresAtSecs !== undefined && Number.isFinite(debt.expiresAtSecs)) {
+    return debt.expiresAtSecs;
+  }
+  if (
+    debt.startTimeSecs !== undefined &&
+    debt.maxDurationSecs !== undefined &&
+    Number.isFinite(debt.startTimeSecs) &&
+    Number.isFinite(debt.maxDurationSecs)
+  ) {
+    return debt.startTimeSecs + debt.maxDurationSecs;
+  }
+  return null;
+}
+
+export function formatRemainingTime(remainingSecs: number): string {
+  if (remainingSecs <= 0) return "Expired";
+
+  const days = Math.floor(remainingSecs / 86400);
+  const hours = Math.floor((remainingSecs % 86400) / 3600);
+  const minutes = Math.floor((remainingSecs % 3600) / 60);
+  const seconds = remainingSecs % 60;
+  const parts: string[] = [];
+
+  if (days > 0) parts.push(`${days} ${days === 1 ? "day" : "days"}`);
+  if (hours > 0) parts.push(`${hours} ${hours === 1 ? "hour" : "hours"}`);
+  if (days === 0 && minutes > 0) {
+    parts.push(`${minutes} ${minutes === 1 ? "minute" : "minutes"}`);
+  }
+  if (days === 0 && hours === 0) {
+    parts.push(`${seconds} ${seconds === 1 ? "second" : "seconds"}`);
+  }
+
+  return `${parts.join(" ")} remaining`;
+}
+
 function healthFactorTone(
   hf: bigint | null,
   liquidationThresholdBps: number,
@@ -98,6 +142,19 @@ function healthFactorTone(
   return "bg-mint-500/15 text-mint-300 ring-1 ring-mint-500/30";
 }
 
+function useCurrentTimeSecs(): number {
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNow(Math.floor(Date.now() / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return now;
+}
+
 export function BorrowerDashboardTable({
   debts,
   onTopUp,
@@ -107,6 +164,7 @@ export function BorrowerDashboardTable({
   const { t } = useTranslation();
   const [sortOrder, setSortOrder] = useState<HealthFactorSortOrder>("asc");
   const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set());
+  const nowSecs = useCurrentTimeSecs();
 
   const toggleExpand = (positionId: number) => {
     setExpandedIds((prev) => {
@@ -238,6 +296,7 @@ export function BorrowerDashboardTable({
                   onToggleExpand={() => toggleExpand(debt.positionId)}
                   onTopUp={onTopUp ? () => onTopUp(debt) : undefined}
                   onRepay={onRepay ? () => onRepay(debt) : undefined}
+                  nowSecs={nowSecs}
                 />
               );
             })}
@@ -256,6 +315,7 @@ interface FragmentRowProps {
   onToggleExpand: () => void;
   onTopUp?: () => void;
   onRepay?: () => void;
+  nowSecs: number;
 }
 
 function FragmentRow({
@@ -266,8 +326,12 @@ function FragmentRow({
   onToggleExpand,
   onTopUp,
   onRepay,
+  nowSecs,
 }: FragmentRowProps) {
   const { t } = useTranslation();
+  const deadlineSecs = getLiquidationDeadlineSecs(debt);
+  const remainingSecs =
+    deadlineSecs === null ? null : Math.max(0, deadlineSecs - nowSecs);
 
   return (
     <>
@@ -300,6 +364,19 @@ function FragmentRow({
                     })}`
                   : ""}
               </p>
+              {remainingSecs !== null && (
+                <p
+                  data-testid={`liquidation-countdown-${debt.positionId}`}
+                  className={clsx(
+                    "mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold",
+                    remainingSecs < 86400
+                      ? "bg-red-500/15 text-red-300 ring-1 ring-red-500/30"
+                      : "bg-white/5 text-white/50 ring-1 ring-white/10",
+                  )}
+                >
+                  {formatRemainingTime(remainingSecs)}
+                </p>
+              )}
             </div>
           </div>
         </td>

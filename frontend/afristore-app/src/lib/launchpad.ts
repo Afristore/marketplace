@@ -1,5 +1,6 @@
 import {
   Address,
+  Keypair,
   nativeToScVal,
   scValToNative,
   xdr,
@@ -46,6 +47,16 @@ function parseCollectionRecord(raw: any): CollectionRecord {
 
 function toAddressScVal(address: string): xdr.ScVal {
   return new Address(address).toScVal();
+}
+
+/**
+ * Resolve the caller public key for read-only contract simulations,
+ * falling back to an ephemeral Stellar keypair when no wallet is connected.
+ */
+export function resolveCallerPublicKey(
+  connectedPublicKey?: string | null,
+): string {
+  return connectedPublicKey || Keypair.random().publicKey();
 }
 
 // ── Launchpad Methods ─────────────────────────────────────────
@@ -256,10 +267,9 @@ export async function deploySplitter(
 export async function getCollectionsByCreator(
   creatorPublicKey: string,
 ): Promise<CollectionRecord[]> {
-  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
   const args = [toAddressScVal(creatorPublicKey)];
   const retVal = await invokeContract(
-    DUMMY_KEY,
+    resolveCallerPublicKey(),
     "collections_by_creator",
     args,
     true,
@@ -276,13 +286,12 @@ export async function getCollections(
   startIndex: number,
   limit: number,
 ): Promise<CollectionRecord[]> {
-  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
   const args: xdr.ScVal[] = [
     nativeToScVal(startIndex, { type: "u32" }),
     nativeToScVal(limit, { type: "u32" }),
   ];
   const retVal = await invokeContract(
-    DUMMY_KEY,
+    resolveCallerPublicKey(),
     "get_collections",
     args,
     true,
@@ -295,11 +304,10 @@ export async function getCollections(
 export async function getCollectionRecordByAddress(
   collectionAddress: string,
 ): Promise<CollectionRecord | null> {
-  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
   const args = [toAddressScVal(collectionAddress)];
   try {
     const retVal = await invokeContract(
-      DUMMY_KEY,
+      resolveCallerPublicKey(),
       "get_collection_by_id",
       args,
       true,
@@ -324,10 +332,8 @@ export async function getStakingPoolByNft(
   if (isE2eMockChain()) {
     return e2eMockGetStakingPoolByNft(nftAddress);
   }
-  const DUMMY_KEY =
-    "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
   const retVal = await invokeContract(
-    DUMMY_KEY,
+    resolveCallerPublicKey(),
     "get_staking_pool",
     [toAddressScVal(nftAddress)],
     true,
@@ -373,9 +379,8 @@ export async function deployStakingPool(
  * collection_count
  */
 export async function getCollectionCount(): Promise<number> {
-  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
   const retVal = await invokeContract(
-    DUMMY_KEY,
+    resolveCallerPublicKey(),
     "collection_count",
     [],
     true,
@@ -388,9 +393,8 @@ export async function getCollectionCount(): Promise<number> {
  * platform_fee
  */
 export async function getPlatformFee(): Promise<PlatformFee> {
-  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
   const retVal = await invokeContract(
-    DUMMY_KEY,
+    resolveCallerPublicKey(),
     "platform_fee",
     [],
     true,
@@ -407,9 +411,8 @@ export async function getPlatformFee(): Promise<PlatformFee> {
  * admin
  */
 export async function getLaunchpadAdmin(): Promise<string> {
-  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
   const retVal = await invokeContract(
-    DUMMY_KEY,
+    resolveCallerPublicKey(),
     "admin",
     [],
     true,
@@ -478,18 +481,18 @@ export async function getCollectionMetadata(
     return getE2eMockCollection(collectionAddress);
   }
 
-  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+  const callerPublicKey = resolveCallerPublicKey();
 
   const [name, symbol, creator, totalSupply, maxSupply, royalty] =
     await Promise.all([
-      invokeContract(DUMMY_KEY, "name", [], true, collectionAddress),
-      invokeContract(DUMMY_KEY, "symbol", [], true, collectionAddress).catch(
+      invokeContract(callerPublicKey, "name", [], true, collectionAddress),
+      invokeContract(callerPublicKey, "symbol", [], true, collectionAddress).catch(
         () => nativeToScVal("", { type: "string" }),
       ), // 1155 might not have symbol
-      invokeContract(DUMMY_KEY, "creator", [], true, collectionAddress),
-      invokeContract(DUMMY_KEY, "total_supply", [], true, collectionAddress),
-      invokeContract(DUMMY_KEY, "max_supply", [], true, collectionAddress),
-      invokeContract(DUMMY_KEY, "royalty_info", [], true, collectionAddress),
+      invokeContract(callerPublicKey, "creator", [], true, collectionAddress),
+      invokeContract(callerPublicKey, "total_supply", [], true, collectionAddress),
+      invokeContract(callerPublicKey, "max_supply", [], true, collectionAddress),
+      invokeContract(callerPublicKey, "royalty_info", [], true, collectionAddress),
     ]);
 
   const royaltyNative = scValToNative(royalty) as [Address, number];

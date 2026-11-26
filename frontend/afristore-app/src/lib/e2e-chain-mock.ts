@@ -175,6 +175,7 @@ export function e2eMockCreateListing(
     artist: artistPublicKey,
     collection: collectionAddress,
     token_id: nftTokenId,
+    amount: 1,
     price: priceStroops,
     currency: DEFAULT_TOKEN.symbol,
     token: tokenAddress,
@@ -268,6 +269,18 @@ export function e2eMockFinalizeAuction(
     throw new Error(`Auction #${auctionId} not found`);
   }
   auction.status = "Finalized";
+  return true;
+}
+
+export function e2eMockCancelAuction(
+  callerPublicKey: string,
+  auctionId: number,
+): boolean {
+  const auction = auctions.get(auctionId);
+  if (!auction) {
+    throw new Error(`Auction #${auctionId} not found`);
+  }
+  auction.status = "Cancelled";
   return true;
 }
 

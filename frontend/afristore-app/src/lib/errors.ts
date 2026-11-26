@@ -21,12 +21,28 @@ export const SOROBAN_ERROR_MESSAGES: Record<number, string> = {
   20: "This listing has already been sold.",
   21: "This listing has been cancelled.",
   22: "The contract rejected this request for safety reasons.",
+  28: "This auction already has bids and can no longer be cancelled.",
 };
 
 const CONTRACT_CODE_PATTERNS: RegExp[] = [
   /Error\(Contract,\s*#(\d+)\)/i,
   /Contract(?:Error)?[^\d#]*(?:#|code[:=\s])\s*(\d+)/i,
   /"contractCode"\s*:\s*(\d+)/i,
+];
+
+const NAMED_ERROR_MESSAGES: Array<{ pattern: RegExp; message: string }> = [
+  {
+    pattern: /\bListingNotActive\b/i,
+    message: "This listing is no longer active.",
+  },
+  {
+    pattern: /\bUnauthorized\b/i,
+    message: "You are not authorized to perform this action.",
+  },
+  {
+    pattern: /\bListingAlreadyFilled\b/i,
+    message: "This listing has already been filled.",
+  },
 ];
 
 export function extractSorobanContractCode(raw: string): number | null {
@@ -43,6 +59,9 @@ export function extractSorobanContractCode(raw: string): number | null {
 }
 
 export function mapSorobanErrorMessage(raw: string): string | null {
+  const named = NAMED_ERROR_MESSAGES.find(({ pattern }) => pattern.test(raw));
+  if (named) return named.message;
+
   const code = extractSorobanContractCode(raw);
   if (code === null) return null;
   const mapped = SOROBAN_ERROR_MESSAGES[code];

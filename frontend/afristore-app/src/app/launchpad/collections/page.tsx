@@ -6,7 +6,7 @@ import { Navbar } from "@/components/Navbar";
 import { useLaunchpadCollections } from "@/hooks/useLaunchpad";
 import { CollectionKind } from "@/lib/launchpad";
 import { Loader2, Search, Filter, Rocket, ExternalLink } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { useTranslation } from "@/lib/i18n/useTranslation";
 
 export default function CollectionsDirectoryPage() {
   const { t } = useTranslation();

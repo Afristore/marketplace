@@ -45,6 +45,15 @@ const COLLECTION_NAME_PATTERN = /^[a-zA-Z0-9\s\-_]+$/;
 const COLLECTION_NAME_ERROR =
   "Collection name may only contain letters, numbers, spaces, hyphens and underscores.";
 
+const COLLECTION_SYMBOL_PATTERN = /^[A-Z0-9]{1,10}$/;
+const COLLECTION_SYMBOL_ERROR =
+  "Symbol must be 1 to 10 uppercase letters or numbers with no spaces or special characters.";
+
+function sanitizeCollectionName(name: string): string {
+  // Strip HTML tags and normalize whitespace (trim and collapse multiple spaces)
+  return name.replace(/<[^>]*>/g, "").trim().replace(/\s+/g, " ");
+}
+
 function isStellarAddress(v: string) {
   return (v.startsWith("G") || v.startsWith("C")) && v.length >= 50;
 }
@@ -57,6 +66,7 @@ export function CollectionForm() {
 
   const [successAddress, setSuccessAddress] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
+  const [symbolError, setSymbolError] = useState<string | null>(null);
 
   // Splitter addresses the user has deployed (persisted in localStorage under their pubkey)
   const [savedSplitters, setSavedSplitters] = useState<string[]>([]);
@@ -102,14 +112,25 @@ export function CollectionForm() {
     e.preventDefault();
     if (!publicKey) return;
 
-    if (!COLLECTION_NAME_PATTERN.test(form.name)) {
+    const sanitizedName = sanitizeCollectionName(form.name);
+    if (!sanitizedName || !COLLECTION_NAME_PATTERN.test(sanitizedName)) {
       setNameError(COLLECTION_NAME_ERROR);
       return;
     }
     setNameError(null);
 
+    if (is721) {
+      if (!COLLECTION_SYMBOL_PATTERN.test(form.symbol)) {
+        setSymbolError(COLLECTION_SYMBOL_ERROR);
+        return;
+      }
+      setSymbolError(null);
+    }
+
     const input: DeployCollectionInput = {
       ...form,
+      name: sanitizedName,
+      symbol: is721 ? form.symbol : form.symbol,
       royaltyReceiver: form.royaltyReceiver || publicKey,
     };
 
@@ -253,6 +274,12 @@ export function CollectionForm() {
                   setForm({ ...form, name: e.target.value });
                   setNameError(null);
                 }}
+                onBlur={() => {
+                  setForm((prev) => ({
+                    ...prev,
+                    name: sanitizeCollectionName(prev.name),
+                  }));
+                }}
                 className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
                 placeholder="e.g. African Legends"
               />
@@ -270,13 +297,31 @@ export function CollectionForm() {
                   <input
                     required
                     value={form.symbol}
-                    onChange={(e) =>
-                      setForm({ ...form, symbol: e.target.value.toUpperCase() })
-                    }
+                    pattern="^[A-Z0-9]{1,10}$"
+                    title={COLLECTION_SYMBOL_ERROR}
+                    onChange={(e) => {
+                      const val = e.target.value.toUpperCase();
+                      setForm({ ...form, symbol: val });
+                      if (val && !COLLECTION_SYMBOL_PATTERN.test(val)) {
+                        setSymbolError(COLLECTION_SYMBOL_ERROR);
+                      } else {
+                        setSymbolError(null);
+                      }
+                    }}
+                    onBlur={() => {
+                      if (form.symbol && !COLLECTION_SYMBOL_PATTERN.test(form.symbol)) {
+                        setSymbolError(COLLECTION_SYMBOL_ERROR);
+                      } else {
+                        setSymbolError(null);
+                      }
+                    }}
                     className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
                     placeholder="e.g. AFRL"
                     maxLength={10}
                   />
+                  {symbolError && (
+                    <p className="text-xs text-red-500 font-inter">{symbolError}</p>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">

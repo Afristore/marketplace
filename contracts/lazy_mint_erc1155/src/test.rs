@@ -639,6 +639,53 @@ fn test_voucher_expired_returns_proper_error() {
 }
 
 #[test]
+fn test_voucher_timestamp_expired_returns_proper_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(LazyMint1155, ());
+    let client = LazyMint1155Client::new(&env, &contract_id);
+
+    let creator = Address::generate(&env);
+    let creator_pubkey = BytesN::from_array(&env, &[6u8; 32]);
+
+    client.initialize(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "Expiry Test Timestamp"),
+        &500u32,
+        &Address::generate(&env),
+    );
+
+    let buyer = Address::generate(&env);
+    let token_id = 1u64;
+
+    client.register_edition(&token_id, &1000u128);
+
+    // Advance ledger timestamp past valid_until
+    env.ledger().with_mut(|li| {
+        li.timestamp = 1000;
+        li.sequence_number = 1;
+    });
+
+    let voucher = crate::MintVoucher1155 {
+        token_id,
+        buyer_quota: 100u128,
+        price_per_unit: 0i128,
+        currency: Address::generate(&env),
+        uri: String::from_str(&env, "ipfs://expired-timestamp"),
+        uri_hash: BytesN::from_array(&env, &[10u8; 32]),
+        valid_until: 500, // expired by timestamp (1000 > 500)
+    };
+
+    let invalid_signature = BytesN::from_array(&env, &[0u8; 64]);
+
+    let result = client.try_redeem(&buyer, &voucher, &1u128, &invalid_signature);
+
+    assert_eq!(result, Err(Ok(Error::VoucherExpired)));
+}
+
+#[test]
 fn burn_with_missing_total_supply_key_returns_zero_not_amount() {
     // Regression test for #273: unwrap_or(amount) masked state corruption.
     // If TotalSupply key is absent, burn must treat supply as 0, not `amount`.

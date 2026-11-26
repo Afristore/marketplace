@@ -11,8 +11,8 @@
 #![allow(clippy::too_many_arguments, deprecated)]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token::TokenClient,
-    xdr::ToXdr, Address, Bytes, BytesN, Env, String, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short,
+    token::TokenClient, xdr::ToXdr, Address, Bytes, BytesN, Env, String, Symbol, Vec,
 };
 
 // ─── Errors ──────────────────────────────────────────────────────────────────
@@ -139,9 +139,12 @@ impl LazyMint1155 {
         let amount_i128 = i128::try_from(amount).map_err(|_| Error::AmountTooLarge)?;
         buyer.require_auth();
 
-        // 1. Expiry
-        if voucher.valid_until != 0 && env.ledger().sequence() > voucher.valid_until as u32 {
-            return Err(Error::VoucherExpired);
+        // 1. Expiry check against ledger timestamp / sequence before verifying Ed25519 signature
+        if voucher.valid_until != 0
+            && (env.ledger().timestamp() > voucher.valid_until
+                || env.ledger().sequence() > voucher.valid_until as u32)
+        {
+            panic_with_error!(&env, Error::VoucherExpired);
         }
 
         // 2. Global supply check — edition must be registered (#61)

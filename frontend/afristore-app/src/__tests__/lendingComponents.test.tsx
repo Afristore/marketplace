@@ -42,8 +42,8 @@ jest.mock("@/hooks/mutations/useReturnNFT", () => ({
   }),
 }));
 
-jest.mock("@/hooks/useMarketplace", () => ({
-  useCreateListing: () => ({
+jest.mock("@/hooks/mutations/useCreateLendingListing", () => ({
+  useCreateLendingListing: () => ({
     create: mockCreate,
     isCreating: false,
     progress: "",
@@ -205,10 +205,39 @@ describe("RepayLoanModal", () => {
 
   it("renders the fee breakdown (principal, interest, platform fee, total)", () => {
     render(<RepayLoanModal {...base} position={position()} />);
-    expect(screen.getByText("Principal")).toBeInTheDocument();
+    expect(screen.getByText("Principal Debt")).toBeInTheDocument();
     expect(screen.getByText("Accrued Interest")).toBeInTheDocument();
     expect(screen.getByText(/Platform Fee/)).toBeInTheDocument();
     expect(screen.getByTestId("repay-total")).toBeInTheDocument();
+    expect(screen.getByText("Estimated Collateral Refund")).toBeInTheDocument();
+  });
+
+  it("itemises principal, interest and platform fee amounts", () => {
+    render(<RepayLoanModal {...base} position={position()} />);
+    expect(screen.getByTestId("repay-principal")).toHaveTextContent("$100.00");
+    expect(screen.getByTestId("repay-interest")).toHaveTextContent("$3.00");
+    expect(screen.getByTestId("repay-platform-fee")).toHaveTextContent("$1.03");
+    expect(screen.getByTestId("repay-total")).toHaveTextContent("$104.03");
+  });
+
+  it("shows the refund as unavailable without a collateral price", () => {
+    render(<RepayLoanModal {...base} position={position()} />);
+    expect(screen.getByTestId("repay-collateral-refund")).toHaveTextContent("—");
+  });
+
+  it("estimates the collateral refund from the oracle price", () => {
+    render(
+      <RepayLoanModal
+        {...base}
+        position={position({ collateral_amount: 2_000_000_000n })}
+        collateralPriceUsd={10_000_000n}
+        collateralSymbol="USDC"
+      />,
+    );
+    // 200 USDC deposited - 104.03 USDC owed = 95.97 USDC refunded
+    expect(screen.getByTestId("repay-collateral-refund")).toHaveTextContent(
+      "95.9700 USDC",
+    );
   });
 
   it("renders nothing when closed", () => {
@@ -322,7 +351,7 @@ describe("CreateListingModal", () => {
     }
   });
 
-  it("advances through all steps and submits via useCreateListing", async () => {
+  it("advances through all steps and submits via useCreateLendingListing", async () => {
     try {
       const onSuccess = jest.fn();
       const onClose = jest.fn();
@@ -357,9 +386,15 @@ describe("CreateListingModal", () => {
       await userEvent.click(screen.getByTestId("create-listing-submit"));
 
       await waitFor(() => {
-        expect(mockCreate).toHaveBeenCalledWith(
-          expect.objectContaining({ nftTokenId: 3, price: 250 }),
-        );
+        expect(mockCreate).toHaveBeenCalledWith({
+          nftContract: "CCOLLECTION",
+          tokenId: 3,
+          declaredPriceUsd: 2_500_000_000n,
+          interestScheduleBps: [300, 350],
+          maxDurationDays: 90,
+          minCollateralBufferBps: 12000,
+          liquidationThresholdBps: 11000,
+        });
         expect(onSuccess).toHaveBeenCalledWith(42);
         expect(onClose).toHaveBeenCalled();
       });

@@ -8,67 +8,15 @@
 import { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import { getListing, getAuction, stroopsToXlm } from "@/lib/contract";
-import { fetchMetadata, cidToGatewayUrl } from "@/lib/ipfs";
+import { stroopsToXlm } from "@/lib/contract";
+import { cidToGatewayUrl } from "@/lib/ipfs";
+import { resolveArtwork, ResolvedArtwork } from "@/lib/resolveArtwork";
 import ListingInteractiveArea from "./ListingInteractiveArea";
 import { ArrowLeft, AlertCircle } from "lucide-react";
 
 interface PageProps {
   params: Promise<{ id: string }>;
 }
-
-// ── Mock data shared between generateMetadata and the page ───
-
-const MOCK_DATA = [
-  {
-    title: "Ndebele Geometry",
-    artist: "GB2...Traditional",
-    category: "Traditional",
-    price: 250,
-    image:
-      "https://images.unsplash.com/photo-1582582621959-48d27397dc69?w=800&q=80",
-  },
-  {
-    title: "Maasai Beadwork Essence",
-    artist: "GB3...Contemporary",
-    category: "Contemporary",
-    price: 180,
-    image:
-      "https://images.unsplash.com/photo-1590845947698-8924d7409b56?w=800&q=80",
-  },
-  {
-    title: "Bronze Kingdom Legacy",
-    artist: "GB4...Classical",
-    category: "Classical",
-    price: 420,
-    image:
-      "https://images.unsplash.com/photo-1580136579312-94651dfd596d?w=800&q=80",
-  },
-  {
-    title: "Sahel Sunset Canvas",
-    artist: "GB5...Modern",
-    category: "Modern",
-    price: 310,
-    image:
-      "https://images.unsplash.com/photo-1578926375605-eaf7559b1458?w=800&q=80",
-  },
-  {
-    title: "Kente Woven Dreams",
-    artist: "GB6...Textile",
-    category: "Textile",
-    price: 195,
-    image:
-      "https://images.unsplash.com/photo-1528699144885-3652875b4783?w=800&q=80",
-  },
-  {
-    title: "Baobab Spirit",
-    artist: "GB7...Sculpture",
-    category: "Sculpture",
-    price: 375,
-    image:
-      "https://images.unsplash.com/photo-1559519529-0935f852b3a6?w=800&q=80",
-  },
-];
 
 // ── generateMetadata ─────────────────────────────────────────
 
@@ -78,71 +26,8 @@ export async function generateMetadata({
   const { id } = await params;
 
   try {
-    let listing = null;
-    let auction = null;
-    let metadata = null;
-
-    // Primary path: Try indexer API first
-    try {
-      const { fetchListingById } = await import("@/lib/indexer");
-      listing = await fetchListingById(Number(id));
-    } catch (_e) {
-      // Indexer unavailable, continue to fallback
-    }
-
-    // Fallback to on-chain if indexer didn't return a listing
-    if (!listing) {
-      try {
-        listing = await getListing(Number(id));
-      } catch (_e) {
-        // may be an auction
-      }
-    }
-
-    // Try auction from indexer or on-chain
-    if (!listing) {
-      try {
-        const { fetchAuctions } = await import("@/lib/indexer");
-        const auctions = await fetchAuctions({ status: "Active" });
-        auction = auctions.find((a) => a.auction_id === Number(id)) || null;
-      } catch (_e) {
-        // Indexer unavailable
-      }
-
-      if (!auction) {
-        try {
-          auction = await getAuction(Number(id));
-        } catch (_e) {
-          // may be a listing
-        }
-      }
-    }
-
-    const cid = listing?.metadata_cid || auction?.metadata_cid;
-    if (cid) {
-      metadata = await fetchMetadata(cid);
-    }
-
-    // Fallback for mock IDs 1–6
-    if (!metadata && Number(id) >= 1 && Number(id) <= 6) {
-      const m = MOCK_DATA[Number(id) - 1];
-      metadata = {
-        title: m.title,
-        description: `A stunning masterpiece representing the rich ${
-          m.title.split(" ")[0]
-        } culture.`,
-        artist: m.artist,
-        image: m.image,
-        year: "2024",
-        category: m.category,
-      };
-      listing = {
-        price: BigInt(m.price) * BigInt(10_000_000),
-        artist: m.artist,
-      } as typeof listing;
-    }
-
-    if (!metadata) {
+    const resolved = await resolveArtwork(id);
+    if (!resolved) {
       return {
         title: "Artwork Not Found - Afristore",
         description:
@@ -150,9 +35,10 @@ export async function generateMetadata({
       };
     }
 
-    const title = metadata.title || `Artwork #${id}`;
+    const { listing, auction, metadata } = resolved;
+    const title = metadata?.title || `Artwork #${id}`;
     const description =
-      metadata.description || "Unique African art on Stellar blockchain";
+      metadata?.description || "Unique African art on Stellar blockchain";
     const artist =
       listing?.artist || auction?.creator || "Unknown Artist";
     const price =
@@ -160,7 +46,7 @@ export async function generateMetadata({
     const priceDisplay = price
       ? `${stroopsToXlm(price)} XLM`
       : "Price on request";
-    const imageUrl = metadata.image ? cidToGatewayUrl(metadata.image) : null;
+    const imageUrl = metadata?.image ? cidToGatewayUrl(metadata.image) : null;
 
     return {
       title: `${title} - Afristore`,
@@ -198,84 +84,17 @@ export default async function ListingPage({ params }: PageProps) {
   const { id } = await params;
 
   // ── Fetch data on the server ────────────────────────────────
-  let listing = null;
-  let auction = null;
-  let metadata = null;
+  let listing: ResolvedArtwork["listing"] = null;
+  let auction: ResolvedArtwork["auction"] = null;
+  let metadata: ResolvedArtwork["metadata"] = null;
   let fetchError: string | null = null;
 
   try {
-    // Mock data for placeholder IDs 1–6
-    if (Number(id) >= 1 && Number(id) <= 6) {
-      const m = MOCK_DATA[Number(id) - 1];
-      listing = {
-        listing_id: Number(id),
-        artist: m.artist,
-        collection: m.artist,
-        token_id: Number(id),
-        metadata_cid: `mock_cid_${id}`,
-        price: BigInt(m.price) * BigInt(10_000_000),
-        currency: "XLM",
-        token: "CAS...XLM",
-        recipients: [],
-        status: "Active" as const,
-        owner: null,
-        created_at: Math.floor(Date.now() / 1000),
-      };
-      metadata = {
-        title: m.title,
-        description: `A stunning masterpiece representing the rich ${
-          m.title.split(" ")[0]
-        } culture. This unique artwork captures the essence of African heritage through modern digital expression.`,
-        artist: m.artist,
-        image: m.image,
-        year: "2024",
-        category: m.category,
-      };
+    const resolved = await resolveArtwork(id);
+    if (!resolved) {
+      fetchError = "Artwork not found";
     } else {
-      // Primary path: Try indexer API first
-      try {
-        const { fetchListingById } = await import("@/lib/indexer");
-        listing = await fetchListingById(Number(id));
-      } catch (indexerError) {
-        console.warn("[page] Indexer unavailable, falling back to on-chain:", indexerError);
-      }
-
-      // Fallback: If indexer didn't return a listing, try on-chain
-      if (!listing) {
-        try {
-          listing = await getListing(Number(id));
-        } catch (_e) {
-          // may be an auction
-        }
-      }
-
-      // Try auction from indexer or on-chain
-      if (!listing) {
-        try {
-          const { fetchAuctions } = await import("@/lib/indexer");
-          const auctions = await fetchAuctions({ status: "Active" });
-          auction = auctions.find((a) => a.auction_id === Number(id)) || null;
-        } catch (_e) {
-          console.warn("[page] Indexer auction fetch failed");
-        }
-
-        if (!auction) {
-          try {
-            auction = await getAuction(Number(id));
-          } catch (_e) {
-            // not an auction either
-          }
-        }
-      }
-
-      if (!listing && !auction) {
-        fetchError = "Artwork not found";
-      } else {
-        const cid = listing?.metadata_cid || auction?.metadata_cid;
-        if (cid) {
-          metadata = await fetchMetadata(cid);
-        }
-      }
+      ({ listing, auction, metadata } = resolved);
     }
   } catch (err) {
     fetchError =

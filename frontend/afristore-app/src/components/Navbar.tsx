@@ -5,6 +5,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useWalletContext } from "@/context/WalletContext";
 import {
   AlertTriangle,
@@ -48,6 +49,7 @@ export function Navbar() {
     status,
     notifications: { notifications, unreadCount, markAllAsRead },
   } = useWalletContext();
+  const pathname = usePathname();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -59,12 +61,21 @@ export function Navbar() {
     ? `${publicKey.slice(0, 4)}…${publicKey.slice(-4)}`
     : null;
 
+  const isActiveRoute = (href: string) =>
+    pathname === href || pathname.startsWith(`${href}/`);
+
   // Detect scroll for transparent → solid transition
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 60);
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
+
+  useEffect(() => {
+    setMobileOpen(false);
+    setUserMenuOpen(false);
+    setPanelOpen(false);
+  }, [pathname]);
 
   // Close user menu when clicking outside
   useEffect(() => {
@@ -123,41 +134,30 @@ export function Navbar() {
 
           {/* Desktop nav links */}
           <div className="hidden md:flex items-center gap-8 text-sm font-medium">
-            <Link
-              href="/explore"
-              className="flex items-center gap-1.5 text-white/70 hover:text-brand-400 transition-colors duration-300"
-            >
-              <Compass size={16} />
-              Explore
-            </Link>
-            <Link
-              href="/auctions"
-              className="flex items-center gap-1.5 text-white/70 hover:text-brand-400 transition-colors duration-300"
-            >
-              <Gavel size={16} />
-              Auctions
-            </Link>
-            <Link
-              href="/staking"
-              className="flex items-center gap-1.5 text-white/70 hover:text-brand-400 transition-colors duration-300"
-            >
-              <Lock size={16} />
-              Staking
-            </Link>
-            <Link
-              href="/launchpad"
-              className="flex items-center gap-1.5 text-white/70 hover:text-brand-400 transition-colors duration-300"
-            >
-              <Rocket size={16} />
-              Launchpad
-            </Link>
-            <Link
-              href="/help"
-              className="flex items-center gap-1.5 text-white/70 hover:text-brand-400 transition-colors duration-300"
-            >
-              <HelpCircle size={16} />
-              Help
-            </Link>
+            {[
+              { href: "/explore", icon: Compass, label: "Explore" },
+              { href: "/auctions", icon: Gavel, label: "Auctions" },
+              { href: "/staking", icon: Lock, label: "Staking" },
+              { href: "/launchpad", icon: Rocket, label: "Launchpad" },
+              { href: "/help", icon: HelpCircle, label: "Help" },
+            ].map(({ href, icon: Icon, label }) => {
+              const active = isActiveRoute(href);
+              return (
+                <Link
+                  key={href}
+                  href={href}
+                  aria-current={active ? "page" : undefined}
+                  className={`flex items-center gap-1.5 transition-colors duration-300 ${
+                    active
+                      ? "text-brand-400"
+                      : "text-white/70 hover:text-brand-400"
+                  }`}
+                >
+                  <Icon size={16} />
+                  {label}
+                </Link>
+              );
+            })}
           </div>
 
           {/* Desktop wallet button */}
@@ -359,46 +359,34 @@ export function Navbar() {
         >
           <div className="bg-midnight-950/98 backdrop-blur-xl border-t border-white/5 px-4 py-8 space-y-6">
             <div className="grid grid-cols-1 gap-4">
-              <Link
-                href="/explore"
-                onClick={() => setMobileOpen(false)}
-                className="flex items-center gap-3 text-white/80 hover:text-brand-400 transition-colors text-lg font-display"
-              >
-                <Compass size={20} className="text-brand-500" />
-                Explore
-              </Link>
-              <Link
-                href="/auctions"
-                onClick={() => setMobileOpen(false)}
-                className="flex items-center gap-3 text-white/80 hover:text-brand-400 transition-colors text-lg font-display"
-              >
-                <Gavel size={20} className="text-brand-500" />
-                Auctions
-              </Link>
-              <Link
-                href="/staking"
-                onClick={() => setMobileOpen(false)}
-                className="flex items-center gap-3 text-white/80 hover:text-brand-400 transition-colors text-lg font-display"
-              >
-                <Lock size={20} className="text-brand-500" />
-                Staking
-              </Link>
-              <Link
-                href="/launchpad"
-                onClick={() => setMobileOpen(false)}
-                className="flex items-center gap-3 text-white/80 hover:text-brand-400 transition-colors text-lg font-display"
-              >
-                <Rocket size={20} className="text-brand-500" />
-                Launchpad
-              </Link>
-              <Link
-                href="/help"
-                onClick={() => setMobileOpen(false)}
-                className="flex items-center gap-3 text-white/80 hover:text-brand-400 transition-colors text-lg font-display"
-              >
-                <HelpCircle size={20} className="text-gray-400" />
-                Help
-              </Link>
+              {[
+                { href: "/explore", icon: Compass, label: "Explore" },
+                { href: "/auctions", icon: Gavel, label: "Auctions" },
+                { href: "/staking", icon: Lock, label: "Staking" },
+                { href: "/launchpad", icon: Rocket, label: "Launchpad" },
+                { href: "/help", icon: HelpCircle, label: "Help" },
+              ].map(({ href, icon: Icon, label }) => {
+                const active = isActiveRoute(href);
+                return (
+                  <Link
+                    key={href}
+                    href={href}
+                    onClick={() => setMobileOpen(false)}
+                    aria-current={active ? "page" : undefined}
+                    className={`flex items-center gap-3 transition-colors text-lg font-display ${
+                      active
+                        ? "text-brand-400"
+                        : "text-white/80 hover:text-brand-400"
+                    }`}
+                  >
+                    <Icon
+                      size={20}
+                      className={active ? "text-brand-400" : "text-brand-500"}
+                    />
+                    {label}
+                  </Link>
+                );
+              })}
             </div>
 
             {/* Post-login account section — only shown when connected */}

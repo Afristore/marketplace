@@ -130,10 +130,53 @@ function addrString(x: unknown): string {
  * the fetch boundary so callers never see the raw wire value.
  */
 function normalizeListing(raw: unknown): Listing {
-  const l = raw as Listing & { price: unknown };
+  const l = raw as Listing & { price: unknown; amount?: unknown };
   const price =
     typeof l.price === "bigint" ? l.price : BigInt(l.price as string | number);
-  return { ...l, price };
+  // Indexer may serialise amount as a string; default to 1 (ERC-721).
+  const amount = l.amount == null ? 1 : Number(l.amount);
+  return { ...l, price, amount };
+}
+
+/** Parse an integer wire value (bigint, number or Decimal string) to bigint. */
+function toBigIntValue(v: unknown): bigint {
+  if (typeof v === "bigint") return v;
+  if (typeof v === "number" && Number.isFinite(v)) return BigInt(Math.trunc(v));
+  if (typeof v === "string" && v.length > 0) {
+    // Prisma Decimal columns may serialise with a fractional part ("100.0000000").
+    const intPart = v.split(".")[0];
+    if (/^-?\d+$/.test(intPart)) return BigInt(intPart);
+  }
+  return BigInt(0);
+}
+
+/**
+ * The indexer's `/auctions` routes return raw Prisma rows (camelCase:
+ * `auctionId`, `highestBid`, `endTime`, ...) with BigInt/Decimal columns as
+ * strings. Map both that shape and the snake_case contract shape onto
+ * `Auction` so consumers can rely on `auction_id`, `highest_bid`, etc.
+ */
+export function normalizeAuction(raw: unknown): Auction {
+  const a = (raw ?? {}) as Record<string, unknown>;
+  const pick = (snake: string, camel: string) =>
+    a[snake] !== undefined ? a[snake] : a[camel];
+  const bidder = pick("highest_bidder", "highestBidder");
+  return {
+    auction_id: Number(pick("auction_id", "auctionId")),
+    creator: addrString(a.creator),
+    metadata_cid: (pick("metadata_cid", "metadataCid") as string | null) ?? undefined,
+    collection: addrString(a.collection),
+    token_id: Number(pick("token_id", "nftTokenId") ?? 0),
+    amount: a.amount == null ? 1 : Number(a.amount),
+    token: addrString(a.token),
+    reserve_price: toBigIntValue(pick("reserve_price", "reservePrice")),
+    highest_bid: toBigIntValue(pick("highest_bid", "highestBid")),
+    highest_bidder: typeof bidder === "string" && bidder.length > 0 ? bidder : null,
+    end_time: Number(pick("end_time", "endTime") ?? 0),
+    status: String(a.status ?? "Active") as Auction["status"],
+    recipients: Array.isArray(a.recipients) ? (a.recipients as Auction["recipients"]) : [],
+    created_at: Number(pick("created_at", "createdAtLedger") ?? 0),
+  };
 }
 
 function isRoyaltyStatsResponse(v: unknown): v is RoyaltyStatsResponse {
@@ -611,6 +654,8 @@ export function createWalletSSEConnection(
  */
 export async function fetchListings(options: {
   status?: string;
+  owner?: string;
+  artist?: string;
   category?: string;
   sort?: string;
   limit?: number;
@@ -621,6 +666,8 @@ export async function fetchListings(options: {
 } = {}): Promise<{ listings: Listing[]; total?: number }> {
   const params = new URLSearchParams();
   if (options.status) params.set("status", options.status);
+  if (options.owner) params.set("owner", options.owner);
+  if (options.artist) params.set("artist", options.artist);
   if (options.category) params.set("category", options.category);
   if (options.sort) params.set("sort", options.sort);
   if (options.limit != null) params.set("limit", String(options.limit));
@@ -629,39 +676,67 @@ export async function fetchListings(options: {
   if (options.maxPrice) params.set("maxPrice", options.maxPrice);
   if (options.search) params.set("search", options.search);
   const q = params.toString();
-  try {
-    const raw = await fetchWithRetry<unknown>(`/listings${q ? `?${q}` : ''}`);
-    if (raw == null) return { listings: [] };
-    // If paginated, indexer returns { listings, total }
-    if (typeof raw === 'object' && !Array.isArray(raw) && (raw as Record<string, unknown>).listings) {
-      const r = raw as { listings: unknown; total?: number };
-      return {
-        listings: Array.isArray(r.listings) ? r.listings.map(normalizeListing) : [],
-        total: r.total,
-      };
-    }
-    if (Array.isArray(raw)) return { listings: raw.map(normalizeListing) };
-    return { listings: [] };
-  } catch (e) {
-    console.warn('[indexer] fetchListings:', e instanceof Error ? e.message : e);
-    return { listings: [] };
+  const raw = await fetchWithRetry<unknown>(`/listings${q ? `?${q}` : ""}`);
+  if (raw == null) return { listings: [] };
+  // If paginated, indexer returns { listings, total }
+  if (
+    typeof raw === "object" &&
+    !Array.isArray(raw) &&
+    (raw as Record<string, unknown>).listings
+  ) {
+    const r = raw as { listings: unknown; total?: number };
+    return {
+      listings: Array.isArray(r.listings)
+        ? r.listings.map(normalizeListing)
+        : [],
+      total: r.total,
+    };
   }
+  if (Array.isArray(raw)) return { listings: raw.map(normalizeListing) };
+  return { listings: [] };
 }
 
 /**
  * Fetch auctions from the indexer with optional filters.
  * Throws if the indexer is unreachable so callers can fall back to on-chain.
  */
-export async function fetchAuctions(options: {
-  creator?: string;
-  status?: string;
-} = {}): Promise<Auction[]> {
+export async function fetchAuctions(
+  options: {
+    creator?: string;
+    status?: string;
+  } = {},
+): Promise<Auction[]> {
   const params = new URLSearchParams();
   if (options.creator) params.set("creator", options.creator);
   if (options.status) params.set("status", options.status);
   const q = params.toString();
-  const raw = await fetchWithRetry<unknown>(`/auctions${q ? `?${q}` : ''}`);
-  if (Array.isArray(raw)) return raw as Auction[];
+  const raw = await fetchWithRetry<unknown>(`/auctions${q ? `?${q}` : ""}`);
+  if (Array.isArray(raw)) return raw.map(normalizeAuction);
+  throw new Error("Invalid response from auction indexer");
+}
+
+/**
+ * Fetch every listing currently owned by `owner`, regardless of status.
+ *
+ * A purchased listing flips to `Sold` with `owner` set to the buyer, so it
+ * never appears in the `status=Active` feed. Querying by owner (with no status
+ * filter) is the only way to see a wallet's collection.
+ */
+export async function fetchOwnedListings(owner: string): Promise<Listing[]> {
+  if (!isNonEmptyString(owner)) return [];
+  // Unlike fetchListings, let failures propagate so the UI can show an error
+  // instead of an (indistinguishable) empty collection.
+  const raw = await fetchWithRetry<unknown>(
+    `/listings?owner=${encodeURIComponent(owner)}&limit=1000`,
+  );
+  if (Array.isArray(raw)) return raw.map(normalizeListing);
+  if (
+    raw &&
+    typeof raw === "object" &&
+    Array.isArray((raw as { listings?: unknown }).listings)
+  ) {
+    return (raw as { listings: unknown[] }).listings.map(normalizeListing);
+  }
   return [];
 }
 

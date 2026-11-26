@@ -12,6 +12,7 @@ import {
   createAuction,
   placeBid,
   finalizeAuction,
+  cancelAuction,
   Auction,
 } from "@/lib/contract";
 import { fetchAuctions } from "@/lib/indexer";
@@ -32,7 +33,7 @@ import { DEFAULT_TOKEN } from "@/config/tokens";
  */
 export function useAuctions() {
   const [auctions, setAuctions] = useState<Auction[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   useTransientErrorToast(error);
 
@@ -42,10 +43,8 @@ export function useAuctions() {
     try {
       try {
         const raw = await fetchAuctions();
-        if (raw.length >= 0) {
-          setAuctions(raw);
-          return;
-        }
+        setAuctions(raw);
+        return;
       } catch {
         // Indexer unreachable — fall through to on-chain
       }
@@ -83,10 +82,8 @@ export function useArtistAuctions(artistPublicKey: string | null) {
     try {
       try {
         const raw = await fetchAuctions({ creator: artistPublicKey });
-        if (raw && raw.length >= 0) {
-          setAuctions(raw as Auction[]);
-          return;
-        }
+        setAuctions(raw);
+        return;
       } catch (e) {
         console.warn("[indexer] useArtistAuctions fallback:", e);
       }
@@ -225,4 +222,40 @@ export function useFinalizeAuction(callerPublicKey: string | null) {
   );
 
   return { finalize, isFinalizing, error };
+}
+
+// ── useCancelAuction ─────────────────────────────────────────
+
+/**
+ * Creator action that ends an auction before it receives a bid. The
+ * contract enforces the rules (creator only, no bids, not expired), and any
+ * rejection is surfaced through the readable error message.
+ */
+export function useCancelAuction(creatorPublicKey: string | null) {
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useTransientErrorToast(error);
+
+  const cancel = useCallback(
+    async (auctionId: number): Promise<boolean> => {
+      if (!creatorPublicKey) {
+        setError("Wallet not connected");
+        return false;
+      }
+      setIsCancelling(true);
+      setError(null);
+      try {
+        await cancelAuction(creatorPublicKey, auctionId);
+        return true;
+      } catch (err: unknown) {
+        setError(getReadableErrorMessage(err, "Failed to cancel auction"));
+        return false;
+      } finally {
+        setIsCancelling(false);
+      }
+    },
+    [creatorPublicKey],
+  );
+
+  return { cancel, isCancelling, error };
 }

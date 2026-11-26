@@ -1,5 +1,6 @@
 use soroban_sdk::{token, Address, Env};
 
+use crate::interest::accrued_interest_usd;
 use crate::oracle;
 use crate::types::{PlatformConfig, Position, SettleResult};
 
@@ -30,35 +31,6 @@ fn usd_to_token_amount(usd_amount: i128, oracle_price: i128) -> i128 {
         .expect("usd_to_token_amount: arithmetic overflow")
 }
 
-/// Compute accrued interest in USD given the position's interest schedule and
-/// elapsed time.  The schedule is a Vec of periodic rates in bps; we treat each
-/// entry as one full period's worth of interest applied proportionally.
-///
-/// For simplicity we use a single-period model: the first entry in
-/// `interest_schedule_bps` is the rate for `max_duration_secs`.  Interest
-/// accrues linearly over elapsed time up to the full period.
-fn compute_accrued_interest(
-    declared_price_usd: i128,
-    interest_schedule_bps: &soroban_sdk::Vec<u32>,
-    elapsed_secs: u64,
-    max_duration_secs: u64,
-) -> i128 {
-    if interest_schedule_bps.is_empty() || max_duration_secs == 0 {
-        return 0;
-    }
-
-    // Use the first schedule entry as the full-period rate.
-    let rate_bps = interest_schedule_bps.get(0).unwrap_or(0) as i128;
-
-    // full_period_interest = principal * rate_bps / 10_000
-    let full_interest = declared_price_usd * rate_bps / 10_000;
-
-    // pro-rate: accrued = full_interest * elapsed / max_duration
-    // Cap elapsed at max_duration to avoid over-charging.
-    let capped_elapsed = elapsed_secs.min(max_duration_secs) as i128;
-    full_interest * capped_elapsed / (max_duration_secs as i128)
-}
-
 /// Single shared settlement function used by both `return_nft()` and
 /// `liquidate()`.
 ///
@@ -81,22 +53,22 @@ pub fn settle(
     config: &PlatformConfig,
 ) -> SettleResult {
     let now = env.ledger().timestamp();
-    let elapsed = now.saturating_sub(position.start_time);
 
     // ── Oracle price ──────────────────────────────────────────────────────────
-    let oracle_price =
-        oracle::get_price(env, &config.oracle_address, &position.collateral_currency);
+    // Use the platform's configured window, the same one borrow(), liquidate()
+    // and health_factor() enforce, so a quote they accept is not rejected here.
+    let oracle_price = oracle::get_price_with_staleness(
+        env,
+        &config.oracle_address,
+        &position.collateral_currency,
+        config.max_price_staleness_secs,
+    );
     if oracle_price <= 0 {
         panic!("InvalidOraclePrice: oracle_price must be > 0");
     }
 
     // ── Waterfall math ────────────────────────────────────────────────────────
-    let accrued_interest_usd = compute_accrued_interest(
-        position.declared_price_usd,
-        &position.interest_schedule_bps,
-        elapsed,
-        position.max_duration_secs,
-    );
+    let accrued_interest_usd = accrued_interest_usd(position, now);
 
     let owed_usd = position.declared_price_usd + accrued_interest_usd;
 
@@ -110,10 +82,48 @@ pub fn settle(
 
     let total_owed_usd = owed_usd + platform_fee_usd + liquidator_fee_usd;
 
-    let debit_tokens = usd_to_token_amount(total_owed_usd, oracle_price);
-    let lender_payout = usd_to_token_amount(owed_usd, oracle_price);
-    let platform_payout = usd_to_token_amount(platform_fee_usd, oracle_price);
-    let liquidator_payout = usd_to_token_amount(liquidator_fee_usd, oracle_price);
+    let requested_lender_payout = usd_to_token_amount(owed_usd, oracle_price);
+    let requested_platform_payout = usd_to_token_amount(platform_fee_usd, oracle_price);
+    let requested_liquidator_payout = usd_to_token_amount(liquidator_fee_usd, oracle_price);
+    let requested_debit_tokens = usd_to_token_amount(total_owed_usd, oracle_price);
+
+    let available_collateral = position.collateral_amount;
+
+    // Cap total payouts to position.collateral_amount.
+    // If the loan is underwater (collateral < total debit), prorate lender,
+    // platform, and liquidator payouts without exceeding the position's deposited collateral.
+    let (lender_payout, liquidator_payout, platform_payout) = {
+        let total_requested =
+            requested_lender_payout + requested_liquidator_payout + requested_platform_payout;
+        if total_requested <= available_collateral || total_requested == 0 {
+            (
+                requested_lender_payout,
+                requested_liquidator_payout,
+                requested_platform_payout,
+            )
+        } else {
+            let actual_platform = requested_platform_payout
+                .checked_mul(available_collateral)
+                .and_then(|v| v.checked_div(total_requested))
+                .unwrap_or(0);
+
+            let actual_liquidator = requested_liquidator_payout
+                .checked_mul(available_collateral)
+                .and_then(|v| v.checked_div(total_requested))
+                .unwrap_or(0);
+
+            let rem = available_collateral.saturating_sub(actual_platform + actual_liquidator);
+            let actual_lender = core::cmp::min(requested_lender_payout, rem);
+
+            (actual_lender, actual_liquidator, actual_platform)
+        }
+    };
+
+    let debit_tokens = if position.collateral_amount > requested_debit_tokens {
+        requested_debit_tokens
+    } else {
+        lender_payout + liquidator_payout + platform_payout
+    };
 
     // borrower_rem: collateral remaining after all debits are taken.
     // Clamped to 0 — the borrower never receives a negative amount even if

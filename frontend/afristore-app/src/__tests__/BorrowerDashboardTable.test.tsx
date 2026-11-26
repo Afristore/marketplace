@@ -2,7 +2,7 @@ import React from "react";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import "@/i18n";
-import i18n from "i18next";
+import i18n from "@/i18n";
 import {
   BorrowerDashboardTable,
   BorrowerDebt,
@@ -157,6 +157,32 @@ describe("BorrowerDashboardTable", () => {
     const badge = screen.getByText("95.23%");
     expect(badge.className).toContain("text-red-300");
     expect(container).not.toBeNull();
+  });
+
+  it("shows a human-readable liquidation countdown with urgent styling under 24 hours", () => {
+    const nowSecs = Math.floor(Date.now() / 1000);
+    const calm: BorrowerDebt = {
+      ...debtA,
+      positionId: 10,
+      expiresAtSecs: nowSecs + 2 * 86400 + 4 * 3600,
+    };
+    const urgent: BorrowerDebt = {
+      ...debtB,
+      positionId: 11,
+      expiresAtSecs: nowSecs + 23 * 3600 + 30 * 60,
+    };
+
+    render(<BorrowerDashboardTable debts={[calm, urgent]} />);
+
+    const calmCountdown = screen.getByTestId("liquidation-countdown-10");
+    const urgentCountdown = screen.getByTestId("liquidation-countdown-11");
+
+    expect(calmCountdown).toHaveTextContent("2 days 4 hours remaining");
+    expect(calmCountdown.className).not.toContain("text-red-300");
+    expect(urgentCountdown).toHaveTextContent(
+      /23 hours (30|29) minutes remaining/,
+    );
+    expect(urgentCountdown.className).toContain("text-red-300");
   });
 
   it("supports language switching via i18n", async () => {

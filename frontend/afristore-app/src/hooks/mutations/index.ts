@@ -6,3 +6,5 @@ export * from "./useReturnNFT";
 export * from "./useLiquidate";
 export * from "./useWhitelistCurrency";
 export * from "./useUpdateBounds";
+export * from "./useCreateLendingListing";
+export * from "./useSetFees";

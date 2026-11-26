@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AuctionForm } from "@/components/AuctionForm";
 import { DEFAULT_TOKEN, type TokenConfig } from "@/config/tokens";
+import { MAX_ARTWORK_FILE_BYTES } from "@/lib/fileValidation";
 
 const mockCreate = jest.fn();
 let mockTokens: TokenConfig[] = [];
@@ -201,5 +202,33 @@ describe("AuctionForm", () => {
     mockError = "Wallet rejected the transaction";
     render(<AuctionForm />);
     expect(screen.getByRole("alert")).toHaveTextContent(mockError);
+  });
+
+  it("rejects artwork above the 10 MB limit with an inline error and no upload", () => {
+    render(<AuctionForm />);
+    const oversized = new File(["x"], "huge.png", { type: "image/png" });
+    Object.defineProperty(oversized, "size", {
+      value: MAX_ARTWORK_FILE_BYTES + 1,
+    });
+
+    fireEvent.change(screen.getByLabelText("Artwork image"), {
+      target: { files: [oversized] },
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Image is too large. Maximum file size is 10 MB.",
+    );
+    expect(
+      screen.getByRole("button", { name: "Create Auction" }),
+    ).toBeDisabled();
+  });
+
+  it("rejects unsupported artwork formats with an inline error", () => {
+    render(<AuctionForm />);
+    fireEvent.change(screen.getByLabelText("Artwork image"), {
+      target: { files: [new File(["x"], "art.gif", { type: "image/gif" })] },
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Unsupported format");
   });
 });

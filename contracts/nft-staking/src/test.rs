@@ -576,6 +576,14 @@ fn test_claim_rewards_zero_duration_reverts() {
         result.is_err(),
         "claiming with zero elapsed time must revert with NoRewardsToClaim"
     );
+    assert_eq!(
+        staking
+            .get_staked_position(&user, &collection, &0)
+            .unwrap()
+            .staked_at,
+        1000,
+        "a zero-reward claim must not reset the position timestamp"
+    );
 
     // Nothing was paid out.
     assert_eq!(
@@ -1505,7 +1513,7 @@ fn test_stake_erc1155_happy_path_creates_position_and_escrows_tokens() {
     assert_eq!(pos.staked_at, env.ledger().timestamp());
     assert_eq!(pos.rewards_earned, 0);
 
-    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(staking.total_staked(), 4);
     assert_eq!(staking.get_user_stakes(&user).len(), 1);
 
     // Tokens moved from the user into the pool's custody.
@@ -1567,7 +1575,7 @@ fn test_stake_erc1155_double_stake_fails() {
         .unwrap();
     assert_eq!(err, StakingError::AlreadyStaked.into());
 
-    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(staking.total_staked(), 4);
     assert_eq!(erc1155_balance(&env, &collection, &user, 0), 6);
     assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 4);
 }
@@ -1604,7 +1612,7 @@ fn test_stake_erc1155_multiple_token_ids() {
     staking.stake_erc1155(&user, &collection, &0, &2);
     staking.stake_erc1155(&user, &collection, &1, &3);
 
-    assert_eq!(staking.total_staked(), 2);
+    assert_eq!(staking.total_staked(), 5);
     assert_eq!(staking.get_user_stakes(&user).len(), 2);
     assert!(staking
         .get_staked_position(&user, &collection, &0)
@@ -1626,7 +1634,7 @@ fn test_unstake_erc1155_happy_path_returns_tokens_and_clears_state() {
 
     mint_erc1155(&env, &collection, &user, 0, 10);
     staking.stake_erc1155(&user, &collection, &0, &4);
-    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(staking.total_staked(), 4);
 
     staking.unstake_erc1155(&user, &collection, &0, &4);
 
@@ -1697,7 +1705,7 @@ fn test_unstake_erc1155_fails_with_wrong_token() {
     assert!(staking
         .get_staked_position(&user, &collection, &0)
         .is_some());
-    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(staking.total_staked(), 4);
     assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 4);
 }
 
@@ -1739,14 +1747,14 @@ fn test_unstake_erc1155_fails_for_different_user() {
     assert!(staking
         .get_staked_position(&victim, &collection, &0)
         .is_some());
-    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(staking.total_staked(), 4);
     assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 4);
     assert_eq!(erc1155_balance(&env, &collection, &victim, 0), 6);
     assert_eq!(erc1155_balance(&env, &collection, &attacker, 0), 0);
 }
 
-/// Accrual path: unstaking after time has elapsed still succeeds and returns
-/// the escrowed tokens (the reward accrual runs without moving reward tokens).
+/// Accrual path: unstaking after time has elapsed still succeeds, returns
+/// the escrowed tokens, and transfers the exact reward tokens to user.
 #[test]
 fn test_unstake_erc1155_after_time_passes_still_returns_tokens() {
     let (env, staking, user, collection, _admin) = setup_erc1155();
@@ -1754,6 +1762,11 @@ fn test_unstake_erc1155_after_time_passes_still_returns_tokens() {
     env.ledger().set_timestamp(1000);
     mint_erc1155(&env, &collection, &user, 0, 10);
     staking.stake_erc1155(&user, &collection, &0, &4);
+
+    let reward_token = staking.get_reward_token();
+    let reward_client = TokenClient::new(&env, &reward_token);
+    assert_eq!(reward_client.balance(&user), 0);
+    let contract_bal_before = reward_client.balance(&staking.address);
 
     env.ledger().set_timestamp(2500);
     staking.unstake_erc1155(&user, &collection, &0, &4);
@@ -1764,6 +1777,65 @@ fn test_unstake_erc1155_after_time_passes_still_returns_tokens() {
     assert_eq!(staking.total_staked(), 0);
     assert_eq!(erc1155_balance(&env, &collection, &user, 0), 10);
     assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 0);
+
+    let expected_rewards = 1_500 * 1_000_000i128;
+    assert_eq!(reward_client.balance(&user), expected_rewards);
+    assert_eq!(
+        reward_client.balance(&staking.address),
+        contract_bal_before - expected_rewards
+    );
+}
+
+#[test]
+fn test_unstake_erc1155_transfers_reward_tokens_and_updates_contract_balance() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+
+    env.ledger().set_timestamp(1_000);
+    mint_erc1155(&env, &collection, &user, 1, 5);
+    staking.stake_erc1155(&user, &collection, &1, &5);
+
+    let reward_token = staking.get_reward_token();
+    let reward_client = TokenClient::new(&env, &reward_token);
+    let initial_contract_balance = reward_client.balance(&staking.address);
+    assert_eq!(reward_client.balance(&user), 0);
+
+    env.ledger().set_timestamp(3_000); // 2_000 seconds
+    staking.unstake_erc1155(&user, &collection, &1, &5);
+
+    let expected_rewards = 2_000 * 1_000_000i128;
+    assert_eq!(reward_client.balance(&user), expected_rewards);
+    assert_eq!(
+        reward_client.balance(&staking.address),
+        initial_contract_balance - expected_rewards
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #11)")]
+fn test_unstake_erc1155_fails_when_insufficient_reward_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let collection = env.register_contract(None, mock_erc1155::MockErc1155);
+    let reward_token = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
+
+    let staking_id = env.register_contract(None, crate::NftStaking);
+    let staking = NftStakingClient::new(&env, &staking_id);
+
+    // Initialized with rate, but NOT funded with any reward tokens
+    staking.init(&admin, &collection, &reward_token, &1_000_000i128);
+
+    env.ledger().set_timestamp(1_000);
+    mint_erc1155(&env, &collection, &user, 0, 5);
+    staking.stake_erc1155(&user, &collection, &0, &5);
+
+    env.ledger().set_timestamp(2_000);
+    // Unstaking attempts to transfer rewards, but contract balance is 0 => InsufficientRewardBalance (#11)
+    staking.unstake_erc1155(&user, &collection, &0, &5);
 }
 
 // ── Issue #1092: concurrent ERC-1155 stakes across distinct users ───────────
@@ -1785,11 +1857,11 @@ fn test_stake_erc1155_concurrent_users_same_token_id_are_isolated() {
 
     env.ledger().set_timestamp(1_000);
     staking.stake_erc1155(&user_a, &collection, &token_id, &4);
-    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(staking.total_staked(), 4);
 
     env.ledger().set_timestamp(1_500);
     staking.stake_erc1155(&user_b, &collection, &token_id, &7);
-    assert_eq!(staking.total_staked(), 2);
+    assert_eq!(staking.total_staked(), 11);
 
     // Each user owns a distinct position keyed by (user, collection, token_id).
     let position_a = staking
@@ -1820,12 +1892,12 @@ fn test_stake_erc1155_concurrent_users_same_token_id_are_isolated() {
 
     // Rewards accrue from each user's own stake time.
     env.ledger().set_timestamp(2_000);
-    assert_eq!(staking.calculate_rewards(&user_a), 1_000 * rate);
-    assert_eq!(staking.calculate_rewards(&user_b), 500 * rate);
+    assert_eq!(staking.calculate_rewards(&user_a), 1_000 * rate * 4);
+    assert_eq!(staking.calculate_rewards(&user_b), 500 * rate * 7);
 
     // User A unstakes first; User B's position and accrual are untouched.
     staking.unstake_erc1155(&user_a, &collection, &token_id, &4);
-    assert_eq!(staking.total_staked(), 1);
+    assert_eq!(staking.total_staked(), 7);
     assert!(staking
         .get_staked_position(&user_a, &collection, &token_id)
         .is_none());
@@ -1835,7 +1907,7 @@ fn test_stake_erc1155_concurrent_users_same_token_id_are_isolated() {
         Some(position_b)
     );
     assert_eq!(staking.calculate_rewards(&user_a), 0);
-    assert_eq!(staking.calculate_rewards(&user_b), 500 * rate);
+    assert_eq!(staking.calculate_rewards(&user_b), 500 * rate * 7);
 
     assert_eq!(erc1155_balance(&env, &collection, &user_a, token_id), 10);
     assert_eq!(erc1155_balance(&env, &collection, &user_b, token_id), 13);
@@ -1843,7 +1915,7 @@ fn test_stake_erc1155_concurrent_users_same_token_id_are_isolated() {
 
     // User B unstakes at a later interval.
     env.ledger().set_timestamp(3_200);
-    assert_eq!(staking.calculate_rewards(&user_b), 1_700 * rate);
+    assert_eq!(staking.calculate_rewards(&user_b), 1_700 * rate * 7);
     staking.unstake_erc1155(&user_b, &collection, &token_id, &7);
     assert_eq!(staking.total_staked(), 0);
     assert!(staking
@@ -1853,6 +1925,35 @@ fn test_stake_erc1155_concurrent_users_same_token_id_are_isolated() {
 
     assert_eq!(erc1155_balance(&env, &collection, &user_b, token_id), 20);
     assert_eq!(erc1155_balance(&env, &collection, &pool, token_id), 0);
+}
+
+// Regression for issue #1210: ERC-1155 rewards scale with the escrowed quantity,
+// and claiming resets accrual without double-paying a previous interval.
+#[test]
+fn test_erc1155_rewards_scale_with_amount_and_reset_after_claim() {
+    let (env, staking, single, collection, _admin) = setup_erc1155();
+    let multiple = Address::generate(&env);
+    let rate = staking.get_reward_rate();
+
+    mint_erc1155(&env, &collection, &single, 0, 1);
+    mint_erc1155(&env, &collection, &multiple, 0, 10);
+
+    env.ledger().set_timestamp(1_000);
+    staking.stake_erc1155(&single, &collection, &0, &1);
+    staking.stake_erc1155(&multiple, &collection, &0, &10);
+
+    env.ledger().set_timestamp(1_010);
+    assert_eq!(staking.calculate_rewards(&single), 10 * rate);
+    assert_eq!(staking.calculate_rewards(&multiple), 100 * rate);
+
+    assert_eq!(staking.claim_rewards(&single), 10 * rate);
+    assert_eq!(staking.claim_rewards(&multiple), 100 * rate);
+    assert_eq!(staking.calculate_rewards(&single), 0);
+    assert_eq!(staking.calculate_rewards(&multiple), 0);
+
+    env.ledger().set_timestamp(1_020);
+    assert_eq!(staking.claim_rewards(&single), 10 * rate);
+    assert_eq!(staking.claim_rewards(&multiple), 100 * rate);
 }
 
 // ── Issue #834: get_staked_position ─────────────────────────────────────────
@@ -1943,10 +2044,14 @@ fn test_get_staked_position_returns_none_after_unstake() {
 fn test_paused_contract_rejection_on_all_state_mutating_functions_issue_1093() {
     let (env, staking, user, collection, _admin) = setup_with_mock();
 
+    // A previously staked NFT must remain withdrawable during an emergency pause.
+    mint_token(&env, &collection, &user, 99);
+    staking.stake_erc721(&user, &collection, &99);
+
     staking.set_paused(&true);
     assert!(staking.is_paused());
 
-    // State mutating functions like staking must be rejected with ContractPaused
+    // No new deposits or reward claims while paused.
     mint_token(&env, &collection, &user, 100);
     let stake_err = staking
         .try_stake_erc721(&user, &collection, &100)
@@ -1954,15 +2059,162 @@ fn test_paused_contract_rejection_on_all_state_mutating_functions_issue_1093() {
         .unwrap();
     assert_eq!(stake_err, StakingError::ContractPaused.into());
 
-    let unstake_err = staking
-        .try_unstake_erc721(&user, &collection, &100)
-        .unwrap_err()
-        .unwrap();
-    assert_eq!(unstake_err, StakingError::ContractPaused.into());
+    let claim_err = staking.try_claim_rewards(&user).unwrap_err().unwrap();
+    assert_eq!(claim_err, StakingError::ContractPaused.into());
 
-    // Query functions continue to operate
+    // Emergency withdrawal remains possible, even though the pool is paused.
+    staking.unstake_erc721(&user, &collection, &99);
     assert_eq!(staking.total_staked(), 0);
+    assert!(staking
+        .get_staked_position(&user, &collection, &99)
+        .is_none());
     assert!(staking
         .get_staked_position(&user, &collection, &100)
         .is_none());
+    let owner: Address = env.invoke_contract(
+        &collection,
+        &Symbol::new(&env, "owner_of"),
+        soroban_sdk::vec![&env, 99u64.into_val(&env)],
+    );
+    assert_eq!(owner, user);
+}
+
+// ── Issue #1209: ERC-1155 StakedPosition amount tracking & drain prevention ──
+
+#[test]
+fn test_unstake_erc1155_cannot_drain_more_than_staked_amount() {
+    let (env, staking, attacker, collection, _admin) = setup_erc1155();
+    let victim = Address::generate(&env);
+    let token_id = 7_u64;
+
+    // Victim stakes 100 tokens, attacker stakes 1 token
+    mint_erc1155(&env, &collection, &victim, token_id, 100);
+    mint_erc1155(&env, &collection, &attacker, token_id, 1);
+
+    staking.stake_erc1155(&victim, &collection, &token_id, &100);
+    staking.stake_erc1155(&attacker, &collection, &token_id, &1);
+
+    // Attacker attempts to unstake 50 tokens (exceeding their staked amount of 1)
+    let err = staking
+        .try_unstake_erc1155(&attacker, &collection, &token_id, &50)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::InvalidAmount.into());
+
+    // Pool balance and victim position remain intact
+    assert_eq!(
+        erc1155_balance(&env, &collection, &staking.address, token_id),
+        101
+    );
+    assert_eq!(erc1155_balance(&env, &collection, &attacker, token_id), 0);
+    assert_eq!(
+        staking
+            .get_staked_position(&attacker, &collection, &token_id)
+            .unwrap()
+            .amount,
+        1
+    );
+}
+
+#[test]
+fn test_unstake_erc1155_partial_then_full_unstake() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+    let token_id = 3_u64;
+
+    mint_erc1155(&env, &collection, &user, token_id, 10);
+    staking.stake_erc1155(&user, &collection, &token_id, &10);
+    assert_eq!(
+        staking
+            .get_staked_position(&user, &collection, &token_id)
+            .unwrap()
+            .amount,
+        10
+    );
+    assert_eq!(staking.total_staked(), 10);
+
+    // Partial unstake of 4 tokens
+    staking.unstake_erc1155(&user, &collection, &token_id, &4);
+    let pos = staking
+        .get_staked_position(&user, &collection, &token_id)
+        .unwrap();
+    assert_eq!(pos.amount, 6);
+    assert_eq!(staking.total_staked(), 6);
+    assert_eq!(erc1155_balance(&env, &collection, &user, token_id), 4);
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, token_id), 6);
+
+    // Cannot unstake more than remaining 6
+    let err = staking
+        .try_unstake_erc1155(&user, &collection, &token_id, &7)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::InvalidAmount.into());
+
+    // Full unstake of remaining 6 removes the position
+    staking.unstake_erc1155(&user, &collection, &token_id, &6);
+    assert!(staking
+        .get_staked_position(&user, &collection, &token_id)
+        .is_none());
+    assert_eq!(staking.total_staked(), 0);
+    assert_eq!(erc1155_balance(&env, &collection, &user, token_id), 10);
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, token_id), 0);
+}
+
+#[test]
+fn test_stake_and_unstake_erc1155_zero_amount_rejected() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+    let token_id = 5_u64;
+
+    mint_erc1155(&env, &collection, &user, token_id, 5);
+
+    let stake_err = staking
+        .try_stake_erc1155(&user, &collection, &token_id, &0)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(stake_err, StakingError::InvalidAmount.into());
+
+    staking.stake_erc1155(&user, &collection, &token_id, &5);
+    let unstake_err = staking
+        .try_unstake_erc1155(&user, &collection, &token_id, &0)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(unstake_err, StakingError::InvalidAmount.into());
+}
+
+// ── Issue #1212: reject zero amounts ────────────────────────────────────────
+// `amount` is a `u64`, so negative amounts are unrepresentable; zero is the
+// only invalid value.
+
+#[test]
+fn test_stake_erc1155_rejects_zero_amount() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+    mint_erc1155(&env, &collection, &user, 0, 10);
+
+    let err = staking
+        .try_stake_erc1155(&user, &collection, &0, &0)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::InvalidAmount.into());
+
+    assert!(staking
+        .get_staked_position(&user, &collection, &0)
+        .is_none());
+    assert_eq!(erc1155_balance(&env, &collection, &user, 0), 10);
+}
+
+#[test]
+fn test_unstake_erc1155_rejects_zero_amount() {
+    let (env, staking, user, collection, _admin) = setup_erc1155();
+    mint_erc1155(&env, &collection, &user, 0, 10);
+    staking.stake_erc1155(&user, &collection, &0, &4);
+
+    let err = staking
+        .try_unstake_erc1155(&user, &collection, &0, &0)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, StakingError::InvalidAmount.into());
+
+    assert!(staking
+        .get_staked_position(&user, &collection, &0)
+        .is_some());
+    assert_eq!(erc1155_balance(&env, &collection, &staking.address, 0), 4);
 }

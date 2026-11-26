@@ -2,6 +2,7 @@
  * Unit tests for the dependency-free i18n helper.
  */
 import { renderHook } from "@testing-library/react";
+import "@/i18n";
 import {
   defaultLocale,
   interpolate,
@@ -42,16 +43,17 @@ describe("i18n translate", () => {
 });
 
 describe("useTranslation", () => {
-  it("returns a stable translator bound to the default locale", () => {
+  it("returns a shared translator bound to the active locale", () => {
     const { result } = renderHook(() => useTranslation());
 
     expect(result.current.locale).toBe("en");
-    expect(result.current.locales).toEqual(["en"]);
+    expect(result.current.locales).toContain("en");
     expect(result.current.t("myCollections.title")).toBe(
       "Your Created Collections",
     );
     expect(result.current.t("myCollections.stats.total")).toBe(
       "Total Collections",
     );
+    expect(typeof result.current.changeLanguage).toBe("function");
   });
 });

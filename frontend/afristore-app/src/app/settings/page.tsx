@@ -28,7 +28,7 @@ import {
   Info,
   ExternalLink,
 } from "lucide-react";
-import { useTranslation } from "react-i18next";
+import { useTranslation } from "@/lib/i18n/useTranslation";
 
 const SETTINGS_KEY = "afristore_settings";
 

@@ -1,8 +1,9 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ListingForm } from "@/components/ListingForm";
 import type { Listing } from "@/lib/contract";
+import { MAX_ARTWORK_FILE_BYTES } from "@/lib/fileValidation";
 
 // Mock dependencies
 const mockCreate = jest.fn();
@@ -74,6 +75,7 @@ const dummyListing: Listing = {
   metadata_cid: "QmTestCID",
   collection: "CAAA",
   token_id: 1,
+  amount: 1,
   price: 250_000_000n, // 25 XLM
   currency: "XLM",
   token: "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
@@ -83,6 +85,13 @@ const dummyListing: Listing = {
 };
 
 describe("ListingForm", () => {
+  beforeAll(() => {
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: jest.fn(() => "blob:artwork"),
+    });
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockCreate.mockResolvedValue(123);
@@ -215,7 +224,14 @@ describe("ListingForm", () => {
       await user.click(updateBtn);
 
       await waitFor(() => {
-        expect(mockUpdate).toHaveBeenCalled();
+        // #1334: edits carry the pinned metadata, not blank strings.
+        expect(mockUpdate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            title: "Ancient Mask",
+            description: "Carved wooden mask",
+            currentMetadataCid: "QmTestCID",
+          }),
+        );
         expect(screen.getByText(/Listing #42 Updated!/i)).toBeInTheDocument();
         expect(onSuccess).toHaveBeenCalledWith(42);
       });
@@ -252,5 +268,46 @@ describe("ListingForm", () => {
       console.error("Test failed:", error);
       throw error;
     }
+  });
+
+  it("rejects artwork above the 10 MB limit with an inline error", () => {
+    render(<ListingForm onSuccess={() => {}} onCancel={() => {}} />);
+    const oversized = new File(["x"], "huge.png", { type: "image/png" });
+    Object.defineProperty(oversized, "size", {
+      value: MAX_ARTWORK_FILE_BYTES + 1,
+    });
+
+    fireEvent.change(screen.getByLabelText("Artwork image"), {
+      target: { files: [oversized] },
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Image is too large. Maximum file size is 10 MB.",
+    );
+  });
+
+  it("rejects unsupported artwork formats with an inline error", () => {
+    render(<ListingForm onSuccess={() => {}} onCancel={() => {}} />);
+
+    fireEvent.change(screen.getByLabelText("Artwork image"), {
+      target: { files: [new File(["x"], "art.gif", { type: "image/gif" })] },
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Unsupported format");
+  });
+
+  it("clears the file error once a supported image is selected", () => {
+    render(<ListingForm onSuccess={() => {}} onCancel={() => {}} />);
+    const input = screen.getByLabelText("Artwork image");
+
+    fireEvent.change(input, {
+      target: { files: [new File(["x"], "art.gif", { type: "image/gif" })] },
+    });
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+
+    fireEvent.change(input, {
+      target: { files: [new File(["x"], "art.png", { type: "image/png" })] },
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

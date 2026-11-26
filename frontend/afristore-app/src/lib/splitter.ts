@@ -1,7 +1,6 @@
 import {
   Address,
   BASE_FEE,
-  Contract,
   nativeToScVal,
   Operation,
   scValToNative,
@@ -10,8 +9,7 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { config } from "./config";
-import { signWithFreighter } from "./freighter";
-import { mapSorobanErrorMessage } from "./errors";
+import { invokeContract, submitTransaction } from "./contract";
 import {
   e2eMockDeployRoyaltySplitter,
   isE2eMockChain,
@@ -38,50 +36,6 @@ function randomSalt(): Buffer {
     for (let i = 0; i < 32; i++) salt[i] = Math.floor(Math.random() * 256);
   }
   return salt;
-}
-
-function readableError(raw: string, fallback: string): Error {
-  const mapped = mapSorobanErrorMessage(raw);
-  return new Error(mapped ?? fallback);
-}
-
-async function submitAndPoll(
-  tx: any,
-  rpc: SorobanRpc.Server,
-): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
-  const simResult = await rpc.simulateTransaction(tx);
-
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
-    const raw = String(simResult.error ?? "");
-    throw readableError(raw, "Transaction simulation failed.");
-  }
-
-  const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
-  const txXdr = preparedTx.toXDR();
-
-  const signedXdr = await signWithFreighter(txXdr, getNetworkPassphrase());
-
-  const submitted = await rpc.sendTransaction(
-    TransactionBuilder.fromXDR(signedXdr, getNetworkPassphrase()),
-  );
-
-  if (submitted.status === "ERROR") {
-    const raw = String(submitted.errorResult ?? "");
-    throw readableError(raw, "Transaction submission failed.");
-  }
-
-  let getResult = await rpc.getTransaction(submitted.hash);
-  while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
-    await new Promise((r) => setTimeout(r, 1000));
-    getResult = await rpc.getTransaction(submitted.hash);
-  }
-
-  if (getResult.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
-    const raw = JSON.stringify(getResult);
-    throw readableError(raw, "Transaction failed on-chain.");
-  }
-
-  return getResult as SorobanRpc.Api.GetSuccessfulTransactionResponse;
 }
 
 function extractContractAddress(
@@ -144,6 +98,8 @@ export async function deployRoyaltySplitter(
 
     const deployFunc = xdr.HostFunction.hostFunctionTypeCreateContract(createContractArgs);
 
+    // Deploying is a create-contract host function, not a contract call, so
+    // it cannot go through invokeContract; submitTransaction covers the rest.
     const deployTx = new TransactionBuilder(account, {
       fee: BASE_FEE,
       networkPassphrase: getNetworkPassphrase(),
@@ -157,10 +113,10 @@ export async function deployRoyaltySplitter(
       .setTimeout(30)
       .build();
 
-    const deployResult = await submitAndPoll(deployTx, rpc);
+    const deployResult = await submitTransaction(deployTx);
     const contractAddress = extractContractAddress(deployResult);
 
-    await initializeSplitter(deployerPublicKey, contractAddress, recipients, rpc);
+    await initializeSplitter(deployerPublicKey, contractAddress, recipients);
 
     return contractAddress;
   } catch (error) {
@@ -173,74 +129,40 @@ async function initializeSplitter(
   callerPublicKey: string,
   contractId: string,
   recipients: SplitterRecipient[],
-  rpc: SorobanRpc.Server,
 ): Promise<void> {
-  const contract = new Contract(contractId);
-
   const tokenAddress = new Address(config.usdcContractAddress || callerPublicKey);
   const beneficiaryAddresses = recipients.map((r) => new Address(r.address));
   const shares = recipients.map((r) => r.percentage);
 
-  const args: xdr.ScVal[] = [
-    tokenAddress.toScVal(),
-    nativeToScVal(beneficiaryAddresses, { type: "vec" }),
-    nativeToScVal(shares, { type: "vec" }),
-  ];
-
-  const account = await rpc.getAccount(callerPublicKey);
-
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: getNetworkPassphrase(),
-  })
-    .addOperation(contract.call("initialize", ...args))
-    .setTimeout(30)
-    .build();
-
-  await submitAndPoll(tx, rpc);
+  await invokeContract(
+    callerPublicKey,
+    "initialize",
+    [
+      tokenAddress.toScVal(),
+      nativeToScVal(beneficiaryAddresses, { type: "vec" }),
+      nativeToScVal(shares, { type: "vec" }),
+    ],
+    false,
+    contractId,
+  );
 }
 
 export async function getSplitterRecipients(
   contractId: string,
+  publicKey?: string,
 ): Promise<SplitterRecipient[]> {
   try {
-    const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
-    const contract = new Contract(contractId);
-    const rpc = getRpc();
-    const account = await rpc.getAccount(DUMMY_KEY);
-
-    const [beneficiariesResult, sharesResult] = await Promise.all([
-      rpc.simulateTransaction(new TransactionBuilder(account, {
-        fee: BASE_FEE,
-        networkPassphrase: getNetworkPassphrase(),
-      })
-        .addOperation(contract.call("get_beneficiaries"))
-        .setTimeout(30)
-        .build()),
-      rpc.simulateTransaction(new TransactionBuilder(account, {
-        fee: BASE_FEE,
-        networkPassphrase: getNetworkPassphrase(),
-      })
-        .addOperation(contract.call("get_shares"))
-        .setTimeout(30)
-        .build()),
-    ]);
-
-    if (SorobanRpc.Api.isSimulationError(beneficiariesResult) || SorobanRpc.Api.isSimulationError(sharesResult)) {
-      throw new Error("Unable to fetch splitter recipients.");
+    if (!publicKey) {
+      throw new Error("Public key is required to fetch splitter recipients. Please connect your wallet.");
     }
 
-    const beneficiariesRetVal = (
-      beneficiariesResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
-    ).result?.retval;
-    const sharesRetVal = (
-      sharesResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
-    ).result?.retval;
+    const [beneficiariesVal, sharesVal] = await Promise.all([
+      invokeContract(publicKey, "get_beneficiaries", [], true, contractId),
+      invokeContract(publicKey, "get_shares", [], true, contractId),
+    ]);
 
-    if (!beneficiariesRetVal || !sharesRetVal) throw new Error("No return value.");
-
-    const beneficiaries = scValToNative(beneficiariesRetVal) as Address[];
-    const shares = scValToNative(sharesRetVal) as number[];
+    const beneficiaries = scValToNative(beneficiariesVal) as Address[];
+    const shares = scValToNative(sharesVal) as number[];
 
     return beneficiaries.map((addr, i) => ({
       address: addr instanceof Address ? addr.toString() : String(addr),
@@ -254,79 +176,42 @@ export async function getSplitterRecipients(
 
 export async function getPendingBalance(
   contractId: string,
+  publicKey?: string,
 ): Promise<number> {
-  const DUMMY_KEY = "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
-  const contract = new Contract(contractId);
-  const rpc = getRpc();
-  const account = await rpc.getAccount(DUMMY_KEY);
-
-  // Get the token address from the contract
-  const tokenTx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: getNetworkPassphrase(),
-  })
-    .addOperation(contract.call("get_token"))
-    .setTimeout(30)
-    .build();
-
-  const simResult = await rpc.simulateTransaction(tokenTx);
-
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
-    throw new Error("Unable to fetch token address from splitter.");
+  if (!publicKey) {
+    throw new Error("Public key is required to fetch pending balance. Please connect your wallet.");
   }
 
-  const tokenRetVal = (
-    simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
-  ).result?.retval;
-  if (!tokenRetVal) throw new Error("No token address returned.");
-
-  const tokenAddress = scValToNative(tokenRetVal) as any;
+  // Token the splitter pays out in
+  const tokenVal = await invokeContract(publicKey, "get_token", [], true, contractId);
+  const tokenAddress = scValToNative(tokenVal);
   const tokenAddressStr =
     tokenAddress instanceof Address ? tokenAddress.toString() : String(tokenAddress);
 
-  // Get the balance of the contract with the token
-  const tokenContract = new Contract(tokenAddressStr);
-  const balanceTx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: getNetworkPassphrase(),
-  })
-    .addOperation(tokenContract.call("balance", new Address(contractId).toScVal()))
-    .setTimeout(30)
-    .build();
+  // Splitter's current balance of that token
+  const balanceVal = await invokeContract(
+    publicKey,
+    "balance",
+    [new Address(contractId).toScVal()],
+    true,
+    tokenAddressStr,
+  );
 
-  const balanceSimResult = await rpc.simulateTransaction(balanceTx);
-
-  if (SorobanRpc.Api.isSimulationError(balanceSimResult)) {
-    throw new Error("Unable to fetch pending balance.");
-  }
-
-  const balanceRetVal = (
-    balanceSimResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
-  ).result?.retval;
-  if (!balanceRetVal) throw new Error("No balance returned.");
-
-  const balance = scValToNative(balanceRetVal) as number;
-  return balance;
+  return scValToNative(balanceVal) as number;
 }
 
 export async function distributeRoyalties(
   userPublicKey: string,
   contractId: string,
 ): Promise<void> {
-  const contract = new Contract(contractId);
-  const rpc = getRpc();
-  const account = await rpc.getAccount(userPublicKey);
-
   const tokenAddress = new Address(config.usdcContractAddress || userPublicKey);
   const callerAddress = new Address(userPublicKey);
 
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: getNetworkPassphrase(),
-  })
-    .addOperation(contract.call("distribute", tokenAddress.toScVal(), callerAddress.toScVal()))
-    .setTimeout(30)
-    .build();
-
-  await submitAndPoll(tx, rpc);
+  await invokeContract(
+    userPublicKey,
+    "distribute",
+    [tokenAddress.toScVal(), callerAddress.toScVal()],
+    false,
+    contractId,
+  );
 }

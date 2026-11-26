@@ -7,8 +7,11 @@
 // ─────────────────────────────────────────────────────────────
 
 import {
+  Account,
   Contract,
+  Keypair,
   SorobanRpc,
+  Transaction,
   TransactionBuilder,
   xdr,
   nativeToScVal,
@@ -27,6 +30,7 @@ import {
   registerE2eMockListingsOnWindow,
   e2eMockPlaceBid,
   e2eMockFinalizeAuction,
+  e2eMockCancelAuction,
   getE2eMockAuction,
 } from "./e2e-chain-mock";
 import {
@@ -35,6 +39,8 @@ import {
   getTokenConfigByAddress,
 } from "@/config/tokens";
 import { fetchListings, fetchAuctions } from "./indexer";
+
+export { mapSorobanErrorMessage } from "./errors";
 
 // ── Types mirrored from the Rust contract ────────────────────
 
@@ -51,6 +57,8 @@ export interface Listing {
   metadata_cid?: string;
   collection: string;
   token_id: number;
+  /** ERC-1155 copies listed; 1 for ERC-721. */
+  amount: number;
   price: bigint;
   currency: string;
   token: string;
@@ -68,6 +76,8 @@ export interface Auction {
   metadata_cid?: string;
   collection: string;
   token_id: number;
+  /** ERC-1155 copies auctioned; 1 for ERC-721. */
+  amount: number;
   token: string;
   reserve_price: bigint;
   highest_bid: bigint;
@@ -92,12 +102,9 @@ function getNetworkPassphrase(): string {
   return config.networkPassphrase;
 }
 
-const READ_ONLY_CALLER_PUBLIC_KEY =
-  "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
-
 async function getReadOnlyCallerPublicKey(): Promise<string> {
   const connectedPublicKey = await getConnectedPublicKey();
-  return connectedPublicKey ?? READ_ONLY_CALLER_PUBLIC_KEY;
+  return connectedPublicKey ?? Keypair.random().publicKey();
 }
 function resolveConfiguredToken(
   tokenAddress: string = DEFAULT_TOKEN.address,
@@ -112,6 +119,12 @@ function resolveConfiguredToken(
 
 // ── Invoke helper ─────────────────────────────────────────────
 
+/** Maps a raw RPC/contract error to a user-facing message, or the fallback. */
+function toReadableError(raw: string, fallback: string): Error {
+  const mapped = mapSorobanErrorMessage(raw);
+  return new Error(mapped ?? fallback);
+}
+
 /**
  * Builds, simulates, signs (via Freighter), and submits a contract
  * invocation transaction. Returns the simulation result for read-only
@@ -121,38 +134,43 @@ export async function invokeContract(
   callerPublicKey: string,
   method: string,
   args: xdr.ScVal[],
-  readonly = false,
+  readonlyOrOptions: boolean | { readonly?: boolean; fee?: number } = false,
   contractId: string = config.contractId,
 ): Promise<xdr.ScVal> {
-  const readableError = (raw: string, fallback: string): Error => {
-    const mapped = mapSorobanErrorMessage(raw);
-    return new Error(mapped ?? fallback);
-  };
+  const readonly =
+    typeof readonlyOrOptions === "boolean"
+      ? readonlyOrOptions
+      : !!readonlyOrOptions?.readonly;
+  const fee =
+    typeof readonlyOrOptions === "object" && readonlyOrOptions?.fee !== undefined
+      ? String(readonlyOrOptions.fee)
+      : BASE_FEE;
 
   const rpc = getRpc();
   const contract = getContract(contractId);
 
-  // Fetch the caller's account for the sequence number.
-  const account = await rpc.getAccount(callerPublicKey);
+  // For read-only simulations, build a synthetic Account state so unfunded
+  // or ephemeral callers do not fail with a 404 from rpc.getAccount.
+  const sourcePublicKey = callerPublicKey || Keypair.random().publicKey();
+  const account = readonly
+    ? new Account(sourcePublicKey, "0")
+    : await rpc.getAccount(callerPublicKey);
 
   const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
+    fee,
     networkPassphrase: getNetworkPassphrase(),
   })
     .addOperation(contract.call(method, ...args))
     .setTimeout(30)
     .build();
 
-  // Simulate to get the resource fee + footprint.
-  const simResult = await rpc.simulateTransaction(tx);
-
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
-    const raw = String(simResult.error ?? "");
-    throw readableError(raw, "Unable to simulate this transaction.");
-  }
-
   if (readonly) {
-    // For read-only calls return the simulated result directly.
+    // Read-only calls return the simulated result directly; nothing is signed.
+    const simResult = await rpc.simulateTransaction(tx);
+    if (SorobanRpc.Api.isSimulationError(simResult)) {
+      const raw = String(simResult.error ?? "");
+      throw toReadableError(raw, "Unable to simulate this transaction.");
+    }
     const retVal = (
       simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
     ).result?.retval;
@@ -160,38 +178,69 @@ export async function invokeContract(
     return retVal;
   }
 
-  // Assemble the transaction with the real resource fee.
+  const result = await submitTransaction(tx);
+  return result.returnValue ?? xdr.ScVal.scvVoid();
+}
+
+/**
+ * Simulates, assembles (resource fee, footprint and auth), signs via
+ * Freighter, submits, and polls a transaction to a terminal status.
+ * `invokeContract` uses this for contract calls; callers that build a
+ * non-contract-call operation (e.g. deploying a contract) use it directly.
+ */
+export async function submitTransaction(
+  tx: Transaction,
+): Promise<SorobanRpc.Api.GetSuccessfulTransactionResponse> {
+  const rpc = getRpc();
+
+  const simResult = await rpc.simulateTransaction(tx);
+  if (SorobanRpc.Api.isSimulationError(simResult)) {
+    const raw = String(simResult.error ?? "");
+    throw toReadableError(raw, "Unable to simulate this transaction.");
+  }
+
   const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
-  const txXdr = preparedTx.toXDR();
+  const signedXdr = await signWithFreighter(
+    preparedTx.toXDR(),
+    getNetworkPassphrase(),
+  );
 
-  // Sign via Freighter.
-  const signedXdr = await signWithFreighter(txXdr, getNetworkPassphrase());
-
-  // Submit.
   const submitted = await rpc.sendTransaction(
     TransactionBuilder.fromXDR(signedXdr, getNetworkPassphrase()),
   );
 
   if (submitted.status === "ERROR") {
     const raw = String(submitted.errorResult ?? "");
-    throw readableError(raw, "Transaction submission failed.");
+    throw toReadableError(raw, "Transaction submission failed.");
   }
 
-  // Poll for completion.
-  let getResult = await rpc.getTransaction(submitted.hash);
-  while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
-    await new Promise((r) => setTimeout(r, 1000));
-    getResult = await rpc.getTransaction(submitted.hash);
-  }
+  const getResult = await pollTransaction(rpc, submitted.hash);
 
   if (getResult.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
     const raw = JSON.stringify(getResult);
-    throw readableError(raw, "Transaction failed on-chain. Please try again.");
+    throw toReadableError(raw, "Transaction failed on-chain. Please try again.");
   }
 
-  const successResult =
-    getResult as SorobanRpc.Api.GetSuccessfulTransactionResponse;
-  return successResult.returnValue ?? xdr.ScVal.scvVoid();
+  return getResult as SorobanRpc.Api.GetSuccessfulTransactionResponse;
+}
+
+/**
+ * Polls getTransaction until it leaves NOT_FOUND. Throws (with the hash)
+ * after `attempts` polls so callers never hang on an unresponsive RPC.
+ */
+export async function pollTransaction(
+  rpc: Pick<SorobanRpc.Server, "getTransaction">,
+  hash: string,
+  { attempts = 30, intervalMs = 1500 }: { attempts?: number; intervalMs?: number } = {},
+): Promise<SorobanRpc.Api.GetTransactionResponse> {
+  for (let i = 0; i < attempts; i++) {
+    const res = await rpc.getTransaction(hash);
+    if (res.status !== SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) return res;
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  throw new Error(
+    `Transaction ${hash} was not confirmed after ${attempts} attempts. Check its status before retrying.`,
+  );
 }
 
 // ── ScVal parsing ─────────────────────────────────────────────
@@ -203,14 +252,16 @@ function parseRecipient(obj: any): Recipient {
   };
 }
 
-function parseListingFromScVal(raw: unknown): Listing {
+export function parseListingFromScVal(raw: unknown): Listing {
   const obj = scValToNative(raw as xdr.ScVal) as Record<string, unknown>;
 
   return {
     listing_id: Number(obj["listing_id"]),
     artist: (obj["artist"] as Address).toString(),
     collection: (obj["collection"] as any).toString(),
-    token_id: Number(obj["nft_token_id"]),
+    // The Rust Listing struct serializes this field as `token_id` (#1331).
+    token_id: Number(obj["token_id"]),
+    amount: Number(obj["amount"] ?? 1),
     price: BigInt(obj["price"] as bigint),
     currency: String(obj["currency"]),
     token: (obj["token"] as any).toString(),
@@ -221,14 +272,16 @@ function parseListingFromScVal(raw: unknown): Listing {
   };
 }
 
-function parseAuctionFromScVal(raw: unknown): Auction {
+export function parseAuctionFromScVal(raw: unknown): Auction {
   const obj = scValToNative(raw as xdr.ScVal) as Record<string, unknown>;
 
   return {
     auction_id: Number(obj["auction_id"]),
     creator: (obj["creator"] as Address).toString(),
     collection: (obj["collection"] as any).toString(),
-    token_id: Number(obj["nft_token_id"]),
+    // The Rust Auction struct serializes this field as `token_id` (#1331).
+    token_id: Number(obj["token_id"]),
+    amount: Number(obj["amount"] ?? 1),
     token: (obj["token"] as any).toString(),
     reserve_price: BigInt(obj["reserve_price"] as bigint),
     highest_bid: BigInt(obj["highest_bid"] as bigint),
@@ -238,7 +291,8 @@ function parseAuctionFromScVal(raw: unknown): Auction {
     end_time: Number(obj["end_time"]),
     status: String(obj["status"]) as AuctionStatus,
     recipients: (obj["recipients"] as any[]).map(parseRecipient),
-    created_at: Number(obj["created_at"] || 0),
+    // Auction has no created_at on-chain; default to 0 (#1331).
+    created_at: 0,
   };
 }
 
@@ -253,6 +307,7 @@ export async function createListing(
   tokenAddress: string = DEFAULT_TOKEN.address,
   collectionAddress: string,
   nftTokenId: number,
+  amount: number = 1,
   recipients: Array<{ address: string; percentage: number }> = [],
 ): Promise<number> {
   if (isE2eMockChain()) {
@@ -282,6 +337,7 @@ export async function createListing(
     new Address(selectedToken.address).toScVal(),
     new Address(collectionAddress).toScVal(),
     nativeToScVal(nftTokenId, { type: "u64" }),
+    nativeToScVal(amount, { type: "u64" }),
     nativeToScVal(
       finalRecipients.map((r) => ({
         address: new Address(r.address),
@@ -301,6 +357,7 @@ export async function createListing(
 export async function buyArtwork(
   buyerPublicKey: string,
   listingId: number,
+  maxFee?: number, // #1262: optional fee override; defaults to BASE_FEE
 ): Promise<boolean> {
   if (isE2eMockChain()) {
     if (typeof window !== "undefined") registerE2eMockListingsOnWindow();
@@ -312,7 +369,9 @@ export async function buyArtwork(
     nativeToScVal(BigInt(listingId), { type: "u64" }),
   ];
 
-  await invokeContract(buyerPublicKey, "buy_artwork", args);
+  await invokeContract(buyerPublicKey, "buy_artwork", args, {
+    fee: maxFee ?? Number(BASE_FEE),
+  });
   return true;
 }
 
@@ -333,12 +392,12 @@ export async function cancelListing(
 }
 
 /**
- * update_listing — Artist updates an active listing with new metadata or price.
+ * update_listing — Artist updates an active listing price, token, and recipients.
+ * Metadata remains immutable here because the contract ABI has no metadata CID argument.
  */
 export async function updateListing(
   artistPublicKey: string,
   listingId: number,
-  newMetadataCid: string,
   newPrice: number,
   newTokenAddress: string,
   newRecipients: Array<{ address: string; percentage: number }> = [],
@@ -349,7 +408,6 @@ export async function updateListing(
   const args: xdr.ScVal[] = [
     new Address(artistPublicKey).toScVal(),
     nativeToScVal(BigInt(listingId), { type: "u64" }),
-    nativeToScVal(Buffer.from(newMetadataCid, "utf-8"), { type: "bytes" }),
     nativeToScVal(priceStroops, { type: "i128" }),
     new Address(selectedToken.address).toScVal(),
     nativeToScVal(
@@ -593,7 +651,7 @@ export async function createAuction(
 
   const args: xdr.ScVal[] = [
     new Address(creatorPublicKey).toScVal(),
-    nativeToScVal(Buffer.from(metadataCid, "utf-8"), { type: "bytes" }),
+    xdr.ScVal.scvBytes(Buffer.from(metadataCid, "utf-8")),
     new Address(selectedToken.address).toScVal(),
     nativeToScVal(reserveStroops, { type: "i128" }),
     nativeToScVal(BigInt(durationSeconds), { type: "u64" }),
@@ -654,6 +712,29 @@ export async function finalizeAuction(
   ];
 
   await invokeContract(callerPublicKey, "finalize_auction", args);
+  return true;
+}
+
+/**
+ * cancel_auction — Creator ends their auction before any bid is placed and
+ * before its end time. The contract rejects other callers, bid-bearing
+ * auctions, and auctions that are already finalized or expired.
+ */
+export async function cancelAuction(
+  creatorPublicKey: string,
+  auctionId: number,
+): Promise<boolean> {
+  if (isE2eMockChain()) {
+    if (typeof window !== "undefined") registerE2eMockListingsOnWindow();
+    return e2eMockCancelAuction(creatorPublicKey, auctionId);
+  }
+
+  const args: xdr.ScVal[] = [
+    new Address(creatorPublicKey).toScVal(),
+    nativeToScVal(BigInt(auctionId), { type: "u64" }),
+  ];
+
+  await invokeContract(creatorPublicKey, "cancel_auction", args);
   return true;
 }
 

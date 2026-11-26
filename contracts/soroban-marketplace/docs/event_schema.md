@@ -37,6 +37,12 @@ This document describes the event schema for all persistent, structured events e
 - `artist` (Address)
 - `ledger_sequence` (u32)
 
+### auction_cancelled_v1
+**Emitted when the creator cancels an active auction before its end time and before any bid is placed.**
+
+- `auction_id` (u64)
+- `creator` (Address)
+
 ### listing_updated_v1
 *Reserved for future use.*
 

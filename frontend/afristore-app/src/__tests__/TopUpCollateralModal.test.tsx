@@ -17,6 +17,11 @@ jest.mock("@/hooks/mutations/useAddCollateral", () => ({
   useAddCollateral: jest.fn(),
 }));
 
+const mockGetTokenBalanceOrNull = jest.fn();
+jest.mock("@/lib/lending", () => ({
+  getTokenBalanceOrNull: (...args: unknown[]) => mockGetTokenBalanceOrNull(...args),
+}));
+
 jest.mock("lucide-react", () =>
   Object.fromEntries(
     ["X", "Loader2", "Plus", "ArrowRight"].map((name) => [name, () => null]),
@@ -75,6 +80,8 @@ describe("TopUpCollateralModal", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     useAddCollateralMock.mockReturnValue(hookState());
+    // 1,000 units of collateral in the wallet by default.
+    mockGetTokenBalanceOrNull.mockResolvedValue(BigInt(1_000 * 10_000_000));
   });
 
   // ── Visibility ──────────────────────────────────────────────
@@ -146,6 +153,70 @@ describe("TopUpCollateralModal", () => {
     expect(submitButton()).toBeEnabled();
     // 150 USD collateral + 50 USD top-up on 100 USD debt = 200.00%
     expect(screen.getByText("200.00%")).toBeInTheDocument();
+  });
+
+  // ── Wallet balance (#1271) ──────────────────────────────────
+
+  it("reads the borrower's balance of the collateral token", async () => {
+    renderModal();
+    await waitFor(() =>
+      expect(mockGetTokenBalanceOrNull).toHaveBeenCalledWith(
+        borrowerPublicKey,
+        "CCOLLATERAL",
+      ),
+    );
+  });
+
+  it("blocks a top-up larger than the wallet balance", async () => {
+    mockGetTokenBalanceOrNull.mockResolvedValue(BigInt(20 * 10_000_000)); // 20 units
+    const user = userEvent.setup();
+    renderModal();
+    await waitFor(() => expect(mockGetTokenBalanceOrNull).toHaveBeenCalled());
+
+    await user.type(amountInput(), "25");
+
+    expect(await screen.findByTestId("topup-amount-error")).toHaveTextContent(
+      "Insufficient balance: your wallet holds 20",
+    );
+    expect(amountInput()).toHaveAttribute("aria-invalid", "true");
+    expect(submitButton()).toBeDisabled();
+    fireEvent.submit(amountInput().closest("form") as HTMLFormElement);
+    expect(addCollateralMock).not.toHaveBeenCalled();
+  });
+
+  it("allows a top-up equal to the wallet balance", async () => {
+    mockGetTokenBalanceOrNull.mockResolvedValue(BigInt(20 * 10_000_000));
+    const user = userEvent.setup();
+    renderModal();
+    await waitFor(() => expect(mockGetTokenBalanceOrNull).toHaveBeenCalled());
+
+    await user.type(amountInput(), "20");
+
+    expect(submitButton()).toBeEnabled();
+    expect(screen.queryByTestId("topup-amount-error")).not.toBeInTheDocument();
+  });
+
+  it("does not block on balance when it cannot be read", async () => {
+    mockGetTokenBalanceOrNull.mockResolvedValue(null);
+    const user = userEvent.setup();
+    renderModal();
+    await waitFor(() => expect(mockGetTokenBalanceOrNull).toHaveBeenCalled());
+
+    await user.type(amountInput(), "5000");
+
+    expect(submitButton()).toBeEnabled();
+  });
+
+  it("rejects more than 7 decimal places instead of rounding them away", async () => {
+    const user = userEvent.setup();
+    renderModal();
+
+    await user.type(amountInput(), "1.123456789");
+
+    expect(await screen.findByTestId("topup-amount-error")).toHaveTextContent(
+      /at most 7 decimal places/,
+    );
+    expect(submitButton()).toBeDisabled();
   });
 
   // ── Submission ──────────────────────────────────────────────

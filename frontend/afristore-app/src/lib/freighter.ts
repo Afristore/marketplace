@@ -83,6 +83,8 @@ export async function connectFreighter(): Promise<FreighterAccount> {
 
 // ── Sign a transaction XDR ────────────────────────────────────
 
+export const FREIGHTER_SIGNING_TIMEOUT_MS = 90_000;
+
 /**
  * Asks Freighter to sign a transaction XDR string.
  */
@@ -90,20 +92,42 @@ export async function signWithFreighter(
   txXdr: string,
   networkPassphrase: string,
 ): Promise<string> {
-  const result = await signTransaction(txXdr, { networkPassphrase });
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-  if (typeof result === "string") return result;
+  const signingPromise = (async () => {
+    const result = await signTransaction(txXdr, { networkPassphrase });
 
-  if (result && (result as any).signedTxXdr) {
-    return (result as any).signedTxXdr;
+    if (typeof result === "string") return result;
+
+    if (result && (result as any).signedTxXdr) {
+      return (result as any).signedTxXdr;
+    }
+
+    const error = (result as any)?.error;
+    throw new Error(
+      error
+        ? `Freighter sign error: ${error}`
+        : "Failed to sign transaction with Freighter",
+    );
+  })();
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(
+        new Error(
+          "Signing request timed out. Please check your wallet and try again.",
+        ),
+      );
+    }, FREIGHTER_SIGNING_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([signingPromise, timeoutPromise]);
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
   }
-
-  const error = (result as any)?.error;
-  throw new Error(
-    error
-      ? `Freighter sign error: ${error}`
-      : "Failed to sign transaction with Freighter",
-  );
 }
 
 // ── Get connected public key ──────────────────────────────────

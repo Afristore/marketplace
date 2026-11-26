@@ -1,6 +1,12 @@
 "use client";
 
-import { createContext, useContext, ReactNode, useMemo, useCallback } from "react";
+import {
+  createContext,
+  useContext,
+  ReactNode,
+  useMemo,
+  useCallback,
+} from "react";
 import { useWallet, WalletState, WalletStatus } from "@/hooks/useWallet";
 import {
   useMagicWallet,
@@ -142,9 +148,16 @@ function WalletContextInner({
       status,
       connect: freighter.connect,
       disconnect: () => {
+        // #1279: clear cached user state before disconnecting
+        if (typeof window !== "undefined") {
+          sessionStorage.removeItem("user_positions");
+          sessionStorage.removeItem("user_balances");
+          sessionStorage.removeItem("user_notifications");
+        }
         if (walletType === "magic") {
-          // logout reports failures via magic.error; catch so nothing is left unhandled.
-          magic.logout().catch((err) => console.error("Magic logout failed:", err));
+          magic
+            .logout()
+            .catch((err) => console.error("Magic logout failed:", err));
         } else {
           freighter.disconnect();
         }
@@ -155,7 +168,16 @@ function WalletContextInner({
       magic,
       notifications,
     }),
-    [walletType, publicKey, status, network, switchNetwork, freighter, magic, notifications],
+    [
+      walletType,
+      publicKey,
+      status,
+      network,
+      switchNetwork,
+      freighter,
+      magic,
+      notifications,
+    ],
   );
 
   return (

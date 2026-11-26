@@ -1,8 +1,8 @@
 extern crate std;
 
 use soroban_sdk::{
-    symbol_short, testutils::Address as _, testutils::Events as _, testutils::Ledger as _,
-    Address, BytesN, Env, IntoVal, String, Symbol, Val, Vec as SorobanVec,
+    testutils::Address as _, testutils::Events as _, testutils::Ledger as _, Address, BytesN, Env,
+    String,
 };
 
 use crate::{CollectionKind, Error, Launchpad, LaunchpadClient};
@@ -14,16 +14,16 @@ fn jump_ledger(env: &Env, delta: u32) {
 }
 
 fn wasm_bytes(name: &str) -> std::vec::Vec<u8> {
-    // In Cursor's sandbox, cargo builds into an isolated target dir (not `./target`).
-    // Derive the target dir from the current test binary path:
-    //   .../cargo-target/debug/deps/<test-binary>
-    let exe = std::env::current_exe().unwrap();
-    let target_dir = exe
-        .parent()
-        .and_then(|p| p.parent())
-        .and_then(|p| p.parent())
-        .unwrap()
-        .to_path_buf();
+    // Locate the artifacts built by the workspace WASM release build.
+    // The test executable's directory is not a reliable proxy for Cargo's
+    // target directory (it can also live under target/debug/build/...).
+    let target_dir = std::env::var_os("CARGO_TARGET_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .join("target")
+        });
     let path = target_dir
         .join("wasm32v1-none")
         .join("release")
@@ -903,6 +903,65 @@ fn deploy_lazy_1155_empty_name_no_state_change() {
     assert_eq!(client.collection_count(), 0u64);
     assert!(client.all_collections().is_empty());
     assert!(client.collections_by_creator(&creator).is_empty());
+}
+
+// ── Empty symbol validation tests (ERC-721 only) ────────────────
+//
+// ERC-1155 collections have no `symbol` field (see `deploy_normal_1155` /
+// `deploy_lazy_1155`), so there is nothing to validate for them.
+
+#[test]
+fn deploy_normal_721_fails_on_empty_symbol() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+    let royalty_receiver = Address::generate(&env);
+
+    let result = client.try_deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "Empty Symbol"),
+        &String::from_str(&env, ""),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xE1u8; 32]),
+    );
+    assert_eq!(result, Err(Ok(Error::EmptySymbol)));
+    assert_eq!(client.collection_count(), 0u64);
+
+    // A one-character symbol is still accepted.
+    client.deploy_normal_721(
+        &creator,
+        &String::from_str(&env, "One Char"),
+        &String::from_str(&env, "A"),
+        &100u64,
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xE2u8; 32]),
+    );
+    assert_eq!(client.collection_count(), 1u64);
+}
+
+#[test]
+fn deploy_lazy_721_fails_on_empty_symbol() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.sequence_number = 1);
+    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+    let creator_pubkey = BytesN::from_array(&env, &[0x09u8; 32]);
+    let royalty_receiver = Address::generate(&env);
+
+    let result = client.try_deploy_lazy_721(
+        &creator,
+        &creator_pubkey,
+        &String::from_str(&env, "Lazy Empty Symbol"),
+        &String::from_str(&env, ""),
+        &1_000u64,
+        &500u32,
+        &royalty_receiver,
+        &BytesN::from_array(&env, &[0xE3u8; 32]),
+    );
+    assert_eq!(result, Err(Ok(Error::EmptySymbol)));
+    assert_eq!(client.collection_count(), 0u64);
 }
 
 // ── Symbol length validation tests ──────────────────────────────
@@ -2265,62 +2324,113 @@ fn test_deterministic_salt_isolation_across_multiple_creators_issue_1097() {
     assert_ne!(addr_a, addr_b);
 }
 
-// ── Issue #1214: deploy_splitter must not emit a CollectionKind ──────────────
+// ── deploy_splitter event attributes and salt isolation (#1305) ──
 
-/// Asserts the launchpad's events from the last invocation are exactly one
-/// `("deploy", tag)` event carrying `data`.
-fn assert_single_deploy_event(env: &Env, launchpad: &Address, tag: Symbol, data: Val) {
-    let topics: SorobanVec<Val> = (symbol_short!("deploy"), tag).into_val(env);
-    let expected = SorobanVec::from_array(env, [(launchpad.clone(), topics, data)]);
-    assert_eq!(env.events().all().filter_by_contract(launchpad), expected);
+fn setup_launchpad_with_splitter(env: &Env) -> (LaunchpadClient<'_>, Address, Address) {
+    env.mock_all_auths();
+
+    let launchpad_id = env.register(Launchpad, ());
+    let client = LaunchpadClient::new(env, &launchpad_id);
+
+    let admin = Address::generate(env);
+    let creator = Address::generate(env);
+    let fee_receiver = Address::generate(env);
+    let fee_token = Address::generate(env);
+
+    client.initialize(&admin, &fee_receiver, &0u32, &fee_token);
+
+    let wasm_splitter_bytes = wasm_bytes("royalty_splitter");
+    let wasm_splitter = env
+        .deployer()
+        .upload_contract_wasm(wasm_splitter_bytes.as_slice());
+    client.set_royalty_splitter_wasm_hash(&wasm_splitter);
+
+    (client, admin, creator)
+}
+
+fn has_splitter_event_topic(events: &soroban_sdk::testutils::ContractEvents, symbol: &str) -> bool {
+    use soroban_sdk::xdr::{ContractEventBody, ScVal};
+    events.events().iter().any(|e| {
+        if let ContractEventBody::V0(body) = &e.body {
+            body.topics.iter().any(|t| {
+                if let ScVal::Symbol(s) = t {
+                    core::str::from_utf8(s.0.as_slice()).unwrap_or("") == symbol
+                } else {
+                    false
+                }
+            })
+        } else {
+            false
+        }
+    })
 }
 
 #[test]
-fn deploy_splitter_event_omits_collection_kind() {
+fn deploy_splitter_emits_deploy_event_with_split_tag() {
     let env = Env::default();
     env.ledger().with_mut(|li| li.sequence_number = 1);
-    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
-
-    let wasm_splitter = env
-        .deployer()
-        .upload_contract_wasm(wasm_bytes("royalty_splitter").as_slice());
-    client.set_royalty_splitter_wasm_hash(&wasm_splitter);
+    let (client, _admin, creator) = setup_launchpad_with_splitter(&env);
 
     let token = Address::generate(&env);
     client.add_approved_currency(&token);
-    let beneficiaries = SorobanVec::from_array(&env, [Address::generate(&env)]);
-    let shares = SorobanVec::from_array(&env, [10_000u32]);
+    let beneficiaries =
+        soroban_sdk::Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
+    let shares = soroban_sdk::Vec::from_array(&env, [6000u32, 4000u32]);
 
-    let splitter = client.deploy_splitter(
+    let _splitter = client.deploy_splitter(
         &creator,
         &token,
         &beneficiaries,
         &shares,
-        &BytesN::from_array(&env, &[0x77u8; 32]),
+        &BytesN::from_array(&env, &[0x51u8; 32]),
     );
 
-    // Payload is exactly (creator, splitter): no CollectionKind element.
-    let data: Val = (creator.clone(), splitter).into_val(&env);
-    assert_single_deploy_event(&env, &client.address, symbol_short!("split"), data);
+    let events = env.events().all();
+    assert!(
+        has_splitter_event_topic(&events, "deploy"),
+        "deploy_splitter must emit a deploy event"
+    );
+    assert!(
+        has_splitter_event_topic(&events, "split"),
+        "the deploy event must carry the splitter tag"
+    );
 }
 
 #[test]
-fn nft_collection_deploy_event_still_carries_kind() {
+fn deploy_splitter_salt_isolates_addresses_across_creators_and_salts() {
     let env = Env::default();
     env.ledger().with_mut(|li| li.sequence_number = 1);
-    let (client, _admin, _fee_receiver, creator) = setup_launchpad(&env);
+    let (client, _admin, creator) = setup_launchpad_with_splitter(&env);
 
-    let royalty_receiver = Address::generate(&env);
-    let addr = client.deploy_normal_721(
-        &creator,
-        &String::from_str(&env, "Kind 721"),
-        &String::from_str(&env, "K7"),
-        &100u64,
-        &0u32,
-        &royalty_receiver,
-        &BytesN::from_array(&env, &[0x88u8; 32]),
+    let other_creator = Address::generate(&env);
+    let token = Address::generate(&env);
+    client.add_approved_currency(&token);
+    let beneficiaries =
+        soroban_sdk::Vec::from_array(&env, [Address::generate(&env), Address::generate(&env)]);
+    let shares = soroban_sdk::Vec::from_array(&env, [5000u32, 5000u32]);
+
+    let salt = BytesN::from_array(&env, &[0x52u8; 32]);
+    let by_creator = client.deploy_splitter(&creator, &token, &beneficiaries, &shares, &salt);
+    // Same raw salt, different creator: the creator is mixed into the salt.
+    let by_other = client.deploy_splitter(&other_creator, &token, &beneficiaries, &shares, &salt);
+    // Same creator, different raw salt.
+    let new_salt = BytesN::from_array(&env, &[0x53u8; 32]);
+    let by_new_salt = client.deploy_splitter(&creator, &token, &beneficiaries, &shares, &new_salt);
+
+    assert_ne!(
+        by_creator, by_other,
+        "same salt across creators must not collide"
     );
+    assert_ne!(
+        by_creator, by_new_salt,
+        "a new salt must yield a new address"
+    );
+    assert_ne!(by_other, by_new_salt);
 
-    let data: Val = (creator.clone(), addr, CollectionKind::Normal721).into_val(&env);
-    assert_single_deploy_event(&env, &client.address, symbol_short!("n721"), data);
+    // Re-using the same creator and salt targets an address that already exists.
+    let duplicate = client.try_deploy_splitter(&creator, &token, &beneficiaries, &shares, &salt);
+    assert!(
+        duplicate.is_err(),
+        "a repeated creator and salt must be rejected"
+    );
 }

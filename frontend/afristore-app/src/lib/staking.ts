@@ -2,17 +2,13 @@
 
 import {
   Contract,
-  SorobanRpc,
-  TransactionBuilder,
   xdr,
   nativeToScVal,
   scValToNative,
   Address,
-  BASE_FEE,
 } from "@stellar/stellar-sdk";
-import { config } from "./config";
-import { getConnectedPublicKey, signWithFreighter } from "./freighter";
-import { mapSorobanErrorMessage } from "./errors";
+import { invokeContract } from "./contract";
+import { getConnectedPublicKey } from "./freighter";
 import {
   isE2eMockChain,
   e2eMockStake,
@@ -58,10 +54,6 @@ export const STAKING_CONTRACT_ID =
 
 const SECONDS_PER_YEAR = 31_536_000n;
 
-function getRpc(): SorobanRpc.Server {
-  return new SorobanRpc.Server(config.rpcUrl, { allowHttp: false });
-}
-
 function resolveStakingContractId(poolContractId?: string): string {
   const id = poolContractId || STAKING_CONTRACT_ID;
   if (!id) {
@@ -74,10 +66,11 @@ export function getStakingContract(poolContractId?: string): Contract {
   return new Contract(resolveStakingContractId(poolContractId));
 }
 
-function getNetworkPassphrase(): string {
-  return config.networkPassphrase;
-}
-
+/**
+ * Thin wrapper over the shared `invokeContract`, so staking reads use the
+ * same synthetic read-only account as marketplace reads instead of
+ * requiring the caller to be funded on-chain.
+ */
 async function invokeStakingContract(
   callerPublicKey: string,
   method: string,
@@ -85,67 +78,13 @@ async function invokeStakingContract(
   readonly = false,
   poolContractId?: string,
 ): Promise<xdr.ScVal> {
-  const contractId = resolveStakingContractId(poolContractId);
-
-  const readableError = (raw: string, fallback: string): Error => {
-    const mapped = mapSorobanErrorMessage(raw);
-    return new Error(mapped ?? fallback);
-  };
-
-  const rpc = getRpc();
-  const contract = new Contract(contractId);
-
-  const account = await rpc.getAccount(callerPublicKey);
-  const tx = new TransactionBuilder(account, {
-    fee: BASE_FEE,
-    networkPassphrase: getNetworkPassphrase(),
-  })
-    .addOperation(contract.call(method, ...args))
-    .setTimeout(30)
-    .build();
-
-  const simResult = await rpc.simulateTransaction(tx);
-
-  if (SorobanRpc.Api.isSimulationError(simResult)) {
-    const raw = String(simResult.error ?? "");
-    throw readableError(raw, "Unable to simulate this transaction.");
-  }
-
-  if (readonly) {
-    const retVal = (
-      simResult as SorobanRpc.Api.SimulateTransactionSuccessResponse
-    ).result?.retval;
-    if (!retVal) throw new Error("No return value from simulation.");
-    return retVal;
-  }
-
-  const preparedTx = SorobanRpc.assembleTransaction(tx, simResult).build();
-  const txXdr = preparedTx.toXDR();
-  const signedXdr = await signWithFreighter(txXdr, getNetworkPassphrase());
-
-  const submitted = await rpc.sendTransaction(
-    TransactionBuilder.fromXDR(signedXdr, getNetworkPassphrase()),
+  return invokeContract(
+    callerPublicKey,
+    method,
+    args,
+    { readonly },
+    resolveStakingContractId(poolContractId),
   );
-
-  if (submitted.status === "ERROR") {
-    const raw = String(submitted.errorResult ?? "");
-    throw readableError(raw, "Transaction submission failed.");
-  }
-
-  let getResult = await rpc.getTransaction(submitted.hash);
-  while (getResult.status === SorobanRpc.Api.GetTransactionStatus.NOT_FOUND) {
-    await new Promise((r) => setTimeout(r, 1000));
-    getResult = await rpc.getTransaction(submitted.hash);
-  }
-
-  if (getResult.status === SorobanRpc.Api.GetTransactionStatus.FAILED) {
-    const raw = JSON.stringify(getResult);
-    throw readableError(raw, "Transaction failed on-chain.");
-  }
-
-  const successResult =
-    getResult as SorobanRpc.Api.GetSuccessfulTransactionResponse;
-  return successResult.returnValue ?? xdr.ScVal.scvVoid();
 }
 
 export async function stake(
@@ -382,13 +321,15 @@ export async function getStakingPoolConfig(
         rewardRate: mock.rewardRate,
       };
     }
-    const DUMMY_KEY =
-      "GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN";
+    const simulationAccount = await getConnectedPublicKey();
+    if (!simulationAccount) {
+      throw new Error("Connect a wallet to query staking pool details.");
+    }
 
     const [nftVal, tokenVal, rateVal] = await Promise.all([
-      invokeStakingContract(DUMMY_KEY, "get_nft_address", [], true, poolContractId),
-      invokeStakingContract(DUMMY_KEY, "get_reward_token", [], true, poolContractId),
-      invokeStakingContract(DUMMY_KEY, "get_reward_rate", [], true, poolContractId),
+      invokeStakingContract(simulationAccount, "get_nft_address", [], true, poolContractId),
+      invokeStakingContract(simulationAccount, "get_reward_token", [], true, poolContractId),
+      invokeStakingContract(simulationAccount, "get_reward_rate", [], true, poolContractId),
     ]);
 
     return {

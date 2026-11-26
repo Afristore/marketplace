@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 vi.mock("dotenv", () => ({ default: { config: vi.fn() } }));
 
 // Prevent redis from trying to connect during import
-vi.mock("../redis", () => ({
+vi.mock("../redis.js", () => ({
   default: {
     isReady: false,
     flushDb: vi.fn().mockResolvedValue("OK"),
@@ -13,12 +13,15 @@ vi.mock("../redis", () => ({
 }));
 
 // Prevent api/routes SSE emitter from being imported for real
-vi.mock("../api/routes", () => ({ emitSSEEvent: vi.fn() }));
+vi.mock("../api/routes.js", () => ({ emitSSEEvent: vi.fn() }));
 
 // ── Mock Prisma ───────────────────────────────────────────────────────────────
 
 const mockTx = vi.hoisted(() => ({
-  marketplaceEvent: { deleteMany: vi.fn().mockResolvedValue({}) },
+  marketplaceEvent: {
+    deleteMany: vi.fn().mockResolvedValue({}),
+    findMany: vi.fn().mockResolvedValue([]),
+  },
   listing: {
     deleteMany: vi.fn().mockResolvedValue({}),
     findMany: vi.fn().mockResolvedValue([]),
@@ -39,8 +42,17 @@ const mockTx = vi.hoisted(() => ({
     updateMany: vi.fn().mockResolvedValue({}),
   },
   collection: { deleteMany: vi.fn().mockResolvedValue({}) },
-  lendingListing: { deleteMany: vi.fn().mockResolvedValue({}) },
-  lendingPosition: { deleteMany: vi.fn().mockResolvedValue({}) },
+  lendingListing: {
+    deleteMany: vi.fn().mockResolvedValue({}),
+    findMany: vi.fn().mockResolvedValue([]),
+    update: vi.fn().mockResolvedValue({}),
+  },
+  lendingPosition: {
+    deleteMany: vi.fn().mockResolvedValue({}),
+    findMany: vi.fn().mockResolvedValue([]),
+    count: vi.fn().mockResolvedValue(0),
+    update: vi.fn().mockResolvedValue({}),
+  },
   whitelistedCurrency: { deleteMany: vi.fn().mockResolvedValue({}) },
   syncState: { update: vi.fn().mockResolvedValue({}) },
 }));
@@ -93,7 +105,7 @@ const mockPrisma = vi.hoisted(() => ({
   $executeRawUnsafe: vi.fn().mockResolvedValue(0),
 }));
 
-vi.mock("../db", () => ({ default: mockPrisma }));
+vi.mock("../db.js", () => ({ default: mockPrisma }));
 vi.mock("../metrics.js", () => ({
   latestLedgerProcessedGauge: { set: vi.fn() },
   networkLatestLedgerGauge: { set: vi.fn() },
@@ -169,6 +181,7 @@ import {
   validateHashContinuity,
   buildSyncStateLedgerData,
   startPolling,
+  gracefulShutdown,
 } from "../poller";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -879,9 +892,9 @@ describe("processEvent — POSITION_LIQUIDATED", () => {
   });
 });
 
-// ── POSITION_OPENED transactional writes ─────────────────────────────────────
+// ── LENDING_POSITION_OPENED transactional writes ────────────────────────────
 
-describe("processEvent — POSITION_OPENED", () => {
+describe("processEvent — LENDING_POSITION_OPENED", () => {
   beforeEach(() => vi.clearAllMocks());
 
   const openedData = {
@@ -905,15 +918,15 @@ describe("processEvent — POSITION_OPENED", () => {
     lendingListing: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
   });
 
-  it("writes the position and marks the listing Filled inside one transaction", async () => {
+  it("writes the position and marks the listing Filled for LENDING_POSITION_OPENED", async () => {
     const txClient = makeTxClient();
-    mockPrisma.$transaction.mockImplementationOnce((fn: any) => fn(txClient));
 
     await processEvent(
-      makeEvent("POSITION_OPENED", 201n, "GB_BORROWER", openedData, 800),
+      makeEvent("LENDING_POSITION_OPENED", 201n, "GB_BORROWER", openedData, 800),
+      txClient,
+      true,
     );
 
-    expect(mockPrisma.$transaction).toHaveBeenCalledOnce();
     expect(txClient.lendingPosition.upsert).toHaveBeenCalledOnce();
     expect(txClient.lendingListing.updateMany).toHaveBeenCalledWith({
       where: { id: 7n },
@@ -934,6 +947,28 @@ describe("processEvent — POSITION_OPENED", () => {
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     expect(callerTx.lendingPosition.upsert).toHaveBeenCalledOnce();
     expect(callerTx.lendingListing.updateMany).toHaveBeenCalledOnce();
+  });
+});
+
+// ── LENDING_LISTING_CANCELLED (#1227) ─────────────────────────────────────────
+
+describe("processEvent — LENDING_LISTING_CANCELLED (#1227)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("updates lendingListing status to Cancelled", async () => {
+    mockPrisma.lendingListing.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    await processEvent(
+      makeEvent("LENDING_LISTING_CANCELLED", 42n, "G_LENDER", { listing_id: 42n }, 900),
+    );
+
+    expect(mockPrisma.lendingListing.updateMany).toHaveBeenCalledWith({
+      where: { listingId: 42n },
+      data: {
+        status: "Cancelled",
+        updatedAtLedger: 900,
+      },
+    });
   });
 });
 
@@ -985,6 +1020,30 @@ describe("processEvent — CURRENCY_WHITELISTED & CURRENCY_REMOVED", () => {
         enabled: false,
         updatedAtLedger: 720,
       }),
+    });
+  });
+
+  it("persists staking pool mapping on DEPLOY_STAKING_POOL (#1231)", async () => {
+    const data = ["G_CREATOR", "C_NFT_ADDR", "C_POOL_ADDR"];
+
+    await processEvent(
+      makeEvent("DEPLOY_STAKING_POOL", null, "G_CREATOR", data, 730),
+    );
+
+    expect(mockPrisma.collection.upsert).toHaveBeenCalledWith({
+      where: { contractAddress: "C_POOL_ADDR" },
+      create: {
+        contractAddress: "C_POOL_ADDR",
+        kind: "staking_pool",
+        creator: "G_CREATOR",
+        name: "C_NFT_ADDR",
+        deployedAtLedger: 730,
+      },
+      update: {
+        creator: "G_CREATOR",
+        name: "C_NFT_ADDR",
+        deployedAtLedger: 730,
+      },
     });
   });
 });
@@ -1156,4 +1215,22 @@ describe("startPolling — hash fetch failure", () => {
     );
     expect(hashAdvanceUpdate?.[0].data).not.toHaveProperty("lastLedgerHash");
   }, 8000);
+});
+
+describe("gracefulShutdown", () => {
+  it("continues cleanup when a partially mocked Prisma client has no disconnect method", async () => {
+    const exitSpy = vi
+      .spyOn(process, "exit")
+      .mockImplementation((() => undefined) as never);
+    vi.useFakeTimers();
+
+    try {
+      await gracefulShutdown({});
+      expect(exitSpy).toHaveBeenCalledWith(0);
+    } finally {
+      await vi.runOnlyPendingTimersAsync();
+      vi.useRealTimers();
+      exitSpy.mockRestore();
+    }
+  });
 });

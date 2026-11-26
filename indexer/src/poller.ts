@@ -16,7 +16,12 @@ import {
   networkLatestLedgerGauge,
   syncLatencyGauge,
 } from "./metrics.js";
-import { collectMarketplaceEvents, MAX_LEDGER_WINDOW } from "./event-sync.js";
+import {
+  collateralAddedAfter,
+  collectMarketplaceEvents,
+  MAX_LEDGER_WINDOW,
+  revertLendingState,
+} from "./event-sync.js";
 import { resolveMetadataCategory } from "./ipfs.js";
 import redis from "./redis.js";
 import { logger } from "./logger.js";
@@ -75,10 +80,14 @@ function setupSignalHandlers() {
   process.on("SIGINT", () => onSignal("SIGINT"));
 }
 
-async function gracefulShutdown() {
+export async function gracefulShutdown(
+  prismaClient: { $disconnect?: () => Promise<void> } | null = prisma,
+) {
   log.info("Closing resources: Prisma + Redis");
   const cleanup = Promise.allSettled([
-    prisma.$disconnect(),
+    prismaClient && typeof prismaClient.$disconnect === "function"
+      ? prismaClient.$disconnect()
+      : Promise.resolve(),
     // redis may not be connected in some test environments
     redis && typeof redis.disconnect === "function"
       ? redis.disconnect()
@@ -129,6 +138,10 @@ const server = new rpc.Server(RPC_URL);
 export async function revertLedgers(safeAtLedger: number): Promise<void> {
   log.warn("Reorg: rolling back", { safeAtLedger });
   await prisma.$transaction(async (tx) => {
+    // Read lending collateral changes from the events before they are deleted,
+    // so positions can be reverted to their collateral at the safe checkpoint.
+    const collateralAdded = await collateralAddedAfter(tx, safeAtLedger);
+
     // Remove events that occurred after the safe checkpoint
     await tx.marketplaceEvent.deleteMany({
       where: { ledgerSequence: { gt: safeAtLedger } },
@@ -262,14 +275,9 @@ export async function revertLedgers(safeAtLedger: number): Promise<void> {
       data: { status: "Active", updatedAtLedger: safeAtLedger },
     });
 
-    // Reset lending listings and positions created after safe checkpoint
-    await tx.lendingListing.deleteMany({
-      where: { createdAtLedger: { gt: safeAtLedger } },
-    });
-
-    await tx.lendingPosition.deleteMany({
-      where: { createdAtLedger: { gt: safeAtLedger } },
-    });
+    // Delete lending listings/positions created after the safe checkpoint and
+    // revert status changes made after it
+    await revertLendingState(tx, safeAtLedger, collateralAdded);
 
     await tx.whitelistedCurrency.deleteMany({
       where: { addedAtLedger: { gt: safeAtLedger } },
@@ -425,6 +433,18 @@ skippedRange,
         contractIds,
         startLedger,
         effectiveLatestLedger,
+        async (rawEvent, err) => {
+          const ledger = (rawEvent as { ledger?: unknown })?.ledger;
+          await recordIndexerError(
+            {
+              eventType: "DECODE_ERROR",
+              ledgerSequence: typeof ledger === "number" ? ledger : undefined,
+              data: rawEvent,
+            },
+            err,
+            prisma,
+          );
+        },
       );
 
       let latestHash: string | null = null;
@@ -452,7 +472,16 @@ skippedRange,
 
         updateSyncMetrics(updatedState.lastLedger, networkLatestLedger);
 
-        for (const ev of newEvents) emitSSEEvent(ev);
+        for (const ev of newEvents) {
+          try {
+            emitSSEEvent(ev);
+          } catch (sseErr) {
+            log.error("Failed to emit SSE event", {
+              eventType: ev?.eventType,
+              err: sseErr,
+            });
+          }
+        }
       } else if (effectiveLatestLedger > syncState.lastLedger) {
         try {
           const ledgersRes = await server.getLedgers({
@@ -926,22 +955,44 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
     });
   }
 
-  // Handle deploy events (no listingId — collection deployments)
+  // Handle deploy events (no listingId — collection & staking pool deployments)
   if (
     eventType === "DEPLOY_NORMAL_721" ||
     eventType === "DEPLOY_NORMAL_1155" ||
     eventType === "DEPLOY_LAZY_721" ||
-    eventType === "DEPLOY_LAZY_1155"
+    eventType === "DEPLOY_LAZY_1155" ||
+    eventType === "DEPLOY_STAKING_POOL" ||
+    eventType === "STAKING_POOL_DEPLOYED"
   ) {
     const kindMap: Record<string, string> = {
       DEPLOY_NORMAL_721: "normal_721",
       DEPLOY_NORMAL_1155: "normal_1155",
       DEPLOY_LAZY_721: "lazy_721",
       DEPLOY_LAZY_1155: "lazy_1155",
+      DEPLOY_STAKING_POOL: "staking_pool",
+      STAKING_POOL_DEPLOYED: "staking_pool",
     };
     const rawData = Array.isArray(data) ? data : [];
-    const creatorAddr = rawData[0]?.toString() || actor;
-    const contractAddr = rawData[1]?.toString() || "";
+    const creatorAddr =
+      (Array.isArray(data) ? data[0]?.toString() : data?.creator?.toString()) || actor;
+    let contractAddr = "";
+    let name: string | null = null;
+
+    if (
+      eventType === "DEPLOY_STAKING_POOL" ||
+      eventType === "STAKING_POOL_DEPLOYED"
+    ) {
+      if (Array.isArray(data)) {
+        name = data[1]?.toString() ?? null;
+        contractAddr = data[2]?.toString() || "";
+      } else if (data && typeof data === "object") {
+        name = (data.nft_address ?? data.nftAddress)?.toString() ?? null;
+        contractAddr = (data.pool_address ?? data.poolAddress)?.toString() || "";
+      }
+    } else {
+      contractAddr = rawData[1]?.toString() || "";
+    }
+
     if (contractAddr) {
       await db.collection.upsert({
         where: { contractAddress: contractAddr },
@@ -949,10 +1000,12 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
           contractAddress: contractAddr,
           kind: kindMap[eventType],
           creator: creatorAddr,
+          name,
           deployedAtLedger: ledgerSequence,
         },
         update: {
           creator: creatorAddr,
+          name: name ?? undefined,
           deployedAtLedger: ledgerSequence,
         },
       });
@@ -1015,7 +1068,7 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
   // Update Listing/Position state based on event type
   // Lending position liquidation carries a position_id mapped to listingId by the parser,
   // so we guard here for all remaining event types that require an entity id.
-  if (!listingId) return;
+  if (!listingId && !event.positionId && !data?.position_id && !data?.listing_id) return;
 
   switch (eventType) {
     case "LISTING_CREATED": {
@@ -1375,16 +1428,17 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
 
     // ── Lending event handlers ────────────────────────────────────────────────
 
-    case "LISTING_CANCELLED": {
+    case "LENDING_LISTING_CANCELLED": {
+      const targetListingId = BigInt(data.listing_id ?? listingId ?? 0);
       const { count } = await db.lendingListing.updateMany({
-        where: { listingId: BigInt(listingId) },
+        where: { listingId: targetListingId },
         data: {
           status: "Cancelled",
           updatedAtLedger: ledgerSequence,
         },
       });
       if (count === 0) {
-        log.warn("LISTING_CANCELLED: lending listing not found", { listingId, ledgerSequence });
+        log.warn("LENDING_LISTING_CANCELLED: lending listing not found", { listingId: targetListingId.toString(), ledgerSequence });
       }
       break;
     }
@@ -1476,6 +1530,7 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
       break;
     }
 
+    case "LENDING_COLLATERAL_ADDED":
     case "COLLATERAL_ADDED": {
       const posId = BigInt(data.position_id ?? listingId ?? 0);
       const addedAmount = data.amount?.toString() || "0";
@@ -1493,14 +1548,35 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
 
       // Only update if this ledger is newer than the last update (idempotent)
       if (ledgerSequence > position.updatedAtLedger) {
-        await db.lendingPosition.update({
-          where: { positionId: posId },
-          data: {
-            collateralAmount: newTotal || position.collateralAmount,
-            updatedAtLedger: ledgerSequence,
-          },
+        const updatedCollateral =
+          newTotal ||
+          (
+            BigInt(position.collateralAmount.toString()) + BigInt(addedAmount)
+          ).toString();
+
+        let healthFactor: string | undefined = undefined;
+        if (data.health_factor !== undefined && data.health_factor !== null) {
+          healthFactor = data.health_factor.toString();
+        } else if (data.healthFactor !== undefined && data.healthFactor !== null) {
+          healthFactor = data.healthFactor.toString();
+        } else {
+          const declaredPrice = Number(position.declaredPriceUsd);
+          if (declaredPrice > 0) {
+            healthFactor = (Number(updatedCollateral) / declaredPrice).toString();
+          }
+        }
+
+        await withTransaction(tx, async (client) => {
+          await client.lendingPosition.update({
+            where: { positionId: posId },
+            data: {
+              collateralAmount: updatedCollateral,
+              ...(healthFactor !== undefined ? { healthFactor } : {}),
+              updatedAtLedger: ledgerSequence,
+            },
+          });
         });
-        log.info("COLLATERAL_ADDED: increased position collateral", { posId, addedAmount, ledgerSequence });
+        log.info("COLLATERAL_ADDED: increased position collateral", { posId, addedAmount, healthFactor, ledgerSequence });
       } else {
         log.info("COLLATERAL_ADDED: skipped stale update", { posId, ledgerSequence });
       }
@@ -1523,12 +1599,11 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
       );
 
       await db.lendingListing.upsert({
-        where: { id },
+        where: { listingId: id },
         create: {
-          id,
+          listingId: id,
           lender,
           nftContract,
-          collectionAddress: nftContract || null,
           tokenId,
           declaredPriceUsd,
           interestScheduleBps,
@@ -1542,7 +1617,6 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
         update: {
           lender,
           nftContract,
-          collectionAddress: nftContract || null,
           tokenId,
           declaredPriceUsd,
           interestScheduleBps,
@@ -1556,18 +1630,7 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
       break;
     }
 
-    case "LENDING_LISTING_CANCELLED": {
-      const id = BigInt(data.listing_id ?? listingId ?? 0);
-      await db.lendingListing.updateMany({
-        where: { id },
-        data: {
-          status: "Cancelled",
-          updatedAtLedger: ledgerSequence,
-        },
-      });
-      break;
-    }
-
+    case "LENDING_POSITION_OPENED":
     case "POSITION_OPENED": {
       const id = BigInt(data.position_id ?? listingId ?? 0);
       const lId = BigInt(data.listing_id ?? 0);
@@ -1589,9 +1652,9 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
       // between the two writes cannot leave them out of sync.
       await withTransaction(tx, async (client) => {
         await client.lendingPosition.upsert({
-          where: { id },
+          where: { positionId: id },
           create: {
-            id,
+            positionId: id,
             listingId: lId,
             lender,
             borrower,
@@ -1646,7 +1709,7 @@ export async function processEvent(event: any, tx?: any, skipInsert = false) {
         "0";
 
       await db.lendingPosition.updateMany({
-        where: { id: posId },
+        where: { positionId: posId },
         data: {
           status: "Returned",
           platformFee,

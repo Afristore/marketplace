@@ -140,15 +140,29 @@ export function useIncomingOffers(ownerPublicKey: string | null) {
             const offers = await Promise.all(
               offerIds.map((id) => getOffer(id)),
             );
+            const sortedOffers = [...offers].sort((a, b) => {
+              if (a.status === "Pending" && b.status !== "Pending") return -1;
+              if (a.status !== "Pending" && b.status === "Pending") return 1;
+              return b.created_at - a.created_at;
+            });
             result.push({
               listing,
-              offers: offers.sort((a, b) => b.created_at - a.created_at),
+              offers: sortedOffers,
             });
           } catch {
             // Skip listings whose offers fail to load.
           }
         }),
       );
+
+      // Prioritize listing groups with pending offers needing review
+      result.sort((a, b) => {
+        const aPending = a.offers.some((o) => o.status === "Pending");
+        const bPending = b.offers.some((o) => o.status === "Pending");
+        if (aPending && !bPending) return -1;
+        if (!aPending && bPending) return 1;
+        return b.listing.listing_id - a.listing.listing_id;
+      });
 
       setOffersByListing(result);
     } catch (err: unknown) {
@@ -198,7 +212,10 @@ export function useWithdrawOffer(publicKey: string | null) {
 
 // ── useAcceptOffer ───────────────────────────────────────────
 
-export function useAcceptOffer(publicKey: string | null) {
+export function useAcceptOffer(
+  publicKey: string | null,
+  onRefresh?: () => Promise<void> | void,
+) {
   const [isAccepting, setIsAccepting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useTransientErrorToast(error);
@@ -213,6 +230,7 @@ export function useAcceptOffer(publicKey: string | null) {
       setError(null);
       try {
         await acceptOffer(publicKey, offerId);
+        await onRefresh?.(); // #1286: invalidate offers cache on accept
         return true;
       } catch (err: unknown) {
         setError(getReadableErrorMessage(err, "Failed to accept offer"));
@@ -221,7 +239,7 @@ export function useAcceptOffer(publicKey: string | null) {
         setIsAccepting(false);
       }
     },
-    [publicKey],
+    [publicKey, onRefresh],
   );
 
   return { accept, isAccepting, error };
@@ -229,7 +247,10 @@ export function useAcceptOffer(publicKey: string | null) {
 
 // ── useRejectOffer ───────────────────────────────────────────
 
-export function useRejectOffer(publicKey: string | null) {
+export function useRejectOffer(
+  publicKey: string | null,
+  onRefresh?: () => Promise<void> | void,
+) {
   const [isRejecting, setIsRejecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useTransientErrorToast(error);
@@ -244,6 +265,7 @@ export function useRejectOffer(publicKey: string | null) {
       setError(null);
       try {
         await rejectOffer(publicKey, offerId);
+        await onRefresh?.(); // #1286: invalidate offers cache on reject
         return true;
       } catch (err: unknown) {
         setError(getReadableErrorMessage(err, "Failed to reject offer"));
@@ -252,7 +274,7 @@ export function useRejectOffer(publicKey: string | null) {
         setIsRejecting(false);
       }
     },
-    [publicKey],
+    [publicKey, onRefresh],
   );
 
   return { reject, isRejecting, error };

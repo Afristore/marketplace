@@ -19,6 +19,10 @@ import {
   getDefaultSupportedToken,
 } from "@/lib/token-support";
 import { getReadableErrorMessage } from "@/lib/errors";
+import {
+  validateArtworkFile,
+  ARTWORK_ACCEPT_ATTRIBUTE,
+} from "@/lib/fileValidation";
 import posthog from "posthog-js";
 
 export const ART_CATEGORIES = [
@@ -70,12 +74,23 @@ export function ListingForm({
     amount: 1,
     tokenAddress: DEFAULT_TOKEN.address,
   });
+  const emptyArtwork = {
+    title: "",
+    description: "",
+    artistName: "",
+    year: new Date().getFullYear().toString(),
+    category: ART_CATEGORIES[0],
+  };
+  const [artwork, setArtwork] = useState(emptyArtwork);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
   const [successId, setSuccessId] = useState<number | null>(null);
   const [currentMetadata, setCurrentMetadata] =
     useState<ArtworkMetadata | null>(null);
   const [isFetchingMetadata, setIsFetchingMetadata] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [metadataError, setMetadataError] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const tokenOptions = listing
@@ -99,8 +114,16 @@ export function ListingForm({
             collectionAddress: listing.collection,
             nftTokenId: Number(listing.token_id),
             price: parseFloat(stroopsToXlm(listing.price)),
-            amount: 1,
+            amount: listing.amount,
             tokenAddress: listing.token,
+          });
+          // Pinned JSON may predate some fields; never feed undefined in.
+          setArtwork({
+            title: meta.title ?? "",
+            description: meta.description ?? "",
+            artistName: meta.artist ?? "",
+            year: meta.year ?? "",
+            category: meta.category ?? "",
           });
         })
         .catch((err: unknown) => {
@@ -135,19 +158,22 @@ export function ListingForm({
           listingId: listing.listing_id,
           originalTokenAddress: listing.token,
           ...form,
-          title: "",
-          description: "",
-          artistName: "",
-          year: "",
-          category: "",
+          ...artwork,
+          imageFile: selectedFile ?? undefined,
           currentMetadata,
+          currentMetadataCid: listing.metadata_cid,
         });
         if (success) {
           setSuccessId(listing.listing_id);
           onSuccess?.(listing.listing_id);
         }
       } else if (!isEdit) {
-        const id = await create({ ...form });
+        const id = await create({
+          ...form,
+          artwork: selectedFile
+            ? { ...artwork, imageFile: selectedFile }
+            : undefined,
+        });
         if (id !== null) {
           setSuccessId(id);
           posthog.capture("Listing Created", {
@@ -166,6 +192,19 @@ export function ListingForm({
       );
     }
   };
+
+  const handleFile = (file: File) => {
+    const error = validateArtworkFile(file);
+    if (error) {
+      setFileError(error);
+      return;
+    }
+    setFileError(null);
+    setSelectedFile(file);
+    setPreview(URL.createObjectURL(file));
+  };
+  // Metadata fields matter once there is metadata to write.
+  const artworkRequired = isEdit || !!selectedFile;
 
   const isLoading = isCreating || isUpdating || isFetchingMetadata;
   const progress = isEdit ? updateProgress : createProgress;
@@ -200,6 +239,10 @@ export function ListingForm({
                   amount: 1,
                   tokenAddress: defaultToken.address,
                 });
+                setArtwork(emptyArtwork);
+                setSelectedFile(null);
+                setPreview(null);
+                setFileError(null);
               }}
               className="flex-1 rounded-2xl bg-brand-500 px-6 py-4 text-lg font-bold text-white hover:bg-brand-600 shadow-lg shadow-brand-500/20 transition-all hover:scale-[1.02] active:scale-[0.98]"
             >
@@ -232,6 +275,139 @@ export function ListingForm({
         </header>
 
         <form onSubmit={handleSubmit} className="space-y-8">
+          {/* Artwork image + metadata (pinned to IPFS) */}
+          <div
+            onDrop={(e) => {
+              e.preventDefault();
+              const file = e.dataTransfer.files[0];
+              if (file) handleFile(file);
+            }}
+            onDragOver={(e) => e.preventDefault()}
+            onClick={() => fileRef.current?.click()}
+            className="group relative flex flex-col items-center justify-center rounded-3xl border-2 border-dashed border-brand-200 bg-brand-50/30 p-12 text-center cursor-pointer hover:border-brand-400 hover:bg-brand-50/60 transition-all"
+          >
+            {preview ? (
+              <div className="relative h-64 w-full">
+                <Image
+                  src={preview}
+                  alt="Preview"
+                  fill
+                  className="object-contain rounded-2xl"
+                  unoptimized
+                />
+              </div>
+            ) : (
+              <div className="py-4">
+                <Upload size={32} className="mx-auto mb-4 text-brand-500" />
+                <p className="text-lg font-semibold text-brand-950 font-display">
+                  {isEdit ? "Replace Artwork Image" : "Select Artwork"}
+                </p>
+                <p className="mt-1 text-sm text-brand-400 font-inter">
+                  {isEdit
+                    ? "Optional: keep the current image if unchanged."
+                    : "Optional: skip to use the NFT's existing token metadata."}
+                </p>
+              </div>
+            )}
+            <input
+              ref={fileRef}
+              aria-label="Artwork image"
+              type="file"
+              accept={ARTWORK_ACCEPT_ATTRIBUTE}
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleFile(file);
+              }}
+            />
+          </div>
+
+          {fileError && (
+            <p
+              role="alert"
+              className="rounded-2xl bg-red-50 px-6 py-4 text-sm font-bold text-red-600 border border-red-100"
+            >
+              {fileError}
+            </p>
+          )}
+
+          <div className="grid gap-6 sm:grid-cols-2">
+            <div className="sm:col-span-2 space-y-2">
+              <label htmlFor="listing-title" className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+                Title{artworkRequired && " *"}
+              </label>
+              <input
+                id="listing-title"
+                required={artworkRequired}
+                value={artwork.title}
+                onChange={(e) => setArtwork({ ...artwork, title: e.target.value })}
+                className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
+                placeholder="e.g. Echoes of the Serengeti"
+              />
+            </div>
+            <div className="sm:col-span-2 space-y-2">
+              <label htmlFor="listing-description" className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+                Description
+              </label>
+              <textarea
+                id="listing-description"
+                rows={3}
+                value={artwork.description}
+                onChange={(e) =>
+                  setArtwork({ ...artwork, description: e.target.value })
+                }
+                className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
+              />
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="listing-artist" className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+                Artist Name{!isEdit && selectedFile && " *"}
+              </label>
+              <input
+                id="listing-artist"
+                required={!isEdit && !!selectedFile}
+                value={artwork.artistName}
+                onChange={(e) =>
+                  setArtwork({ ...artwork, artistName: e.target.value })
+                }
+                className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
+              />
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="listing-year" className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+                Creation Year
+              </label>
+              <input
+                id="listing-year"
+                type="number"
+                min={1900}
+                max={2100}
+                value={artwork.year}
+                onChange={(e) => setArtwork({ ...artwork, year: e.target.value })}
+                className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
+              />
+            </div>
+            <div className="sm:col-span-2 space-y-2">
+              <label htmlFor="listing-category" className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
+                Category
+              </label>
+              <select
+                id="listing-category"
+                value={artwork.category}
+                onChange={(e) =>
+                  setArtwork({ ...artwork, category: e.target.value })
+                }
+                className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
+              >
+                {ART_CATEGORIES.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
           {/* Fields */}
           <div className="grid gap-6 sm:grid-cols-2">
             <div className="sm:col-span-2 space-y-2">
@@ -268,9 +444,10 @@ export function ListingForm({
 
             <div className="sm:col-span-2 space-y-2">
               <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
-                Amount (ERC-1155 Quantity)
+                Amount (ERC-1155 Quantity) *
               </label>
               <input
+                required
                 type="number"
                 min={1}
                 value={form.amount}
@@ -283,6 +460,10 @@ export function ListingForm({
                 className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
                 placeholder="Number of copies to list (default: 1)"
               />
+              <p className="text-xs text-gray-500 font-inter">
+                ERC-721 collections require a quantity of 1. ERC-1155
+                collections can list more than one copy.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -305,22 +486,6 @@ export function ListingForm({
                   {selectedToken.symbol}
                 </span>
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <label className="block text-sm font-bold text-gray-950 uppercase tracking-wider font-inter">
-                Amount *
-              </label>
-              <input
-                required
-                type="number"
-                min={1}
-                value={form.amount}
-                onChange={(e) =>
-                  setForm({ ...form, amount: parseInt(e.target.value) || 1 })
-                }
-                className="w-full rounded-2xl border border-gray-200 bg-gray-50/50 px-5 py-4 text-base focus:border-brand-500 focus:bg-white focus:outline-none transition-all shadow-sm font-inter"
-              />
             </div>
 
             <div className="space-y-2">

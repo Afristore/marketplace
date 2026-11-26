@@ -6,7 +6,8 @@
 //   Step 2 — Define the interest schedule array (bps / month)
 //   Step 3 — Set buffer and liquidation-threshold bounds
 // All inputs are validated with Zod schemas; submission goes
-// through `useCreateListing`.
+// through `useCreateLendingListing`, which also checks the lender
+// owns the NFT before anything is signed.
 // ─────────────────────────────────────────────────────────────
 
 "use client";
@@ -23,8 +24,8 @@ import {
 } from "lucide-react";
 import { z } from "zod";
 import clsx from "clsx";
-import { useCreateListing } from "@/hooks/useMarketplace";
-import { useSafeToast } from "@/hooks/useSafeToast";
+import { useCreateLendingListing } from "@/hooks/mutations/useCreateLendingListing";
+import { parseFixed7 } from "@/lib/lendingValidation";
 
 // ── Zod schemas ──────────────────────────────────────────────
 
@@ -115,8 +116,6 @@ export interface CreateListingModalProps {
   collectionAddress: string;
   /** Token id of the NFT to list. */
   nftTokenId: number;
-  /** Optional payment token address (defaults to platform token). */
-  tokenAddress?: string;
   /** Called after the listing is successfully created on-chain. */
   onSuccess?: (listingId: number) => void;
 }
@@ -147,12 +146,10 @@ export function CreateListingModal({
   lenderPublicKey,
   collectionAddress,
   nftTokenId,
-  tokenAddress,
   onSuccess,
 }: CreateListingModalProps) {
   const { create, isCreating, progress, error: hookError } =
-    useCreateListing(lenderPublicKey);
-  const pushToast = useSafeToast();
+    useCreateLendingListing(lenderPublicKey);
   const [step, setStep] = useState(1);
   const [values, setValues] = useState<CreateListingFormValues>(INITIAL_VALUES);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -223,18 +220,31 @@ export function CreateListingModal({
       return;
     }
 
+    const declaredPriceUsd = parseFixed7(values.declaredPriceUsd);
+    if (declaredPriceUsd === null) {
+      setFieldErrors({
+        declaredPriceUsd: "Price can have at most 7 decimal places",
+      });
+      setStep(1);
+      return;
+    }
+
+    // The hook validates against the platform bounds, checks the NFT can be
+    // escrowed, and raises its own success / error toasts.
     const listingId = await create({
-      collectionAddress,
-      nftTokenId,
-      price: Number(values.declaredPriceUsd),
-      tokenAddress,
+      nftContract: collectionAddress,
+      tokenId: nftTokenId,
+      declaredPriceUsd,
+      interestScheduleBps: values.interestScheduleBps
+        .split(",")
+        .map((rate) => Number(rate.trim())),
+      maxDurationDays: Number(values.maxDurationDays),
+      minCollateralBufferBps: Number(values.minCollateralBufferBps),
+      liquidationThresholdBps: Number(values.liquidationThresholdBps),
     });
     if (listingId !== null) {
-      pushToast(`Listing #${listingId} created successfully`, "success");
       onSuccess?.(listingId);
       onClose();
-    } else if (hookError) {
-      pushToast(hookError, "error");
     }
   };
 
